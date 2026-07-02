@@ -132,12 +132,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
         container.innerHTML = faq.map(f => `
             <div class="surface-card rounded-xl overflow-hidden border border-borderSubtle">
-                <button class="w-full px-6 py-5 text-left flex justify-between items-center focus:outline-none faq-btn">
-                    <span class="font-semibold text-lg text-white">${f.pergunta}</span>
-                    <i class="fa-solid fa-chevron-down text-orange-500 transition-transform duration-300"></i>
+                <button class="w-full px-6 py-5 text-left flex justify-between items-center focus:outline-none faq-btn group">
+                    <span class="font-semibold text-lg text-white group-hover:text-primary-400 transition-colors">${f.pergunta}</span>
+                    <div class="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center group-hover:bg-primary-500/10 transition-colors">
+                        <i class="fa-solid fa-chevron-down text-orange-500 transform transition-transform duration-500 ease-[cubic-bezier(0.87,0,0.13,1)]"></i>
+                    </div>
                 </button>
-                <div class="px-6 pb-5 text-gray-400 font-light hidden faq-content">
-                    ${f.resposta}
+                <div class="faq-content overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.87,0,0.13,1)] max-h-0 opacity-0">
+                    <div class="px-6 pb-5 text-gray-400 font-light">
+                        ${f.resposta}
+                    </div>
                 </div>
             </div>
         `).join('');
