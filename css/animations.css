@@ -1,0 +1,139 @@
+/* Hover Lift */
+.hover-lift {
+    transition: transform 0.3s ease, border-color 0.3s ease;
+}
+
+.hover-lift:hover {
+    transform: translateY(-4px);
+    border-color: rgba(242, 140, 82, 0.4);
+}
+
+.btn-primary:hover {
+    box-shadow: 0 6px 20px rgba(242, 140, 82, 0.4);
+    transform: translateY(-1px);
+}
+
+.whatsapp-float:hover {
+    transform: scale(1.1);
+}
+
+/* Fade In Animation */
+.fade-in {
+    opacity: 0;
+    transform: translateY(15px);
+    transition: opacity 0.2s ease-out, transform 0.2s ease-out;
+    will-change: opacity, transform;
+}
+
+.fade-in.visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* Scroll indicator */
+.scroll-indicator {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    color: rgba(255, 255, 255, 0.35);
+    font-size: 0.65rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    animation: scrollBounce 2.5s ease-in-out infinite;
+}
+
+.scroll-indicator-line {
+    width: 1px;
+    height: 48px;
+    background: linear-gradient(to bottom, rgba(242, 140, 82, 0.6), transparent);
+}
+
+@keyframes scrollBounce {
+    0%,
+    100% {
+        transform: translateY(0);
+        opacity: 0.4;
+    }
+    50% {
+        transform: translateY(8px);
+        opacity: 0.8;
+    }
+}
+
+/* Hero stagger animations */
+@keyframes heroFadeUp {
+    from {
+        opacity: 0;
+        transform: translateY(40px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.hero-anim {
+    animation: heroFadeUp 0.9s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.hero-anim-1 { animation-delay: 0.1s; }
+.hero-anim-2 { animation-delay: 0.25s; }
+.hero-anim-3 { animation-delay: 0.4s; }
+.hero-anim-4 { animation-delay: 0.6s; }
+.hero-anim-5 { animation-delay: 0.8s; }
+
+/* Orange glow pulse on CTA */
+@keyframes glowPulse {
+    0%,
+    100% {
+        box-shadow: 0 4px 24px rgba(242, 140, 82, 0.25);
+    }
+    50% {
+        box-shadow: 0 8px 40px rgba(242, 140, 82, 0.55);
+    }
+}
+
+.btn-primary {
+    animation: glowPulse 3s ease-in-out infinite;
+}
+
+/* Feature Card Hover */
+.feature-card:hover::before {
+    height: 100%;
+}
+
+.feature-card .fc-icon-bg,
+.feature-card .fc-text,
+.feature-card .fc-link {
+    transition: all 0.4s ease;
+}
+
+.feature-card:hover .fc-icon-bg {
+    background-color: rgba(255, 255, 255, 0.2) !important;
+    color: #ffffff !important;
+}
+
+.feature-card:hover .fc-text {
+    color: #ffffff !important;
+}
+
+.feature-card:hover .fc-link {
+    color: rgba(255, 255, 255, 0.9) !important;
+}
+
+/* Marquee Ticker */
+@keyframes ticker {
+    0% { transform: translateX(0); }
+    100% { transform: translateX(-50%); }
+}
+
+.ticker-content {
+    animation: ticker 35s linear infinite;
+    will-change: transform;
+    transform: translateZ(0);
+}
+
+.ticker-content:hover {
+    animation-play-state: paused;
+}

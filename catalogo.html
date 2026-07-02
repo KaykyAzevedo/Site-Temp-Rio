@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="scroll-smooth">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Catálogo Temp Rio | O Sabor que Transforma!</title>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,400;0,700;0,800;0,900;1,800&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
+
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Tailwind CSS (via CDN) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Site Config & Data -->
+    <script src="./js/config.js"></script>
+    <script src="./data/produtos.js"></script>
+    <script src="./data/parceiros.js"></script>
+    <script src="./data/depoimentos.js"></script>
+    <script src="./data/faq.js"></script>
+
+    <!-- Styles -->
+    <link rel="stylesheet" href="./css/base.css">
+    <link rel="stylesheet" href="./css/components.css">
+    <link rel="stylesheet" href="./css/animations.css">
+
+    <style>
+        /* CSS specific to product modal which was mostly inline previously */
+        .modal-overlay {
+            background-color: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+    </style>
+</head>
+
+<body class="selection:bg-primary-500 selection:text-white">
+
+    <main>
+        <!-- NAVBAR for internal pages -->
+        <nav class="w-full flex items-center justify-between px-6 md:px-12 py-6 bg-[#0A0A0A] border-b border-borderSubtle relative z-20">
+            <a href="index.html">
+                <img src="./assets/images/logo.png" alt="Temp Rio" class="h-8 md:h-12 w-auto object-contain">
+            </a>
+            <a href="https://wa.me/5521996203535" target="_blank"
+                class="hidden md:inline-flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-white/70 hover:text-primary-400 transition-colors border border-white/10 hover:border-primary-500/40 px-5 py-2.5 rounded-full backdrop-blur-sm">
+                <i class="fa-brands fa-whatsapp text-green-400"></i> Fale agora
+            </a>
+        </nav>
+
+        <section id="catalogo" class="py-24 border-b border-borderSubtle bg-[#0A0A0A] text-white">
+            <div class="max-w-7xl mx-auto px-6">
+                <div class="flex flex-col md:flex-row md:items-end justify-between mb-16 gap-6 fade-in">
+                    <div>
+                        <h2 class="text-3xl md:text-5xl font-bold tracking-tight mb-4">Catálogo Completo</h2>
+                        <p class="text-textSecondary font-light text-lg max-w-xl">Todos os nossos temperos 100% naturais. Encontre os sabores perfeitos para as suas receitas.</p>
+                    </div>
+                    <a href="index.html" class="text-primary-400 hover:text-primary-500 font-semibold flex items-center gap-2 group transition-colors">
+                        <i class="fa-solid fa-arrow-left transform group-hover:-translate-x-1 transition-transform"></i> Voltar para Início
+                    </a>
+                </div>
+                
+                <!-- Search Bar -->
+                <div class="mb-12 relative max-w-xl fade-in" style="z-index: 10;">
+                    <div class="relative">
+                        <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                            <i class="fa-solid fa-magnifying-glass text-gray-400"></i>
+                        </div>
+                        <input type="text" id="searchInput" placeholder="Pesquise por temperos (ex: Alho, Pimenta...)" 
+                            class="w-full bg-[#1A1A1A] border border-borderSubtle text-white text-base rounded-full focus:ring-primary-500 focus:border-primary-500 block pl-12 pr-4 py-3.5 transition-all outline-none hover:border-primary-500/50 focus:bg-[#222]">
+                    </div>
+                </div>
+
+                <!-- Carregado via JS -->
+                <div class="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6" id="catalogGrid">
+                </div>
+            </div>
+        </section>
+
+        <!-- 7. CTA FINAL -->
+        <section id="contato" class="py-32 relative overflow-hidden bg-[#0A0A0A]">
+            <div
+                class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[500px] bg-primary-500/10 blur-[150px] pointer-events-none rounded-full">
+            </div>
+
+            <div class="max-w-4xl mx-auto px-6 relative z-10 text-center fade-in">
+                <span
+                    class="badge-highlight inline-flex items-center gap-2 text-xs font-semibold py-1.5 px-4 rounded-full mb-6">
+                    <i class="fa-solid fa-store"></i> Feito para o seu negócio
+                </span>
+                <h2 class="text-4xl md:text-6xl font-bold tracking-tight mb-6">Pronto para elevar o padrão e vender muito
+                    mais no seu estabelecimento?</h2>
+                <p class="text-xl text-textSecondary font-light mb-12 max-w-2xl mx-auto">
+                    Garanta produtos 100% naturais, com preço de atacado e alta rotatividade. Fale rapidamente com nossos consultores no WhatsApp e faça o pedido para o seu CNPJ.
+                </p>
+                <div class="flex flex-col sm:flex-row gap-4 justify-center">
+                    <a href="https://wa.me/5521996203535" target="_blank"
+                        class="btn-primary px-10 py-5 rounded-xl text-lg font-semibold flex items-center justify-center gap-3 w-full sm:w-auto">
+                        <i class="fa-brands fa-whatsapp text-2xl"></i> Falar com Consultor Comercial
+                    </a>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- 8. RODAPÉ -->
+    <footer class="bg-[#050505] border-t border-borderSubtle pt-20 pb-10">
+        <div class="max-w-7xl mx-auto px-6">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-12 mb-16 fade-in">
+                <div class="md:col-span-1">
+                    <a href="index.html" class="block mb-2 -my-8 md:-my-16">
+                        <img src="./assets/images/logo.png" alt="Temp Rio Logo"
+                            class="h-[180px] md:h-[300px] w-auto object-contain mix-blend-lighten origin-left relative -left-4">
+                    </a>
+                    <p class="text-sm text-textSecondary font-light leading-relaxed">
+                        Compromisso absoluto com ingredientes mais limpos e puros. O sabor que transforma a sua cozinha!
+                    </p>
+                </div>
+
+                <div>
+                    <h5 class="text-white font-semibold mb-6">Institucional</h5>
+                    <ul class="space-y-4 text-sm text-textSecondary">
+                        <li><a href="index.html#sobre-empresa" class="hover:text-primary-400 transition-colors">Sobre a Empresa</a></li>
+                        <li><a href="index.html#sobre" class="hover:text-primary-400 transition-colors">Nossos
+                                Diferenciais</a></li>
+                        <li><a href="index.html#faq" class="hover:text-primary-400 transition-colors">Perguntas Frequentes (FAQ)</a></li>
+                    </ul>
+                </div>
+
+                <div>
+                    <h5 class="text-white font-semibold mb-6">Siga a Temp Rio</h5>
+                    <ul class="space-y-4 text-sm text-textSecondary">
+                        <li><a href="https://instagram.com/temp_riorj" target="_blank" class="hover:text-primary-400 transition-colors config-instagram"><i
+                                    class="fa-brands fa-instagram"></i> Instagram (@temp_riorj)</a></li>
+                        <li><a href="#" class="hover:text-primary-400 transition-colors"><i
+                                    class="fa-brands fa-tiktok"></i> Receitas Rápidas</a></li>
+                        <li><a href="#" class="hover:text-primary-400 transition-colors"><i
+                                    class="fa-regular fa-heart"></i> Dicas de Saúde</a></li>
+                    </ul>
+                </div>
+
+                <div>
+                    <h5 class="text-white font-semibold mb-6">Contato Direto</h5>
+                    <ul class="space-y-4 text-sm text-textSecondary font-light">
+                        <li class="flex items-start gap-3 config-email">
+                            <i class="fa-regular fa-envelope mt-1"></i> ouvidoriatemprio@gmail.com
+                        </li>
+                        <li class="flex items-start gap-3 config-telefone">
+                            <i class="fa-brands fa-whatsapp mt-1"></i> (21) 99620-3535
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <i class="fa-solid fa-location-dot mt-1"></i> Entregamos apenas no Rio de Janeiro (por enquanto!)
+                        </li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="border-t border-borderSubtle pt-8 flex flex-col md:flex-row items-center justify-between gap-4 fade-in"
+                style="transition-delay: 200ms;">
+                <p class="text-xs text-textSecondary">
+                    &copy; 2026 Temp Rio Indústria e Comércio. Todos os direitos reservados. Ingredientes Selecionados.
+                </p>
+                <div class="flex gap-4">
+                    <a href="#" class="text-textSecondary hover:text-white transition-colors text-lg"><i
+                            class="fa-brands fa-facebook"></i></a>
+                    <a href="https://instagram.com/temp_riorj" target="_blank" class="text-textSecondary hover:text-white transition-colors text-lg config-instagram"><i
+                            class="fa-brands fa-instagram"></i></a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Fixed WhatsApp Widget Button -->
+    <a href="https://wa.me/5521996203535" target="_blank" class="whatsapp-float">
+        <i class="fa-brands fa-whatsapp"></i>
+    </a>
+
+    <!-- Modal Container -->
+    <div id="productModal" class="fixed inset-0 z-[100] hidden">
+        <div class="absolute inset-0 modal-overlay transition-opacity duration-300 opacity-0" id="modalBackdrop"></div>
+        
+        <div class="fixed inset-0 z-10 overflow-y-auto">
+            <div class="flex min-h-full items-center justify-center p-4 text-center sm:p-0">
+                <div id="modalContentPanel" class="relative transform overflow-hidden rounded-2xl surface-card text-left shadow-2xl transition-all duration-300 opacity-0 translate-y-8 sm:my-8 sm:w-full sm:max-w-4xl border border-white/10 flex flex-col md:flex-row">
+                    
+                    <!-- Close Button -->
+                    <button id="closeModalBtn" class="absolute top-4 right-4 z-10 w-10 h-10 bg-black/40 hover:bg-primary-500 rounded-full flex items-center justify-center text-white transition-colors border border-white/10 backdrop-blur-md">
+                        <i class="fa-solid fa-xmark text-lg"></i>
+                    </button>
+
+                    <!-- Left: Image -->
+                    <div class="w-full md:w-1/2 bg-[#111111] relative p-8 flex items-center justify-center min-h-[300px]">
+                        <!-- Decorative bg elements -->
+                        <div class="absolute top-0 left-0 w-full h-full bg-gradient-to-b from-black/20 to-black/60 pointer-events-none"></div>
+                        <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 bg-primary-500/10 rounded-full blur-3xl pointer-events-none"></div>
+                        
+                        <img id="modalImage" src="" alt="" class="relative z-10 w-full max-w-[320px] object-contain drop-shadow-2xl scale-110">
+                    </div>
+
+                    <!-- Right: Info -->
+                    <div class="w-full md:w-1/2 p-8 md:p-10 flex flex-col bg-gradient-to-br from-[#1A1A1A] to-[#0A0A0A]">
+                        
+                        <!-- Header -->
+                        <div class="mb-8">
+                            <span class="badge-highlight inline-flex items-center gap-1.5 text-[0.65rem] font-bold py-1 px-3 rounded-full mb-4 uppercase tracking-widest">
+                                <i class="fa-solid fa-leaf"></i> 100% Natural
+                            </span>
+                            <h3 id="modalTitle" class="text-3xl md:text-4xl font-bold text-white uppercase tracking-tight mb-2" style="font-family: 'Barlow Condensed', sans-serif;">
+                                Nome do Produto
+                            </h3>
+                            <div class="w-12 h-1 bg-gradient-to-r from-primary-400 to-primary-600 rounded-full"></div>
+                        </div>
+
+                        <!-- Details (Scrollable if needed) -->
+                        <div class="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-8" style="max-height: 45vh;">
+                            
+                            <!-- Ingredientes -->
+                            <div>
+                                <h4 class="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                    <i class="fa-solid fa-list-check text-primary-500"></i> Ingredientes
+                                </h4>
+                                <p id="modalIngredients" class="text-gray-300 font-light text-sm leading-relaxed">
+                                    Carregando...
+                                </p>
+                            </div>
+
+                            <!-- Alérgicos -->
+                            <div>
+                                <h4 class="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                    <i class="fa-solid fa-triangle-exclamation text-primary-500"></i> Alérgicos
+                                </h4>
+                                <p id="modalAllergens" class="text-gray-300 font-light text-sm leading-relaxed p-3 bg-white/5 border border-white/10 rounded-lg">
+                                    Carregando...
+                                </p>
+                            </div>
+
+                            <!-- Tabela Nutricional (Dynamic) -->
+                            <div id="modalNutritionContainer" class="hidden">
+                                <div class="flex items-center justify-between mb-3">
+                                    <h4 class="text-xs font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2">
+                                        <i class="fa-solid fa-chart-pie text-primary-500"></i> Inf. Nutricional
+                                    </h4>
+                                    <span id="modalServingSize" class="text-xs text-gray-400 font-light bg-black/40 px-2 py-1 rounded">Porção 5g</span>
+                                </div>
+                                
+                                <div class="bg-[#111111] border border-white/10 rounded-xl overflow-hidden text-xs">
+                                    <table class="w-full text-left border-collapse">
+                                        <thead>
+                                            <tr class="bg-black/40 text-gray-400">
+                                                <th class="py-2 px-3 font-semibold w-1/2">Quantidade por porção</th>
+                                                <th class="py-2 px-3 font-semibold text-right">%VD(*)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="modalNutritionBody" class="text-gray-300 font-light divide-y divide-white/5">
+                                            <!-- Preenchido via JS -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <p class="text-[0.6rem] text-gray-500 mt-2 font-light italic leading-tight">
+                                    * % Valores Diários de referência com base em uma dieta de 2.000 kcal ou 8.400 kJ. 
+                                    Seus valores diários podem ser maiores ou menores dependendo de suas necessidades energéticas.
+                                </p>
+                            </div>
+
+                            <div id="modalNoNutrition" class="hidden">
+                                <p class="text-xs text-gray-500 italic flex items-center gap-2">
+                                    <i class="fa-solid fa-circle-info"></i> Tabela nutricional não aplicável ou isenta.
+                                </p>
+                            </div>
+
+                        </div>
+
+                        <!-- Footer CTA -->
+                        <div class="mt-8 pt-6 border-t border-white/10">
+                            <a href="https://wa.me/5521996203535" target="_blank" class="w-full btn-primary py-3.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 group config-whatsapp">
+                                <span>Comprar no Atacado</span>
+                                <i class="fa-brands fa-whatsapp text-lg group-hover:scale-110 transition-transform"></i>
+                            </a>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="./js/main.js"></script>
+    <script src="./js/faq.js"></script>
+    <script src="./js/sliders.js"></script>
+    <script src="./js/counters.js"></script>
+    <script src="./js/product-modal.js"></script>
+    <script src="./js/content-loader.js"></script>
+</body>
+
+</html>
