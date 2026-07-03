@@ -21,27 +21,7 @@ const productData = {
         alergicos: "PODE CONTER SOJA, TRIGO, AMÊNDOA E PISTACHE. CONTÉM GLÚTEN",
         nutricional: null
     },
-    "CACAU EM PÓ": {
-        ingredientes: "Cacau em pó, Regulador de Acidez Carbonato de potássio (INS 501i).",
-        alergicos: "PODE CONTER SOJA, TRIGO, AMÊNDOA E PISTACHE. CONTÉM GLÚTEN",
-        nutricional: {
-            porcoes: "Cerca de 3",
-            porcao: "20g (1 Colher de sopa)",
-            medida: "20 g",
-            rows: [
-                { nome: "Valor energético (kcal)", cem: "438", porcao: "88", vd: "4" },
-                { nome: "Carboidratos (g)", cem: "58", porcao: "12", vd: "4" },
-                { nome: "Açúcares totais (g)", cem: "2", porcao: "0", vd: "-" },
-                { nome: "Açúcares adicionados (g)", cem: "0", porcao: "0", vd: "0" },
-                { nome: "Proteínas (g)", cem: "20", porcao: "4", vd: "8" },
-                { nome: "Gorduras totais (g)", cem: "14", porcao: "3", vd: "4" },
-                { nome: "Gord saturadas (g)", cem: "8", porcao: "2", vd: "8" },
-                { nome: "Gord trans (g)", cem: "0", porcao: "0", vd: "0" },
-                { nome: "Fibras (g)", cem: "37", porcao: "7", vd: "30" },
-                { nome: "Sódio (mg)", cem: "21", porcao: "4", vd: "0" }
-            ]
-        }
-    },
+
     "CHIA": {
         ingredientes: "Chia Hispânica",
         alergicos: "PODE CONTER SOJA, TRIGO, AMÊNDOA E PISTACHE. CONTÉM GLÚTEN",

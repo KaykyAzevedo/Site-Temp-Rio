@@ -1,7 +1,7 @@
 const faq = [
     {
         pergunta: "Os temperos contêm glutamato monossódico?",
-        resposta: "Não! Diferente de muitos temperos industriais, nossos produtos são 100% naturais, livres de glutamato monossódico, corantes artificiais e conservantes químicos."
+        resposta: "Não! Nossos produtos são livres de glutamato monossódico e corantes artificiais, utilizando apenas corantes naturais."
     },
     {
         pergunta: "Qual é a validade dos produtos?",

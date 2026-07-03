@@ -29,12 +29,7 @@ const produtos = [
         imagem: "assets/images/produtos/bicarbonato-de-sodio.png",
         destaque: false
     },
-    {
-        id: "cacau-em-po",
-        nome: "Cacau Em Po",
-        imagem: "assets/images/produtos/cacau-em-po.png",
-        destaque: false
-    },
+
     {
         id: "caldo-de-bacon",
         nome: "Caldo De Bacon",
@@ -167,12 +162,7 @@ const produtos = [
         imagem: "assets/images/produtos/curry.png",
         destaque: true
     },
-    {
-        id: "edu-guedes",
-        nome: "Edu Guedes",
-        imagem: "assets/images/produtos/edu.png",
-        destaque: true
-    },
+
     {
         id: "do-chefe",
         nome: "Do Chefe",
