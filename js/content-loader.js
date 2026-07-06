@@ -85,8 +85,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const searchInput = document.getElementById('searchInput');
         if (searchInput) {
             searchInput.addEventListener('input', (e) => {
-                const term = e.target.value.toLowerCase();
-                const filtered = produtos.filter(p => p.nome.toLowerCase().includes(term));
+                const normalize = (str) => str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+                const term = normalize(e.target.value);
+                const filtered = produtos.filter(p => normalize(p.nome).includes(term));
                 renderCatalog(filtered);
             });
         }
