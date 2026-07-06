@@ -72,6 +72,11 @@ document.addEventListener('DOMContentLoaded', () => {
             if (window.setupModal) {
                 window.setupModal();
             }
+
+            // Re-bind animations
+            if (window.initAnimations) {
+                window.initAnimations();
+            }
         };
 
         renderCatalog(produtos);
