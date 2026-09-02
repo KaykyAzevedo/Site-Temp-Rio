@@ -1308,6 +1308,9 @@ const modalHTML = `
                 </div>
             </div>
 
+            <!-- Preenchido por js/cart-ui.js. Fica vazio se o carrinho nao estiver carregado. -->
+            <div id="modal-picker-slot"></div>
+
             <!-- Content Section -->
             <div class="w-full flex flex-col gap-8">
                 <!-- Info Boxes -->
@@ -1463,6 +1466,11 @@ function openModalFromCard(card) {
 
     updateNavigationButtons();
 
+    // Gancho opcional: js/cart-ui.js usa para montar o seletor de caixa.
+    if (typeof window.onProductModalOpen === 'function') {
+        window.onProductModalOpen(card.dataset.id || null, rawName);
+    }
+
     modal.classList.remove('hidden');
     modal.classList.add('flex');
     // Reinicia o scroll ao abrir ou trocar de produto
@@ -1472,7 +1480,7 @@ function openModalFromCard(card) {
         modalContent.classList.remove('scale-95');
     }, 10);
     
-    document.body.style.overflow = 'hidden'; 
+    window.ScrollLock.acquire('product-modal');
 }
 
 function closeModal() {
@@ -1482,7 +1490,7 @@ function closeModal() {
     setTimeout(() => {
         modal.classList.add('hidden');
         modal.classList.remove('flex');
-        document.body.style.overflow = '';
+        window.ScrollLock.release('product-modal');
     }, 300);
 }
 
@@ -1525,6 +1533,11 @@ window.setupModal = function() {
         }
     });
 };
+
+// Exportado para o carrinho: a gaveta fecha o modal antes de abrir, para
+// nunca haver dois overlays visiveis ao mesmo tempo.
+window.openProductModal = openModalFromCard;
+window.closeProductModal = closeModal;
 
 // Call once for static cards (if any)
 window.setupModal();

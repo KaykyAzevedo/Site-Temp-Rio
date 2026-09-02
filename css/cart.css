@@ -1,0 +1,183 @@
+/* Carrinho de pedidos.
+ *
+ * CSS real, não utilitárias do Tailwind, para tudo que é crítico: o Tailwind
+ * entra por CDN, e se ele falhar a gaveta ainda precisa abrir, fechar e ser
+ * legível. As cores repetem os tokens de js/main.js de propósito.
+ */
+
+/* ===================== Botão flutuante ===================== */
+/* O botão do WhatsApp já ocupa bottom:40px / right:40px com 60x60
+   (css/components.css). Subimos 76px = 40 + 60 de altura + 16 de respiro,
+   para os dois conviverem na mesma coluna sem encostar. */
+.cart-float {
+    position: fixed;
+    right: 40px;
+    bottom: 116px;
+    width: 60px;
+    height: 60px;
+    border-radius: 50px;
+    background-color: #1A1A1A;
+    border: 1px solid rgba(242, 140, 82, 0.5);
+    color: #F28C52;
+    font-size: 26px;
+    display: none; /* só aparece quando há itens */
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 101;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    transition: transform 0.3s ease, background-color 0.3s ease;
+}
+
+.cart-float.is-visivel { display: flex; }
+
+.cart-float:hover {
+    transform: scale(1.08);
+    background-color: #222222;
+}
+
+.cart-float-badge {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    min-width: 23px;
+    height: 23px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background-color: #F28C52;
+    color: #FFFFFF;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-size: 0.9rem;
+    font-weight: 800;
+    line-height: 23px;
+    text-align: center;
+    box-sizing: border-box;
+}
+
+@media (max-width: 767px) {
+    .cart-float { right: 24px; bottom: 100px; }
+}
+
+/* ===================== Gaveta ===================== */
+.cart-backdrop {
+    position: fixed;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.8);
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+    z-index: 1000;
+}
+
+.cart-backdrop.is-aberto {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* inset-y em vez de height:100vh — no Safari do iPhone, 100vh inclui a barra
+   de endereço e o rodapé da gaveta fica fora da tela. */
+.cart-drawer {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    width: 100%;
+    max-width: 26rem;
+    background-color: #111111;
+    border-left: 1px solid rgba(255, 255, 255, 0.08);
+    display: flex;
+    flex-direction: column;
+    transform: translateX(100%);
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    z-index: 1001;
+}
+
+.cart-drawer.is-aberto { transform: translateX(0); }
+
+.cart-drawer-corpo {
+    flex: 1;
+    overflow-y: auto;
+    overscroll-behavior: contain; /* evita o rubber-band do iOS puxar a página de trás */
+}
+
+/* ===================== Linha de item ===================== */
+/* IMPORTANTE: não usar .surface-card aqui, e nunca <h4> no nome do sabor.
+   js/product-modal.js trata qualquer ".surface-card contendo h4" como card de
+   produto clicável e o inclui na navegação anterior/próximo do modal. Uma linha
+   de carrinho com essas duas características viraria um "produto" fantasma.
+   A aparência é a mesma; só o seletor é diferente. */
+.cart-line {
+    background-color: #1A1A1A;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 0.75rem;
+}
+
+.cart-line.is-stale {
+    border-color: rgba(242, 140, 82, 0.4);
+}
+
+/* ===================== Barra do mínimo ===================== */
+.cart-progresso {
+    height: 6px;
+    border-radius: 999px;
+    background-color: rgba(255, 255, 255, 0.1);
+    overflow: hidden;
+}
+
+.cart-progresso-barra {
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #F5A474 0%, #F28C52 100%);
+    transition: width 0.4s ease;
+}
+
+.cart-progresso-barra.is-completo {
+    background: linear-gradient(90deg, #4ade80 0%, #22c55e 100%);
+}
+
+/* ===================== Aviso ===================== */
+/* Laranja, não vermelho: o vermelho fica reservado para erro de campo no
+   formulário. Não atingir o mínimo não é erro do cliente. */
+.cart-aviso {
+    background-color: rgba(242, 140, 82, 0.1);
+    border: 1px solid rgba(242, 140, 82, 0.25);
+    color: #F5A474;
+    border-radius: 0.75rem;
+}
+
+/* ===================== Toast ===================== */
+.cart-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 32px;
+    transform: translate(-50%, 16px);
+    background-color: #1A1A1A;
+    border: 1px solid rgba(242, 140, 82, 0.4);
+    color: #FFFFFF;
+    border-radius: 999px;
+    padding: 12px 22px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+    z-index: 1002;
+    max-width: calc(100vw - 48px);
+    text-align: center;
+}
+
+.cart-toast.is-visivel {
+    opacity: 1;
+    transform: translate(-50%, 0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .cart-drawer,
+    .cart-backdrop,
+    .cart-toast,
+    .cart-progresso-barra,
+    .cart-float { transition: none; }
+}
