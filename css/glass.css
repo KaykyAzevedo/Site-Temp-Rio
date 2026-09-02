@@ -1,0 +1,291 @@
+/* Tema "liquid glass" do catálogo.
+ *
+ * Isolado de propósito: tudo aqui está sob [data-tema="vidro"], que só o
+ * catalogo.html declara. Tirar o atributo do <body> devolve o design anterior
+ * sem tocar em mais nada.
+ *
+ * Princípio: vidro só existe se houver algo atrás para refratar. O catálogo era
+ * preto chapado, então a primeira coisa que este arquivo faz é criar uma camada
+ * de luz ambiente. Sem ela, backdrop-filter borra o vazio e o efeito não aparece.
+ *
+ * A paleta é a mesma da marca: só o laranja #F28C52 e o preto #0D0D0D, usados
+ * como luz em vez de tinta.
+ */
+
+/* ===================================================================
+ * 1. Luz ambiente — o que o vidro vai refratar
+ * =================================================================== */
+/* FIXA na viewport, nao absoluta na secao. A secao do catalogo tem uns
+   5000px de altura; com posicionamento em porcentagem as orbes ficariam
+   espalhadas por toda ela e praticamente nada apareceria em cada tela.
+   Fixa, a luz acompanha a rolagem e o vidro sempre tem o que refratar. */
+[data-tema="vidro"] .vidro-cena {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* Veu escuro por cima da luz: sem ele o brilho lava o contraste do titulo e
+   do texto de apoio, que ficam direto sobre a cena, sem vidro atras. */
+[data-tema="vidro"] .vidro-cena::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+        radial-gradient(ellipse 85% 65% at 50% 45%, rgba(7, 7, 7, 0.3) 0%, rgba(7, 7, 7, 0.05) 65%, transparent 100%),
+        linear-gradient(180deg, rgba(7, 7, 7, 0.2) 0%, transparent 20%, transparent 80%, rgba(7, 7, 7, 0.35) 100%);
+    pointer-events: none;
+    z-index: 1;
+}
+
+[data-tema="vidro"] .vidro-orbe {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(90px);
+    pointer-events: none;
+    /* Uma camada de GPU só para as orbes; as animações são de transform,
+       então não repintam nada. */
+    will-change: transform;
+}
+
+[data-tema="vidro"] .vidro-orbe-1 {
+    width: 46vw;
+    height: 46vw;
+    max-width: 620px;
+    max-height: 620px;
+    top: -14vh;
+    left: -8vw;
+    background: radial-gradient(circle, rgba(242, 140, 82, 0.55) 0%, rgba(242, 140, 82, 0) 70%);
+    animation: vidroDeriva1 34s ease-in-out infinite;
+}
+
+[data-tema="vidro"] .vidro-orbe-2 {
+    width: 40vw;
+    height: 40vw;
+    max-width: 540px;
+    max-height: 540px;
+    top: 24vh;
+    right: -12vw;
+    background: radial-gradient(circle, rgba(217, 110, 48, 0.48) 0%, rgba(217, 110, 48, 0) 70%);
+    animation: vidroDeriva2 42s ease-in-out infinite;
+}
+
+[data-tema="vidro"] .vidro-orbe-3 {
+    width: 52vw;
+    height: 52vw;
+    max-width: 700px;
+    max-height: 700px;
+    bottom: -22vh;
+    left: 22vw;
+    background: radial-gradient(circle, rgba(245, 164, 116, 0.34) 0%, rgba(245, 164, 116, 0) 70%);
+    animation: vidroDeriva3 50s ease-in-out infinite;
+}
+
+@keyframes vidroDeriva1 {
+    0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+    50%      { transform: translate3d(14%, 18%, 0) scale(1.12); }
+}
+
+@keyframes vidroDeriva2 {
+    0%, 100% { transform: translate3d(0, 0, 0) scale(1.08); }
+    50%      { transform: translate3d(-16%, -12%, 0) scale(1); }
+}
+
+@keyframes vidroDeriva3 {
+    0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+    50%      { transform: translate3d(10%, -16%, 0) scale(1.15); }
+}
+
+/* O conteúdo fica acima da cena. */
+[data-tema="vidro"] #catalogo > .max-w-7xl { position: relative; z-index: 1; }
+
+/* A seção deixa de ser preta chapada para a luz aparecer. */
+[data-tema="vidro"] #catalogo {
+    position: relative;
+    background-color: #070707;
+    overflow: hidden;
+}
+
+/* ===================================================================
+ * 2. A superfície de vidro
+ *
+ * Três camadas empilhadas, que é o que separa "vidro" de "quadrado
+ * translúcido":
+ *   - o corpo: blur + saturação, para a luz de trás vazar com cor
+ *   - o bisel: uma linha clara no topo e uma escura embaixo, simulando a
+ *     espessura da placa
+ *   - o brilho especular: um reflexo diagonal que atravessa a peça
+ * =================================================================== */
+[data-tema="vidro"] .surface-card {
+    position: relative;
+    background: linear-gradient(
+        150deg,
+        rgba(255, 255, 255, 0.10) 0%,
+        rgba(255, 255, 255, 0.045) 42%,
+        rgba(255, 255, 255, 0.02) 100%
+    );
+    /* SEM backdrop-filter aqui, de proposito.
+       Atras de cada card so existe o degrade suave das orbes, que ja e um
+       borrao: borrar um borrao nao produz diferenca visivel. Comparado lado a
+       lado, com e sem blur, os cards ficam identicos. Como sao 73 na mesma
+       tela, o custo de composicao na GPU seria pago sem nenhum retorno.
+       O vidro aqui vem das camadas: degrade + bisel + brilho especular.
+       O blur de verdade fica nas pecas grandes (barra fixa, busca, modal e
+       gaveta), onde refrata conteudo com detalhe e a diferenca aparece. */
+    border: 1px solid rgba(255, 255, 255, 0.13);
+    /* Bisel: luz no topo, sombra embaixo, e a peça flutuando sobre a cena. */
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.35),
+        inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.4),
+        0 12px 40px rgba(0, 0, 0, 0.45);
+    transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+                border-color 0.45s ease,
+                box-shadow 0.45s ease;
+}
+
+/* Brilho especular: uma faixa diagonal que varre a peça no hover. */
+[data-tema="vidro"] .surface-card::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(
+        105deg,
+        transparent 30%,
+        rgba(255, 255, 255, 0.13) 45%,
+        rgba(255, 255, 255, 0.03) 55%,
+        transparent 70%
+    );
+    background-size: 260% 100%;
+    background-position: 130% 0;
+    opacity: 0;
+    pointer-events: none;
+    z-index: 30;
+    transition: background-position 0.9s cubic-bezier(0.16, 1, 0.3, 1),
+                opacity 0.4s ease;
+}
+
+[data-tema="vidro"] .surface-card:hover::after {
+    opacity: 1;
+    background-position: -30% 0;
+}
+
+[data-tema="vidro"] .surface-card:hover {
+    transform: translateY(-6px);
+    border-color: rgba(242, 140, 82, 0.45);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.3),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.35),
+        0 20px 50px rgba(0, 0, 0, 0.55),
+        0 0 45px rgba(242, 140, 82, 0.18);
+}
+
+/* O rodapé do card era #1A1A1A opaco e tapava o vidro inteiro. */
+[data-tema="vidro"] #catalogGrid .surface-card > div:last-child,
+[data-tema="vidro"] #destaques-container .surface-card > div:last-child {
+    background: linear-gradient(180deg, rgba(10, 10, 10, 0.35) 0%, rgba(10, 10, 10, 0.6) 100%) !important;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* A moldura da imagem também era opaca; vira uma janela levemente fumê. */
+[data-tema="vidro"] #catalogGrid .surface-card .bg-\[\#111111\] {
+    background-color: rgba(8, 8, 8, 0.45) !important;
+}
+
+/* Contraste do cabecalho: em vez de escurecer a cena toda, protege so o
+   texto que fica direto sobre a luz, sem vidro atras. */
+[data-tema="vidro"] #catalogo h2 {
+    text-shadow: 0 2px 24px rgba(0, 0, 0, 0.85), 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+
+[data-tema="vidro"] #catalogo h2 + p,
+[data-tema="vidro"] #catalogo .text-textSecondary {
+    text-shadow: 0 1px 12px rgba(0, 0, 0, 0.8);
+}
+
+/* ===================================================================
+ * 3. Busca — a peça de vidro mais visível da página
+ * =================================================================== */
+[data-tema="vidro"] #searchInput {
+    background: linear-gradient(
+        150deg,
+        rgba(255, 255, 255, 0.11) 0%,
+        rgba(255, 255, 255, 0.05) 100%
+    ) !important;
+    -webkit-backdrop-filter: blur(24px) saturate(160%);
+    backdrop-filter: blur(24px) saturate(160%);
+    border-color: rgba(255, 255, 255, 0.16) !important;
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.25),
+        0 8px 30px rgba(0, 0, 0, 0.35);
+}
+
+[data-tema="vidro"] #searchInput:focus {
+    border-color: rgba(242, 140, 82, 0.7) !important;
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.3),
+        0 8px 30px rgba(0, 0, 0, 0.35),
+        0 0 0 1px rgba(242, 140, 82, 0.5),
+        0 0 34px rgba(242, 140, 82, 0.22);
+}
+
+[data-tema="vidro"] #searchInput::placeholder { color: rgba(255, 255, 255, 0.38); }
+
+/* ===================================================================
+ * 4. Navegação de vidro, fixa no topo
+ * =================================================================== */
+[data-tema="vidro"] nav {
+    position: sticky;
+    top: 0;
+    background: rgba(7, 7, 7, 0.55) !important;
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    backdrop-filter: blur(20px) saturate(160%);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.09) !important;
+    box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* ===================================================================
+ * 5. Botão do card, no mesmo vocabulário
+ * =================================================================== */
+[data-tema="vidro"] .cart-add-btn {
+    /* Tambem sem blur: sao 73 destes na mesma tela, pelo mesmo motivo do card. */
+    background: rgba(255, 255, 255, 0.06);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+[data-tema="vidro"] .cart-add-btn:hover {
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25),
+                0 0 24px rgba(242, 140, 82, 0.35);
+}
+
+/* ===================================================================
+ * 6. Degradação
+ *
+ * Sem suporte a backdrop-filter (Firefox antigo, navegadores em modo de
+ * economia), a superfície vira um cinza translúcido sólido em vez de sumir.
+ * =================================================================== */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    [data-tema="vidro"] .surface-card,
+    [data-tema="vidro"] #searchInput,
+    [data-tema="vidro"] nav {
+        background: rgba(26, 26, 26, 0.92) !important;
+    }
+}
+
+/* No celular a viewport e estreita e as orbes em vw encolhiam demais: a luz
+   praticamente sumia e o vidro ficava sem nada para refratar. */
+@media (max-width: 767px) {
+    [data-tema="vidro"] .vidro-orbe-1 { width: 110vw; height: 110vw; }
+    [data-tema="vidro"] .vidro-orbe-2 { width: 95vw;  height: 95vw; }
+    [data-tema="vidro"] .vidro-orbe-3 { width: 120vw; height: 120vw; }
+    [data-tema="vidro"] .vidro-orbe { filter: blur(60px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    [data-tema="vidro"] .vidro-orbe { animation: none; }
+    [data-tema="vidro"] .surface-card,
+    [data-tema="vidro"] .surface-card::after { transition: none; }
+}

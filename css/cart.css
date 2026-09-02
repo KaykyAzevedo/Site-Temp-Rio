@@ -54,9 +54,8 @@
     box-sizing: border-box;
 }
 
-@media (max-width: 767px) {
-    .cart-float { right: 24px; bottom: 100px; }
-}
+/* No mobile mantem a mesma coluna e a mesma folga do desktop. Encolher a
+   margem lateral aproximava os dois botoes e eles se encostavam. */
 
 /* ===================== Gaveta ===================== */
 .cart-backdrop {

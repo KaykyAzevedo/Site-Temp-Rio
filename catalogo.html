@@ -32,6 +32,7 @@
     <link rel="stylesheet" href="./css/components.css">
     <link rel="stylesheet" href="./css/animations.css">
     <link rel="stylesheet" href="./css/cart.css">
+    <link rel="stylesheet" href="./css/glass.css">
 
     <style>
         /* CSS specific to product modal which was mostly inline previously */
@@ -43,7 +44,10 @@
     </style>
 </head>
 
-<body class="selection:bg-primary-500 selection:text-white">
+<!-- data-tema="vidro": todo o tema de vidro esta sob esse atributo em
+     css/glass.css. Removendo o atributo, o design anterior volta inteiro. -->
+
+<body class="selection:bg-primary-500 selection:text-white" data-tema="vidro">
 
     <main>
         <!-- NAVBAR for internal pages -->
@@ -58,6 +62,15 @@
         </nav>
 
         <section id="catalogo" class="py-24 border-b border-borderSubtle bg-[#0A0A0A] text-white">
+
+            <!-- Luz ambiente: e o que o vidro dos cards refrata. Sem isto o
+                 backdrop-filter borraria preto chapado e o efeito sumiria. -->
+            <div class="vidro-cena" aria-hidden="true">
+                <div class="vidro-orbe vidro-orbe-1"></div>
+                <div class="vidro-orbe vidro-orbe-2"></div>
+                <div class="vidro-orbe vidro-orbe-3"></div>
+            </div>
+
             <div class="max-w-7xl mx-auto px-6">
                 <div class="flex flex-col md:flex-row md:items-end justify-between mb-16 gap-6 fade-in">
                     <div>
