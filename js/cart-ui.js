@@ -484,6 +484,21 @@
      * Precisa ser rechamado a cada re-render da busca, que refaz o innerHTML
      * inteiro do grid e destrói todos os listeners. */
     window.setupCartControls = function () {
+        // Home: adiciona direto a caixa padrao, sem modal. O ajuste fino de
+        // tamanho e quantidade fica na gaveta, que a home tambem tem.
+        document.querySelectorAll('.cart-quick-add').forEach(function (botao) {
+            if (botao.dataset.ligado) return;
+            botao.dataset.ligado = '1';
+            botao.addEventListener('click', function (e) {
+                e.stopPropagation();
+                var id = botao.getAttribute('data-id');
+                var nome = botao.getAttribute('data-nome');
+                var box = Cart.TAMANHOS[0];
+                Cart.adicionar(id, nome, box, 1);
+                toast('1 caixa de ' + box + ' de ' + nome + ' no pedido');
+            });
+        });
+
         document.querySelectorAll('.cart-add-btn').forEach(function (botao) {
             if (botao.dataset.ligado) return;
             botao.dataset.ligado = '1';
