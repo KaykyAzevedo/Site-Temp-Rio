@@ -137,3 +137,15 @@
 .ticker-content:hover {
     animation-play-state: paused;
 }
+
+/* Balanco suave da seta de scroll */
+@keyframes scrollNudge {
+    0%, 100% { transform: translateY(0); opacity: 0.55; }
+    50%      { transform: translateY(5px); opacity: 1; }
+}
+
+/* Respeita quem pediu menos movimento no sistema */
+@media (prefers-reduced-motion: reduce) {
+    .hero-anim { animation: none; }
+    .hero-scroll-cue i { animation: none; }
+}
