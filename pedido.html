@@ -112,11 +112,21 @@
                                         <input id="f-cnpj" name="cnpj" type="text" inputmode="numeric" class="campo-input" placeholder="00.000.000/0000-00" maxlength="18">
                                         <p class="campo-msg"></p>
                                     </div>
-                                    <div class="campo" data-campo="nome">
-                                        <label for="f-nome" class="block text-xs font-bold uppercase tracking-widest text-textSecondary mb-2">Nome do responsável *</label>
-                                        <input id="f-nome" name="nome" type="text" autocomplete="name" class="campo-input" placeholder="Quem estamos atendendo">
+                                    <div class="campo" data-campo="inscricaoEstadual">
+                                        <label for="f-inscricaoEstadual" class="block text-xs font-bold uppercase tracking-widest text-textSecondary mb-2">Inscrição estadual *</label>
+                                        <input id="f-inscricaoEstadual" name="inscricaoEstadual" type="text" inputmode="numeric" class="campo-input" placeholder="Somente números" maxlength="14">
                                         <p class="campo-msg"></p>
+                                        <label class="campo-check" for="f-ieIsento">
+                                            <input type="checkbox" id="f-ieIsento" name="ieIsento">
+                                            <span>Minha empresa é isenta</span>
+                                        </label>
                                     </div>
+                                </div>
+
+                                <div class="campo" data-campo="nome">
+                                    <label for="f-nome" class="block text-xs font-bold uppercase tracking-widest text-textSecondary mb-2">Nome do responsável *</label>
+                                    <input id="f-nome" name="nome" type="text" autocomplete="name" class="campo-input" placeholder="Quem estamos atendendo">
+                                    <p class="campo-msg"></p>
                                 </div>
 
                                 <div class="grid sm:grid-cols-2 gap-5">

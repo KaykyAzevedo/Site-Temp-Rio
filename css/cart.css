@@ -254,3 +254,62 @@
 
 .campo-dica.is-visivel { display: block; }
 .campo-dica.is-alerta { color: #F5A474; }
+
+/* Caixa de marcação — primeira do site. A nativa em fundo escuro fica
+   invisível no Windows, então desenhamos a nossa. */
+.campo-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    margin-top: 0.65rem;
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.55);
+    cursor: pointer;
+    user-select: none;
+}
+
+.campo-check input {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 1.05rem;
+    height: 1.05rem;
+    flex-shrink: 0;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 0.3rem;
+    background-color: #1A1A1A;
+    display: grid;
+    place-content: center;
+    cursor: pointer;
+    transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.campo-check input::before {
+    content: '';
+    width: 0.55rem;
+    height: 0.55rem;
+    transform: scale(0);
+    transition: transform 0.15s ease;
+    background-color: #FFFFFF;
+    /* Marca de confirmação desenhada em CSS, sem depender de fonte de ícones. */
+    clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+}
+
+.campo-check input:checked {
+    background-color: #F28C52;
+    border-color: #F28C52;
+}
+
+.campo-check input:checked::before { transform: scale(1); }
+
+.campo-check input:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(242, 140, 82, 0.5);
+}
+
+.campo-check:hover input { border-color: rgba(242, 140, 82, 0.6); }
+
+/* Campo desligado pela isenção: continua legível, mas sinaliza que não é editável. */
+.campo-input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}

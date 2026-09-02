@@ -62,7 +62,7 @@ Pronto. A partir daí cada cadastro vira uma linha nova na aba
 
 | Coluna | Para quê |
 |---|---|
-| Data, Razão social, CNPJ, Responsável | Quem é a empresa |
+| Data, Razão social, CNPJ, Inscrição estadual, Responsável | Quem é a empresa |
 | Telefone, E-mail | Como falar com ela |
 | CEP, Cidade, UF, Endereço | **Onde está a demanda represada** |
 | Potes, Caixas, Valor, Itens | **O tamanho do pedido que você não pôde atender** |

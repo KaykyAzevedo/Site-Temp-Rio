@@ -12,7 +12,7 @@
 const ABA = 'Lista de espera';
 
 const COLUNAS = [
-  'Data', 'Razão social', 'CNPJ', 'Responsável', 'Telefone', 'E-mail',
+  'Data', 'Razão social', 'CNPJ', 'Inscrição estadual', 'Responsável', 'Telefone', 'E-mail',
   'CEP', 'Cidade', 'UF', 'Endereço',
   'Potes', 'Caixas', 'Valor', 'Itens', 'Observações'
 ];
@@ -42,6 +42,7 @@ function doPost(e) {
       dados.enviadoEm ? new Date(dados.enviadoEm) : new Date(),
       dados.razaoSocial || '',
       dados.cnpj || '',
+      dados.inscricaoEstadual || '',
       dados.responsavel || '',
       dados.telefone || '',
       dados.email || '',

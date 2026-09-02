@@ -99,6 +99,19 @@
             testa: function (v) { return cnpjValido(v); },
             msg: 'CNPJ inválido. Confira os números.'
         },
+        inscricaoEstadual: {
+            obrigatorio: true,
+            // Só o formato. Cada um dos 27 estados tem seu próprio algoritmo de
+            // dígito verificador, e implementá-los é fonte conhecida de recusa
+            // indevida — barraria cliente legítimo por causa de uma regra
+            // estadual mal replicada. Isenção é opção explícita, não campo vazio.
+            testa: function (v) {
+                if (isentoDeIE()) return true;
+                var d = v.replace(/\D/g, '');
+                return d.length >= 8 && d.length <= 14;
+            },
+            msg: 'Informe a inscrição estadual (8 a 14 dígitos) ou marque isenta.'
+        },
         nome: {
             obrigatorio: true,
             testa: function (v) { return v.trim().length >= 3; },
@@ -134,6 +147,28 @@
 
     function naoVazio(v) { return v.trim().length > 0; }
 
+    function isentoDeIE() {
+        var caixa = document.getElementById('f-ieIsento');
+        return !!(caixa && caixa.checked);
+    }
+
+    /* Isenta: trava o campo com o valor que vai para a nota, em vez de deixar
+     * em branco. "ISENTO" é o que o vendedor precisa ler no pedido. */
+    function aplicarIsencaoIE() {
+        var campo = inputDe('inscricaoEstadual');
+        if (!campo) return;
+
+        if (isentoDeIE()) {
+            campo.dataset.anterior = campo.value.replace(/ISENTO/i, '');
+            campo.value = 'ISENTO';
+            campo.disabled = true;
+        } else {
+            campo.disabled = false;
+            if (campo.value === 'ISENTO') campo.value = campo.dataset.anterior || '';
+        }
+        validarCampo('inscricaoEstadual');
+    }
+
     var tocados = Object.create(null);
 
     function validarCampo(nome, forcar) {
@@ -167,8 +202,9 @@
     /* ===================================================================
      * Rascunho do formulário
      * =================================================================== */
-    var CAMPOS = ['razaoSocial', 'cnpj', 'nome', 'telefone', 'email', 'cep', 'logradouro',
-                  'numero', 'complemento', 'bairro', 'cidade', 'uf', 'observacoes'];
+    var CAMPOS = ['razaoSocial', 'cnpj', 'inscricaoEstadual', 'nome', 'telefone', 'email',
+                  'cep', 'logradouro', 'numero', 'complemento', 'bairro', 'cidade', 'uf',
+                  'observacoes'];
 
     function lerFormulario() {
         var d = {};
@@ -180,7 +216,9 @@
     }
 
     function salvarRascunho() {
-        try { localStorage.setItem(CHAVE_RASCUNHO, JSON.stringify(lerFormulario())); }
+        var dados = lerFormulario();
+        dados.ieIsento = isentoDeIE();
+        try { localStorage.setItem(CHAVE_RASCUNHO, JSON.stringify(dados)); }
         catch (e) { /* storage indisponível: o formulário funciona igual */ }
     }
 
@@ -194,10 +232,15 @@
         try { d = JSON.parse(bruto); } catch (e) { return; }
         if (!d || typeof d !== 'object') return;
 
+        var caixa = document.getElementById('f-ieIsento');
+        if (caixa) caixa.checked = !!d.ieIsento;
+
         CAMPOS.forEach(function (n) {
             var el = inputDe(n);
             if (el && typeof d[n] === 'string') el.value = d[n];
         });
+
+        aplicarIsencaoIE();
         atualizarAvisoEntrega();
     }
 
@@ -364,6 +407,7 @@
             enviadoEm: new Date().toISOString(),
             razaoSocial: d.razaoSocial,
             cnpj: d.cnpj,
+            inscricaoEstadual: d.inscricaoEstadual,
             responsavel: d.nome,
             telefone: d.telefone,
             email: d.email,
@@ -454,6 +498,7 @@
 
         return t('*Empresa:* ' + d.razaoSocial) + '\n' +
                '*CNPJ:* ' + d.cnpj + '\n' +
+               t('*Insc. Estadual:* ' + d.inscricaoEstadual) + '\n' +
                t('*Responsavel:* ' + d.nome) + '\n' +
                '*Tel:* ' + d.telefone + '\n' +
                t('*Email:* ' + d.email) + '\n' +
@@ -771,6 +816,15 @@
         });
         inputDe('cnpj').addEventListener('input', function () {
             this.value = mascararCnpj(this.value);
+        });
+        inputDe('inscricaoEstadual').addEventListener('input', function () {
+            if (!isentoDeIE()) this.value = this.value.replace(/\D/g, '').slice(0, 14);
+        });
+
+        var caixaIsento = document.getElementById('f-ieIsento');
+        caixaIsento.addEventListener('change', function () {
+            aplicarIsencaoIE();
+            salvarRascunho();
         });
         inputDe('cep').addEventListener('input', function () {
             this.value = mascararCep(this.value);
