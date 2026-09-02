@@ -1,20 +1,13 @@
 document.addEventListener('DOMContentLoaded', () => {
-    
-    // Load config
+
+    // ---------- Config ----------
     const updateLinks = () => {
-        // Update whatsapp links
-        const whatsappLinks = document.querySelectorAll('a[href^="https://wa.me/"]');
-        whatsappLinks.forEach(a => {
+        document.querySelectorAll('a[href^="https://wa.me/"]').forEach(a => {
             a.href = siteConfig.links.whatsappApi;
         });
-
-        // Update instagram links
-        const instaLinks = document.querySelectorAll('a[href^="https://instagram.com/"]');
-        instaLinks.forEach(a => {
+        document.querySelectorAll('a[href^="https://instagram.com/"]').forEach(a => {
             a.href = siteConfig.redesSociais.instagram;
         });
-
-        // Config placeholders
         document.querySelectorAll('.config-telefone').forEach(el => {
             el.innerHTML = `<i class="fa-brands fa-whatsapp mt-1"></i> ${siteConfig.empresa.telefone}`;
         });
@@ -23,91 +16,84 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     };
 
-    // Load Products (Destaques on Home)
+    // ---------- Card de produto (compartilhado entre home e catálogo) ----------
+    const CLASSES_CARD = 'surface-card rounded-2xl overflow-hidden hover-lift group border border-borderSubtle flex flex-col fade-in shadow-lg hover:shadow-primary-500/10';
+
+    const OVERLAY_LUPA = `
+                        <div class="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-20 bg-black/60">
+                            <button class="bg-primary-500 hover:bg-primary-600 text-white rounded-full w-14 h-14 flex items-center justify-center shadow-lg transform translate-y-4 group-hover:translate-y-0 transition-all duration-300 transform-gpu">
+                                <i class="fa-solid fa-magnifying-glass-plus text-xl"></i>
+                            </button>
+                        </div>`;
+
+    const imagemProduto = (prod, { lazy = false, overlay = '' } = {}) => `
+                    <div class="w-full aspect-[4/3] relative overflow-hidden bg-[#111111]">
+                        <img src="${prod.imagem}" alt="${prod.nome}"${lazy ? ' loading="lazy"' : ''} class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-out transform-gpu">
+                        <div class="absolute inset-0 bg-gradient-to-t from-[#1A1A1A] via-[#1A1A1A]/20 to-transparent opacity-90"></div>${overlay}
+                    </div>`;
+
+    // ---------- Destaques (home) ----------
     const loadDestaques = () => {
         const container = document.getElementById('destaques-container');
         if (!container) return;
 
-        const destaques = produtos.filter(p => p.destaque).slice(0, 4);
-        
-        container.innerHTML = destaques.map((prod, index) => `
-            <div class="surface-card rounded-2xl overflow-hidden hover-lift group border border-borderSubtle flex flex-col fade-in shadow-lg hover:shadow-primary-500/10" style="transition-delay: ${50 * index}ms;">
-                <div class="w-full aspect-[4/3] relative overflow-hidden bg-[#111111]">
-                    <img src="${prod.imagem}" alt="${prod.nome}" class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-out transform-gpu">
-                    <div class="absolute inset-0 bg-gradient-to-t from-[#1A1A1A] via-[#1A1A1A]/20 to-transparent opacity-90"></div>
+        container.innerHTML = produtos.filter(p => p.destaque).slice(0, 4).map((prod, index) => `
+                <div class="${CLASSES_CARD}" style="transition-delay: ${50 * index}ms;">${imagemProduto(prod)}
+                    <div class="p-6 pt-2 text-center bg-[#1A1A1A] relative z-10 flex flex-col justify-center items-center flex-1">
+                        <h4 class="text-xl font-bold text-white uppercase tracking-wider">${prod.nome}</h4>
+                        <div class="w-8 h-1 bg-primary-500 mx-auto rounded-full mt-3 opacity-0 group-hover:opacity-100 group-hover:w-16 transition-all duration-500"></div>
+                    </div>
                 </div>
-                <div class="p-6 pt-2 text-center bg-[#1A1A1A] relative z-10 flex flex-col justify-center items-center flex-1">
-                    <h4 class="text-xl font-bold text-white uppercase tracking-wider">${prod.nome}</h4>
-                    <div class="w-8 h-1 bg-primary-500 mx-auto rounded-full mt-3 opacity-0 group-hover:opacity-100 group-hover:w-16 transition-all duration-500"></div>
-                </div>
-            </div>
         `).join('');
     };
 
-    // Load Full Catalog (on catalogo.html)
+    // ---------- Catálogo completo (catalogo.html) ----------
     const loadCatalog = () => {
         const container = document.getElementById('catalogGrid');
         if (!container) return;
-        
+
         const renderCatalog = (items) => {
             container.innerHTML = items.map(prod => `
-                <div class="surface-card rounded-2xl overflow-hidden hover-lift group border border-borderSubtle flex flex-col fade-in shadow-lg hover:shadow-primary-500/10">
-                    <div class="w-full aspect-[4/3] relative overflow-hidden bg-[#111111]">
-                        <img src="${prod.imagem}" alt="${prod.nome}" loading="lazy" class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-out transform-gpu">
-                        <div class="absolute inset-0 bg-gradient-to-t from-[#1A1A1A] via-[#1A1A1A]/20 to-transparent opacity-90"></div>
-                        <div class="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-20 bg-black/60">
-                            <button class="open-modal-btn bg-primary-500 hover:bg-primary-600 text-white rounded-full w-14 h-14 flex items-center justify-center shadow-lg transform translate-y-4 group-hover:translate-y-0 transition-all duration-300 transform-gpu" data-product="${prod.id}">
-                                <i class="fa-solid fa-magnifying-glass-plus text-xl"></i>
-                            </button>
-                        </div>
-                    </div>
+                <div class="${CLASSES_CARD}">${imagemProduto(prod, { lazy: true, overlay: OVERLAY_LUPA })}
                     <div class="p-6 pt-4 bg-[#1A1A1A] relative z-10 flex flex-col flex-1 border-t border-white/5">
                         <h4 class="text-lg font-bold text-white uppercase tracking-wide mb-1 leading-tight">${prod.nome}</h4>
                         <p class="text-primary-500 text-xs font-bold tracking-widest uppercase mb-4">100% Natural</p>
                     </div>
                 </div>
             `).join('');
-            
-            // Re-bind modal events if setupModal exists
-            if (window.setupModal) {
-                window.setupModal();
-            }
 
-            // Re-bind animations
-            if (window.initAnimations) {
-                window.initAnimations();
-            }
+            // Os cards foram recriados: religa o modal e as animações de entrada.
+            if (window.setupModal) window.setupModal();
+            if (window.initAnimations) window.initAnimations();
         };
 
         renderCatalog(produtos);
-        
-        // Search functionality
+
         const searchInput = document.getElementById('searchInput');
         if (searchInput) {
+            const normalize = (str) => str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
             searchInput.addEventListener('input', (e) => {
-                const normalize = (str) => str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-                const term = normalize(e.target.value);
-                const filtered = produtos.filter(p => normalize(p.nome).includes(term));
-                renderCatalog(filtered);
+                const termo = normalize(e.target.value);
+                renderCatalog(produtos.filter(p => normalize(p.nome).includes(termo)));
             });
         }
     };
 
-    // Load Parceiros
+    // ---------- Parceiros ----------
     const loadParceiros = () => {
-        const containerGroup1 = document.getElementById('parceiros-group-1');
-        const containerGroup2 = document.getElementById('parceiros-group-2');
-        if (!containerGroup1 || !containerGroup2) return;
+        const grupo1 = document.getElementById('parceiros-group-1');
+        const grupo2 = document.getElementById('parceiros-group-2');
+        if (!grupo1 || !grupo2) return;
 
         const html = parceiros.map(p => `
             <img src="${p.imagem}" alt="${p.nome}" class="h-16 md:h-20 lg:h-24 w-auto max-w-none shrink-0 object-contain rounded">
         `).join('');
 
-        containerGroup1.innerHTML = html;
-        containerGroup2.innerHTML = html;
+        grupo1.innerHTML = html;
+        grupo2.innerHTML = html;
     };
 
-    // Load Depoimentos
+    // ---------- Depoimentos ----------
     const loadDepoimentos = () => {
         const container = document.getElementById('testimonial-slider');
         if (!container) return;
@@ -131,7 +117,7 @@ document.addEventListener('DOMContentLoaded', () => {
         `).join('');
     };
 
-    // Load FAQ
+    // ---------- FAQ ----------
     const loadFaq = () => {
         const container = document.getElementById('faq-container');
         if (!container) return;
@@ -160,9 +146,9 @@ document.addEventListener('DOMContentLoaded', () => {
     loadDepoimentos();
     loadFaq();
 
-    // Call initializers after DOM is updated
-    if(window.initAnimations) window.initAnimations();
-    if(window.initFaq) window.initFaq();
-    if(window.initSliders) window.initSliders();
-    if(window.initCounters) window.initCounters();
+    // Inicializadores que dependem do HTML já injetado acima.
+    if (window.initAnimations) window.initAnimations();
+    if (window.initFaq) window.initFaq();
+    if (window.initSliders) window.initSliders();
+    if (window.initCounters) window.initCounters();
 });

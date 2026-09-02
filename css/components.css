@@ -1,31 +1,7 @@
-/* Glassmorphism / Surface Effects */
-.glass-card {
-    background: rgba(26, 26, 26, 0.6);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    transform: translateZ(0); /* Hardware accelerate blur */
-}
-
 .surface-card {
     background: #1A1A1A;
     border: 1px solid rgba(255, 255, 255, 0.05);
     transform: translateZ(0); /* Hardware accelerate */
-}
-
-/* Smooth Gradients for Texts */
-.text-gradient {
-    background: linear-gradient(90deg, #FFFFFF 0%, #BFBFBF 100%);
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-}
-
-.primary-gradient-text {
-    background: linear-gradient(90deg, #F5A474 0%, #F28C52 100%);
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
 }
 
 .btn-primary {
@@ -74,31 +50,6 @@
     z-index: 2;
     opacity: 0.15; /* Replaces heavy mix-blend-mode: overlay */
     transform: translateZ(0); /* Force GPU Layer */
-}
-
-/* Diagonal stripe accent */
-.hero-stripe {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 6px;
-    background: linear-gradient(90deg, transparent 0%, #F28C52 30%, #D96E30 70%, transparent 100%);
-    z-index: 20;
-    transform: translateZ(0); /* Hardware accelerate */
-}
-
-/* Logo in hero */
-.hero-logo {
-    height: clamp(35px, 6vw, 70px);
-    width: auto;
-    margin-top: clamp(-15px, -2.5vw, -30px);
-    margin-bottom: clamp(-15px, -2.5vw, -30px);
-    margin-left: -10px;
-    /* Simpler shadow that performs better on scroll */
-    filter: drop-shadow(0 0 12px rgba(242, 140, 82, 0.4));
-    mix-blend-mode: lighten;
-    transform: translateZ(0);
 }
 
 /* Big headline */
