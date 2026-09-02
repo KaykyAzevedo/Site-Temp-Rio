@@ -100,10 +100,23 @@
 
                             <form id="form-pedido" novalidate class="space-y-5">
 
-                                <div class="campo" data-campo="nome">
-                                    <label for="f-nome" class="block text-xs font-bold uppercase tracking-widest text-textSecondary mb-2">Nome completo *</label>
-                                    <input id="f-nome" name="nome" type="text" autocomplete="name" class="campo-input" placeholder="Como devemos te chamar">
+                                <div class="campo" data-campo="razaoSocial">
+                                    <label for="f-razaoSocial" class="block text-xs font-bold uppercase tracking-widest text-textSecondary mb-2">Razão social *</label>
+                                    <input id="f-razaoSocial" name="razaoSocial" type="text" autocomplete="organization" class="campo-input" placeholder="Nome da empresa no CNPJ">
                                     <p class="campo-msg"></p>
+                                </div>
+
+                                <div class="grid sm:grid-cols-2 gap-5">
+                                    <div class="campo" data-campo="cnpj">
+                                        <label for="f-cnpj" class="block text-xs font-bold uppercase tracking-widest text-textSecondary mb-2">CNPJ *</label>
+                                        <input id="f-cnpj" name="cnpj" type="text" inputmode="numeric" class="campo-input" placeholder="00.000.000/0000-00" maxlength="18">
+                                        <p class="campo-msg"></p>
+                                    </div>
+                                    <div class="campo" data-campo="nome">
+                                        <label for="f-nome" class="block text-xs font-bold uppercase tracking-widest text-textSecondary mb-2">Nome do responsável *</label>
+                                        <input id="f-nome" name="nome" type="text" autocomplete="name" class="campo-input" placeholder="Quem estamos atendendo">
+                                        <p class="campo-msg"></p>
+                                    </div>
                                 </div>
 
                                 <div class="grid sm:grid-cols-2 gap-5">

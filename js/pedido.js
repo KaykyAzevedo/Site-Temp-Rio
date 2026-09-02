@@ -24,6 +24,13 @@
         return String(texto == null ? '' : texto).normalize('NFD').replace(DIACRITICOS, '');
     }
 
+    // O que a pessoa digitou volta para a tela; escapar é obrigatório aqui.
+    function esc(texto) {
+        return String(texto == null ? '' : texto)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
     function $(sel) { return document.querySelector(sel); }
     function campoDe(nome) { return document.querySelector('[data-campo="' + nome + '"]'); }
     function inputDe(nome) { return document.getElementById('f-' + nome); }
@@ -44,6 +51,37 @@
         return d.length > 5 ? d.slice(0, 5) + '-' + d.slice(5) : d;
     }
 
+    function mascararCnpj(v) {
+        var d = v.replace(/\D/g, '').slice(0, 14);
+        if (d.length <= 2) return d;
+        if (d.length <= 5) return d.slice(0, 2) + '.' + d.slice(2);
+        if (d.length <= 8) return d.slice(0, 2) + '.' + d.slice(2, 5) + '.' + d.slice(5);
+        if (d.length <= 12) return d.slice(0, 2) + '.' + d.slice(2, 5) + '.' + d.slice(5, 8) + '/' + d.slice(8);
+        return d.slice(0, 2) + '.' + d.slice(2, 5) + '.' + d.slice(5, 8) + '/' + d.slice(8, 12) + '-' + d.slice(12);
+    }
+
+    /* CNPJ com dígitos verificadores. Um campo que aceita qualquer número não
+     * serve para emitir nota: o erro só apareceria no faturamento. */
+    function cnpjValido(valor) {
+        var c = String(valor).replace(/\D/g, '');
+        if (c.length !== 14) return false;
+        if (/^(\d)\1{13}$/.test(c)) return false; // 00000000000000 e afins
+
+        function digito(base) {
+            var peso = base.length - 7;
+            var soma = 0;
+            for (var i = 0; i < base.length; i++) {
+                soma += Number(base.charAt(i)) * peso--;
+                if (peso < 2) peso = 9;
+            }
+            var resto = soma % 11;
+            return resto < 2 ? 0 : 11 - resto;
+        }
+
+        return digito(c.slice(0, 12)) === Number(c.charAt(12)) &&
+               digito(c.slice(0, 13)) === Number(c.charAt(13));
+    }
+
     /* ===================================================================
      * Validação
      *
@@ -51,10 +89,20 @@
      * laranja da marca (.cart-aviso).
      * =================================================================== */
     var REGRAS = {
+        razaoSocial: {
+            obrigatorio: true,
+            testa: function (v) { return v.trim().length >= 3; },
+            msg: 'Informe a razão social da empresa.'
+        },
+        cnpj: {
+            obrigatorio: true,
+            testa: function (v) { return cnpjValido(v); },
+            msg: 'CNPJ inválido. Confira os números.'
+        },
         nome: {
             obrigatorio: true,
             testa: function (v) { return v.trim().length >= 3; },
-            msg: 'Informe seu nome completo.'
+            msg: 'Informe o nome do responsável.'
         },
         telefone: {
             obrigatorio: true,
@@ -119,8 +167,8 @@
     /* ===================================================================
      * Rascunho do formulário
      * =================================================================== */
-    var CAMPOS = ['nome', 'telefone', 'email', 'cep', 'logradouro', 'numero',
-                  'complemento', 'bairro', 'cidade', 'uf', 'observacoes'];
+    var CAMPOS = ['razaoSocial', 'cnpj', 'nome', 'telefone', 'email', 'cep', 'logradouro',
+                  'numero', 'complemento', 'bairro', 'cidade', 'uf', 'observacoes'];
 
     function lerFormulario() {
         var d = {};
@@ -221,15 +269,178 @@
     /* ===================================================================
      * Aviso de entrega — o FAQ do site já promete isto
      * =================================================================== */
+    function ufsAtendidas() {
+        return (siteConfig.entrega && siteConfig.entrega.ufsAtendidas) || ['RJ'];
+    }
+
+    // Sem UF ainda, não bloqueia nada: só depois que o CEP resolve é que dá
+    // para julgar. O padrão é "atende", para nunca travar quem não preencheu.
+    function atendeEndereco() {
+        var uf = inputDe('uf').value;
+        if (!uf) return true;
+        return ufsAtendidas().indexOf(uf) !== -1;
+    }
+
     function atualizarAvisoEntrega() {
         var uf = inputDe('uf').value;
         var box = $('#aviso-entrega');
         if (!uf) { box.classList.add('hidden'); return; }
 
         box.classList.remove('hidden');
-        box.textContent = uf === 'RJ'
-            ? 'Entrega em até 7 dias em todo o estado do Rio de Janeiro.'
-            : 'Fora do Rio de Janeiro, prazo e frete são combinados com a nossa equipe.';
+        box.textContent = atendeEndereco()
+            ? (siteConfig.entrega && siteConfig.entrega.prazoAtendido) ||
+              'Entrega em até 7 dias em todo o estado do Rio de Janeiro.'
+            : 'Ainda não entregamos nesse endereço — veja as opções no resumo ao lado.';
+
+        render(); // o resumo muda de cara quando o endereço sai da área
+    }
+
+    /* ===================================================================
+     * Lista de espera
+     *
+     * O site é estático: o cadastro precisa de um destino externo, senão o
+     * dado morre no navegador do cliente e nunca chega ao painel. Vai para
+     * uma planilha do Google, via script publicado (ver admin/LEIAME.md).
+     * =================================================================== */
+    var CHAVE_FILA = 'temprio.espera.fila.v1';
+
+    function endpointEspera() {
+        return (siteConfig.listaEspera && siteConfig.listaEspera.endpoint) || '';
+    }
+
+    function lerFila() {
+        try { return JSON.parse(localStorage.getItem(CHAVE_FILA)) || []; }
+        catch (e) { return []; }
+    }
+
+    function gravarFila(fila) {
+        try { localStorage.setItem(CHAVE_FILA, JSON.stringify(fila)); }
+        catch (e) { /* sem storage: perde-se a rede de segurança, não o fluxo */ }
+    }
+
+    /* text/plain evita o preflight do CORS. O Apps Script não responde a
+     * OPTIONS, então uma requisição "simples" é a única que passa direto. */
+    function postarEspera(dados) {
+        var url = endpointEspera();
+        if (!url) return Promise.reject(new Error('sem endpoint'));
+
+        return fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify(dados)
+        }).then(function (resposta) {
+            // fetch NÃO rejeita em erro de HTTP: um 500 chega aqui como sucesso.
+            // Sem esta checagem, uma falha do script viraria "cadastro
+            // confirmado" e o interessado se perderia em silêncio.
+            if (resposta.type === 'opaque') return true; // sem como inspecionar
+            if (!resposta.ok) throw new Error('HTTP ' + resposta.status);
+
+            return resposta.text().then(function (corpo) {
+                var json = null;
+                try { json = JSON.parse(corpo); } catch (e) { return true; }
+                if (json && json.ok === false) throw new Error(json.erro || 'recusado');
+                return true;
+            });
+        });
+    }
+
+    /* Reenvia o que ficou preso numa falha de rede anterior. Roda no
+     * carregamento da página: se a pessoa voltar, o cadastro dela sobe. */
+    function reenviarPendentes() {
+        var fila = lerFila();
+        if (!fila.length || !endpointEspera()) return;
+
+        var restantes = [];
+        var pendencias = fila.map(function (item) {
+            return postarEspera(item).catch(function () { restantes.push(item); });
+        });
+        Promise.all(pendencias).then(function () { gravarFila(restantes); });
+    }
+
+    function dadosDaEspera() {
+        var d = lerFormulario();
+        var t = Cart.totais();
+        return {
+            enviadoEm: new Date().toISOString(),
+            razaoSocial: d.razaoSocial,
+            cnpj: d.cnpj,
+            responsavel: d.nome,
+            telefone: d.telefone,
+            email: d.email,
+            cep: d.cep,
+            cidade: d.cidade,
+            uf: d.uf,
+            endereco: d.logradouro + ', ' + d.numero +
+                      (d.complemento ? ' - ' + d.complemento : '') + ' - ' + d.bairro,
+            // O tamanho do pedido perdido é o dado mais útil do painel: mostra
+            // quanta demanda está represada em cada praça.
+            potes: t.potes,
+            caixas: t.caixas,
+            valor: Cart.formatarBRL(t.valorCentavos),
+            itens: Cart.itens().map(function (i) { return i.nome + ' ' + i.potes; }).join(', '),
+            observacoes: d.observacoes
+        };
+    }
+
+    var enviandoEspera = false;
+
+    function entrarNaListaDeEspera() {
+        if (enviandoEspera) return;
+
+        var invalidos = validarTudo();
+        if (invalidos.length) {
+            var primeiro = inputDe(invalidos[0]);
+            if (primeiro) {
+                primeiro.focus();
+                primeiro.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+            CartUI.toast('Complete seus dados para entrar na lista.');
+            return;
+        }
+
+        var dados = dadosDaEspera();
+        var botao = $('#btn-espera');
+        enviandoEspera = true;
+        if (botao) {
+            botao.disabled = true;
+            botao.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Enviando...';
+        }
+
+        if (!endpointEspera()) {
+            // Ainda não configurado: guarda para subir depois e avisa sem mentir.
+            gravarFila(lerFila().concat([dados]));
+            enviandoEspera = false;
+            mostrarEsperaSalvaLocal();
+            return;
+        }
+
+        postarEspera(dados)
+            .then(function () {
+                enviandoEspera = false;
+                marcarEsperaConfirmada();
+            })
+            .catch(function () {
+                // Rede fora: não perde o cadastro, tenta de novo na próxima visita.
+                gravarFila(lerFila().concat([dados]));
+                enviandoEspera = false;
+                mostrarEsperaSalvaLocal();
+            });
+    }
+
+    function marcarEsperaConfirmada() {
+        try { localStorage.setItem('temprio.espera.confirmada', '1'); } catch (e) {}
+        render();
+        CartUI.toast('Pronto! Avisamos assim que chegarmos aí.');
+    }
+
+    function mostrarEsperaSalvaLocal() {
+        render();
+        CartUI.toast('Não conseguimos enviar agora — fale com um vendedor no WhatsApp.');
+    }
+
+    function jaNaEspera() {
+        try { return localStorage.getItem('temprio.espera.confirmada') === '1'; }
+        catch (e) { return false; }
     }
 
     /* ===================================================================
@@ -241,7 +452,9 @@
             (d.complemento ? ' - ' + d.complemento : '') +
             ' - ' + d.bairro + ', ' + d.cidade + '/' + d.uf + ' - CEP ' + d.cep;
 
-        return t('*Cliente:* ' + d.nome) + '\n' +
+        return t('*Empresa:* ' + d.razaoSocial) + '\n' +
+               '*CNPJ:* ' + d.cnpj + '\n' +
+               t('*Responsavel:* ' + d.nome) + '\n' +
                '*Tel:* ' + d.telefone + '\n' +
                t('*Email:* ' + d.email) + '\n' +
                t('*Endereco:* ' + endereco);
@@ -443,6 +656,11 @@
                 Cart.formatarBRL(t.valorCentavos) + '</span>' +
         '</div>' +
 
+        (atendeEndereco() ? blocoEnvio() : blocoForaDaArea());
+    }
+
+    function blocoEnvio() {
+        return '' +
         '<button type="button" id="btn-enviar" class="btn-primary w-full py-4 rounded-xl font-bold text-sm flex items-center justify-center gap-2">' +
             '<i class="fa-brands fa-whatsapp text-lg"></i> Enviar pedido no WhatsApp' +
         '</button>' +
@@ -453,6 +671,51 @@
 
         '<p class="text-[0.65rem] text-textSecondary text-center leading-relaxed">' +
             'Nenhum pagamento é feito aqui. Seus dados vão só na mensagem que você envia.' +
+        '</p>';
+    }
+
+    /* Fora da área: não é porta fechada, é triagem. A lista de espera é o
+     * caminho principal, mas o WhatsApp continua aberto — uma proposta de fora
+     * do estado pode compensar, e quem decide isso é o vendedor. */
+    function blocoForaDaArea() {
+        var cidade = inputDe('cidade').value;
+        var uf = inputDe('uf').value;
+        var onde = cidade ? cidade + '/' + uf : 'nesse endereço';
+
+        if (jaNaEspera()) {
+            return '' +
+            '<div class="rounded-xl border border-green-500/30 bg-green-500/10 p-4 space-y-2">' +
+                '<p class="flex items-center gap-2 text-sm font-bold text-green-400">' +
+                    '<i class="fa-solid fa-circle-check"></i> Você está na lista</p>' +
+                '<p class="text-xs text-textSecondary leading-relaxed">' +
+                    'Avisamos assim que a Temp Rio começar a entregar em ' + esc(onde) + '.</p>' +
+            '</div>' +
+            '<a href="' + esc(siteConfig.links.whatsappApi) + '" target="_blank" rel="noopener"' +
+                ' class="w-full py-3 rounded-xl border border-white/12 text-white/70 hover:text-white hover:border-white/25 transition-all text-xs font-bold uppercase tracking-widest flex items-center justify-center gap-2">' +
+                '<i class="fa-brands fa-whatsapp"></i> Falar com um vendedor' +
+            '</a>';
+        }
+
+        return '' +
+        '<div class="cart-aviso p-4 space-y-2">' +
+            '<p class="flex items-center gap-2 text-sm font-bold">' +
+                '<i class="fa-solid fa-truck"></i> Ainda não entregamos em ' + esc(onde) + '</p>' +
+            '<p class="text-xs leading-relaxed opacity-90">' +
+                'Hoje a nossa entrega cobre o estado do Rio de Janeiro. ' +
+                'Entre na lista de espera e avisamos assim que chegarmos à sua região.</p>' +
+        '</div>' +
+
+        '<button type="button" id="btn-espera" class="btn-primary w-full py-4 rounded-xl font-bold text-sm flex items-center justify-center gap-2">' +
+            '<i class="fa-solid fa-bell"></i> Entrar na lista de espera' +
+        '</button>' +
+
+        '<a href="' + esc(siteConfig.links.whatsappApi) + '" target="_blank" rel="noopener"' +
+            ' class="w-full py-3 rounded-xl border border-white/12 text-white/70 hover:text-white hover:border-white/25 transition-all text-xs font-bold uppercase tracking-widest flex items-center justify-center gap-2">' +
+            '<i class="fa-brands fa-whatsapp"></i> Falar com um vendedor' +
+        '</a>' +
+
+        '<p class="text-[0.65rem] text-textSecondary text-center leading-relaxed">' +
+            'Pedidos de fora do Rio podem ser avaliados caso a caso — vale conversar.' +
         '</p>';
     }
 
@@ -468,12 +731,19 @@
         $('#pedido-lista').innerHTML = itens.map(CartUI.linhaHTML).join('');
         $('#pedido-resumo').innerHTML = resumoHTML(t);
 
-        $('#btn-enviar').addEventListener('click', enviar);
-        $('#btn-copiar').addEventListener('click', function () {
+        // Os botões do resumo mudam conforme o endereço atende ou não.
+        var enviar_ = $('#btn-enviar');
+        if (enviar_) enviar_.addEventListener('click', enviar);
+
+        var copiar_ = $('#btn-copiar');
+        if (copiar_) copiar_.addEventListener('click', function () {
             var envio = montarEnvio(lerFormulario());
             if (!envio) return;
             copiar(envio.copia).then(function () { CartUI.toast('Pedido copiado.'); });
         });
+
+        var espera_ = $('#btn-espera');
+        if (espera_) espera_.addEventListener('click', entrarNaListaDeEspera);
     }
 
     /* ===================================================================
@@ -498,6 +768,9 @@
         // Máscaras
         inputDe('telefone').addEventListener('input', function () {
             this.value = mascararTelefone(this.value);
+        });
+        inputDe('cnpj').addEventListener('input', function () {
+            this.value = mascararCnpj(this.value);
         });
         inputDe('cep').addEventListener('input', function () {
             this.value = mascararCep(this.value);
@@ -525,6 +798,9 @@
         uf.addEventListener('change', salvarRascunho);
 
         carregarRascunho();
+
+        // Cadastro que ficou preso numa falha de rede sobe agora.
+        reenviarPendentes();
     }
 
     if (document.readyState === 'loading') {

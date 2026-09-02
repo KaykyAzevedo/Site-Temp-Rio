@@ -35,5 +35,30 @@ const siteConfig = {
         // Os três são a mesma condição, porque o preço por pote é constante;
         // caixas e reais são derivados em js/cart.js.
         minimoPotes: 480
+    },
+
+    // Onde a Temp Rio entrega hoje.
+    //
+    // A verificação usa o CEP que o cliente digita, não a geolocalização do
+    // navegador: o CEP é o endereço real de entrega, já é consultado no ViaCEP,
+    // não pede permissão e não depende de o cliente aceitar ser rastreado.
+    entrega: {
+        // Estados atendidos. Fora daqui, o pedido não é fechado pelo site:
+        // o cliente entra na lista de espera e ainda pode negociar no WhatsApp.
+        ufsAtendidas: ["RJ"],
+        prazoAtendido: "Entrega em até 7 dias em todo o estado do Rio de Janeiro."
+    },
+
+    // Lista de espera de quem está fora da área de entrega.
+    //
+    // O site é estático e não tem servidor, então o cadastro precisa de um
+    // destino externo. Aqui ele vai para uma planilha do Google, via um script
+    // publicado como aplicativo web — o "painel" é a própria planilha.
+    //
+    // COMO CONFIGURAR: siga admin/LEIAME.md e cole abaixo a URL que o Google
+    // devolver ao publicar o script. Enquanto estiver vazio, o botão da lista
+    // de espera avisa que o cadastro está indisponível e oferece o WhatsApp.
+    listaEspera: {
+        endpoint: ""
     }
 };
