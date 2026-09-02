@@ -1,5 +1,8 @@
 /* Carrinho — interface compartilhada: botão flutuante, gaveta e toast.
  *
+ * O cliente escolhe POTES, em múltiplos de 24. As caixas são montadas pelo
+ * js/cart.js e aqui só são exibidas ("1 caixa de 48 + 1 de 24").
+ *
  * Só lê o estado por window.Cart e escuta o evento 'cart:change'. Nunca
  * calcula total nem mexe no localStorage por conta própria.
  *
@@ -21,6 +24,8 @@
             .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
+    var PASSO = Cart.PASSO;
+
     var fab = null;
     var backdrop = null;
     var gaveta = null;
@@ -28,8 +33,11 @@
     var toastTimer = null;
     var focoAnterior = null;
 
+    var BTN_CIRCULO = 'text-textSecondary hover:text-white transition-colors w-8 h-8 ' +
+        'flex-shrink-0 flex items-center justify-center rounded-full bg-white/5 hover:bg-white/10';
+
     /* ===================================================================
-     * Marcação
+     * Marcação da gaveta
      * =================================================================== */
     function montar() {
         var html =
@@ -41,22 +49,17 @@
             '<div class="cart-backdrop" id="cart-backdrop"></div>' +
 
             '<aside class="cart-drawer" id="cart-drawer" role="dialog" aria-modal="true" aria-label="Seu pedido" aria-hidden="true">' +
-                // Cabeçalho
                 '<header class="flex items-center justify-between gap-3 p-5 border-b border-borderSubtle shrink-0">' +
                     '<div>' +
                         '<p class="text-lg font-bold text-white uppercase tracking-wider">Seu pedido</p>' +
                         '<p class="text-xs text-textSecondary font-light" id="cart-subtitulo"></p>' +
                     '</div>' +
                     '<button type="button" id="cart-fechar" aria-label="Fechar"' +
-                        ' class="text-textSecondary hover:text-white transition-colors w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-full bg-white/5 hover:bg-white/10">' +
-                        '<i class="fa-solid fa-xmark text-xl"></i>' +
-                    '</button>' +
+                        ' class="' + BTN_CIRCULO + '"><i class="fa-solid fa-xmark text-xl"></i></button>' +
                 '</header>' +
 
-                // Lista
                 '<div class="cart-drawer-corpo p-5 space-y-3" id="cart-lista"></div>' +
 
-                // Rodapé
                 '<footer class="shrink-0 border-t border-borderSubtle p-5 space-y-4 bg-[#111111]" id="cart-rodape"></footer>' +
             '</aside>';
 
@@ -72,8 +75,6 @@
         backdrop.addEventListener('click', fechar);
         document.getElementById('cart-fechar').addEventListener('click', fechar);
 
-        // Delegação: a lista é reconstruída a cada mudança, então não dá para
-        // ligar listener item a item.
         ligarLista(document.getElementById('cart-lista'));
     }
 
@@ -87,12 +88,12 @@
         document.body.appendChild(toastEl);
     }
 
-    // Liga a delegação de eventos em qualquer container que renderize linhas de
-    // carrinho — a gaveta e a página de pedido usam o mesmo template.
+    // Liga a delegação em qualquer container que renderize linhas de carrinho —
+    // a gaveta e a página de pedido usam o mesmo template.
     function ligarLista(el) {
         if (!el) return;
         el.addEventListener('click', aoClicarNaLista);
-        el.addEventListener('change', aoMudarQuantidade);
+        el.addEventListener('change', aoMudarPotes);
     }
 
     /* ===================================================================
@@ -112,7 +113,7 @@
         gaveta.classList.add('is-aberto');
         backdrop.classList.add('is-aberto');
         gaveta.setAttribute('aria-hidden', 'false');
-        fab.classList.remove('is-visivel'); // não cobrir o CTA da gaveta no celular
+        fab.classList.remove('is-visivel');
         window.ScrollLock.acquire('cart-drawer');
         document.getElementById('cart-fechar').focus();
     }
@@ -161,51 +162,27 @@
         if (!botao) return;
 
         var id = botao.getAttribute('data-id');
-        var box = parseInt(botao.getAttribute('data-box'), 10);
         var acao = botao.getAttribute('data-acao');
 
         if (acao === 'mais') {
-            Cart.definirQuantidade(id, box, Cart.quantidade(id, box) + 1);
+            Cart.definirPotes(id, Cart.potes(id) + PASSO);
         } else if (acao === 'menos') {
-            Cart.definirQuantidade(id, box, Cart.quantidade(id, box) - 1);
+            Cart.definirPotes(id, Cart.potes(id) - PASSO);
         } else if (acao === 'remover') {
-            Cart.remover(id, box);
-        } else if (acao === 'tamanho') {
-            var para = parseInt(botao.getAttribute('data-para'), 10);
-            if (para !== box) Cart.trocarTamanho(id, box, para);
+            Cart.remover(id);
         }
     }
 
-    function aoMudarQuantidade(e) {
-        var campo = e.target.closest('input[data-acao="qtd"]');
+    function aoMudarPotes(e) {
+        var campo = e.target.closest('input[data-acao="potes"]');
         if (!campo) return;
-        Cart.definirQuantidade(
-            campo.getAttribute('data-id'),
-            parseInt(campo.getAttribute('data-box'), 10),
-            campo.value
-        );
+        Cart.definirPotes(campo.getAttribute('data-id'), campo.value);
     }
 
     /* ===================================================================
-     * Renderização
+     * Linha do carrinho
      * =================================================================== */
-    var BTN_CIRCULO = 'text-textSecondary hover:text-white transition-colors w-8 h-8 ' +
-        'flex-shrink-0 flex items-center justify-center rounded-full bg-white/5 hover:bg-white/10';
-
     function linhaHTML(item) {
-        var outro = Cart.TAMANHOS.filter(function (t) { return t !== item.box; })[0];
-
-        var pilulas = Cart.TAMANHOS.map(function (t) {
-            var ativo = t === item.box;
-            return '<button type="button" data-acao="tamanho" data-id="' + esc(item.id) + '"' +
-                ' data-box="' + item.box + '" data-para="' + t + '"' +
-                ' class="px-2.5 py-1 rounded-full text-[0.65rem] font-bold tracking-widest uppercase border transition-colors ' +
-                (ativo
-                    ? 'bg-primary-500 text-white border-primary-500'
-                    : 'bg-white/5 text-textSecondary border-white/10 hover:border-primary-500/50') +
-                '">' + t + '</button>';
-        }).join('');
-
         return '' +
         '<div class="cart-line p-3 flex gap-3' + (item.stale ? ' is-stale' : '') + '">' +
             (item.imagem
@@ -220,30 +197,31 @@
                     ? '<p class="text-[0.65rem] text-primary-400 font-bold mt-0.5">Saiu do catálogo — confirme com o vendedor</p>'
                     : '') +
 
-                '<div class="flex items-center gap-1.5 mt-1.5">' +
-                    '<span class="text-[0.6rem] text-textSecondary uppercase tracking-widest mr-0.5">Caixa</span>' +
-                    pilulas +
-                '</div>' +
+                '<p class="text-[0.7rem] text-textSecondary mt-0.5">' +
+                    '<i class="fa-solid fa-box-open mr-1 opacity-70"></i>' + item.descricaoCaixas +
+                '</p>' +
 
                 '<div class="flex items-center justify-between gap-2 mt-2.5">' +
                     '<div class="flex items-center gap-1.5">' +
-                        '<button type="button" data-acao="menos" data-id="' + esc(item.id) + '" data-box="' + item.box + '"' +
-                            ' aria-label="Menos uma caixa" class="' + BTN_CIRCULO + '"><i class="fa-solid fa-minus text-xs"></i></button>' +
-                        '<input type="number" inputmode="numeric" min="1" max="999" value="' + item.qty + '"' +
-                            ' data-acao="qtd" data-id="' + esc(item.id) + '" data-box="' + item.box + '"' +
-                            ' aria-label="Quantidade de caixas"' +
-                            ' class="w-12 text-center bg-[#111111] border border-borderSubtle rounded-lg text-white text-sm py-1 outline-none focus:border-primary-500">' +
-                        '<button type="button" data-acao="mais" data-id="' + esc(item.id) + '" data-box="' + item.box + '"' +
-                            ' aria-label="Mais uma caixa" class="' + BTN_CIRCULO + '"><i class="fa-solid fa-plus text-xs"></i></button>' +
+                        '<button type="button" data-acao="menos" data-id="' + esc(item.id) + '"' +
+                            ' aria-label="Menos ' + PASSO + ' potes" class="' + BTN_CIRCULO + '">' +
+                            '<i class="fa-solid fa-minus text-xs"></i></button>' +
+                        '<div class="relative">' +
+                            '<input type="number" inputmode="numeric" min="' + PASSO + '" step="' + PASSO + '" value="' + item.potes + '"' +
+                                ' data-acao="potes" data-id="' + esc(item.id) + '"' +
+                                ' aria-label="Quantidade de potes"' +
+                                ' class="w-20 text-center bg-[#111111] border border-borderSubtle rounded-lg text-white text-sm py-1 pr-9 outline-none focus:border-primary-500">' +
+                            '<span class="absolute right-2 top-1/2 -translate-y-1/2 text-[0.6rem] text-textSecondary pointer-events-none">potes</span>' +
+                        '</div>' +
+                        '<button type="button" data-acao="mais" data-id="' + esc(item.id) + '"' +
+                            ' aria-label="Mais ' + PASSO + ' potes" class="' + BTN_CIRCULO + '">' +
+                            '<i class="fa-solid fa-plus text-xs"></i></button>' +
                     '</div>' +
-                    '<div class="text-right">' +
-                        '<p class="text-primary-500 font-bold text-sm leading-tight">' + Cart.formatarBRL(item.subtotalCentavos) + '</p>' +
-                        '<p class="text-[0.6rem] text-textSecondary">' + item.potes + ' potes</p>' +
-                    '</div>' +
+                    '<p class="text-primary-500 font-bold text-sm">' + Cart.formatarBRL(item.subtotalCentavos) + '</p>' +
                 '</div>' +
             '</div>' +
 
-            '<button type="button" data-acao="remover" data-id="' + esc(item.id) + '" data-box="' + item.box + '"' +
+            '<button type="button" data-acao="remover" data-id="' + esc(item.id) + '"' +
                 ' aria-label="Remover ' + esc(item.nome) + '"' +
                 ' class="text-textSecondary hover:text-white self-start w-7 h-7 flex items-center justify-center rounded-full hover:bg-white/10 transition-colors shrink-0">' +
                 '<i class="fa-solid fa-trash-can text-xs"></i>' +
@@ -269,15 +247,14 @@
         if (t.linhas === 0) return '';
 
         var pct = Math.round(t.progresso * 100);
-        var minimoBRL = Cart.formatarBRL(t.minimoPotes * Cart.config.precoPorPoteCentavos);
+        var minimoBRL = Cart.formatarBRL(Cart.precoDePotes(t.minimoPotes));
 
         var aviso = t.atingiuMinimo
             ? '<div class="flex items-center gap-2 text-xs font-bold text-green-400">' +
                   '<i class="fa-solid fa-circle-check"></i> Pedido mínimo atingido' +
               '</div>'
             : '<div class="cart-aviso p-3 text-xs font-medium leading-relaxed">' +
-                  '<strong class="font-bold">Faltam ' + t.faltamPotes + ' potes</strong> — ' +
-                  t.faltamCaixas[24] + ' caixas de 24 ou ' + t.faltamCaixas[48] + ' de 48.<br>' +
+                  '<strong class="font-bold">Faltam ' + t.faltamPotes + ' potes</strong>.<br>' +
                   '<span class="opacity-80">Você pode enviar assim mesmo; o vendedor confirma.</span>' +
               '</div>';
 
@@ -296,7 +273,7 @@
                     Cart.formatarBRL(t.valorCentavos) +
                 '</p>' +
             '</div>' +
-            '<p class="text-xs text-textSecondary text-right">' + t.caixas + ' caixas<br>' + t.potes + ' potes</p>' +
+            '<p class="text-xs text-textSecondary text-right">' + t.potes + ' potes<br>' + t.caixas + (t.caixas === 1 ? ' caixa' : ' caixas') + '</p>' +
         '</div>' +
 
         (Cart.persistente ? '' :
@@ -314,8 +291,6 @@
         if (!fab) return;
         var t = Cart.totais();
         document.getElementById('cart-fab-badge').textContent = t.caixas;
-        // Some com carrinho vazio (nada de botão morto) e enquanto a gaveta
-        // está aberta (senão cobre o CTA no celular).
         fab.classList.toggle('is-visivel', t.linhas > 0 && !aberta());
     }
 
@@ -331,8 +306,8 @@
         document.getElementById('cart-rodape').innerHTML = rodapeHTML(t);
 
         document.getElementById('cart-subtitulo').textContent =
-            t.linhas === 0 ? 'Nenhum item' :
-            t.caixas + (t.caixas === 1 ? ' caixa' : ' caixas') + ' · ' + t.potes + ' potes';
+            t.linhas === 0 ? 'Nenhum item'
+                           : t.potes + ' potes · ' + t.caixas + (t.caixas === 1 ? ' caixa' : ' caixas');
 
         var continuar = document.getElementById('cart-continuar');
         if (continuar) continuar.addEventListener('click', fechar);
@@ -341,18 +316,17 @@
     }
 
     /* ===================================================================
-     * Seletor de caixa dentro do modal de produto
+     * Seletor de potes dentro do modal de produto
      *
      * O seletor completo vive num lugar só: o modal. O card do catálogo tem
      * apenas um botão "Adicionar" que abre o modal já com o seletor à mostra.
-     * Motivo: o card inteiro já é o gatilho do modal (product-modal.js liga o
-     * clique na raiz do card), então cada controle dentro dele precisaria de
-     * stopPropagation e um clique errado abriria o modal por cima do que a
-     * pessoa estava mexendo. E o grid vai a 4 colunas com 73 cards.
+     * O card inteiro já é gatilho do modal, então controles dentro dele
+     * exigiriam stopPropagation em cada um, e o grid vai a 4 colunas com 73
+     * cards.
      * =================================================================== */
     var pickerId = null;
     var pickerNome = '';
-    var pickerBox = null;
+    var pickerPotes = PASSO;
 
     function produtoPorId(id) {
         if (typeof produtos === 'undefined' || !Array.isArray(produtos)) return null;
@@ -360,20 +334,7 @@
     }
 
     function pickerHTML() {
-        var jaTem = Cart.quantidade(pickerId, pickerBox);
-        var qtd = jaTem || 1;
-        var precoCaixa = Cart.precoCaixa(pickerBox);
-
-        var pilulas = Cart.TAMANHOS.map(function (t) {
-            var ativo = t === pickerBox;
-            return '<button type="button" data-picker="tamanho" data-valor="' + t + '"' +
-                ' class="flex-1 px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-widest border transition-colors ' +
-                (ativo
-                    ? 'bg-primary-500 text-white border-primary-500'
-                    : 'bg-white/5 text-textSecondary border-white/10 hover:border-primary-500/50') +
-                '">' + t + ' potes<br><span class="text-[0.65rem] font-normal opacity-80">' +
-                Cart.formatarBRL(Cart.precoCaixa(t)) + '</span></button>';
-        }).join('');
+        var jaTem = Cart.potes(pickerId);
 
         return '' +
         '<div class="bg-white/5 border border-white/10 rounded-xl p-5 space-y-4">' +
@@ -381,31 +342,32 @@
                 '<i class="fa-solid fa-box"></i> Adicionar ao pedido' +
             '</p>' +
             '<p class="text-xs text-textSecondary font-light">' +
-                Cart.formatarBRL(Cart.config.precoPorPoteCentavos) + ' por pote &middot; caixa fechada de um único sabor' +
+                Cart.formatarBRL(Cart.config.precoPorPoteCentavos) + ' por pote &middot; de ' + PASSO + ' em ' + PASSO + ' potes' +
             '</p>' +
 
-            '<div class="flex gap-2">' + pilulas + '</div>' +
-
-            '<div class="flex items-center justify-between gap-3">' +
-                '<div class="flex items-center gap-2">' +
-                    '<button type="button" data-picker="menos" aria-label="Menos uma caixa" class="' + BTN_CIRCULO + '">' +
-                        '<i class="fa-solid fa-minus text-xs"></i></button>' +
-                    '<input type="number" inputmode="numeric" min="1" max="999" value="' + qtd + '" data-picker="qtd"' +
-                        ' aria-label="Quantidade de caixas"' +
-                        ' class="w-16 text-center bg-[#111111] border border-borderSubtle rounded-lg text-white py-2 outline-none focus:border-primary-500">' +
-                    '<button type="button" data-picker="mais" aria-label="Mais uma caixa" class="' + BTN_CIRCULO + '">' +
-                        '<i class="fa-solid fa-plus text-xs"></i></button>' +
+            '<div class="flex items-center justify-center gap-3">' +
+                '<button type="button" data-picker="menos" aria-label="Menos ' + PASSO + ' potes" class="' + BTN_CIRCULO + '">' +
+                    '<i class="fa-solid fa-minus text-xs"></i></button>' +
+                '<div class="relative">' +
+                    '<input type="number" inputmode="numeric" min="' + PASSO + '" step="' + PASSO + '" value="' + pickerPotes + '" data-picker="potes"' +
+                        ' aria-label="Quantidade de potes"' +
+                        ' class="w-28 text-center bg-[#111111] border border-borderSubtle rounded-lg text-white text-lg font-bold py-2 pr-12 outline-none focus:border-primary-500">' +
+                    '<span class="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-textSecondary pointer-events-none">potes</span>' +
                 '</div>' +
-                '<span class="text-xs text-textSecondary">' + pickerBox + ' potes por caixa</span>' +
+                '<button type="button" data-picker="mais" aria-label="Mais ' + PASSO + ' potes" class="' + BTN_CIRCULO + '">' +
+                    '<i class="fa-solid fa-plus text-xs"></i></button>' +
             '</div>' +
 
+            '<p class="text-center text-xs text-textSecondary" data-picker="caixas">' +
+                '<i class="fa-solid fa-box-open mr-1 opacity-70"></i>' + Cart.descreverCaixas(pickerPotes) +
+            '</p>' +
+
             '<button type="button" data-picker="adicionar" class="btn-primary w-full py-3 rounded-xl font-bold text-sm">' +
-                'Adicionar &mdash; <span data-picker="valor">' + Cart.formatarBRL(qtd * precoCaixa) + '</span>' +
+                'Adicionar &mdash; <span data-picker="valor">' + Cart.formatarBRL(Cart.precoDePotes(pickerPotes)) + '</span>' +
             '</button>' +
 
             (jaTem
-                ? '<p class="text-[0.7rem] text-primary-400 text-center">Já no pedido: ' + jaTem +
-                  (jaTem === 1 ? ' caixa' : ' caixas') + ' de ' + pickerBox + ' &middot; adicionar soma a essa quantidade</p>'
+                ? '<p class="text-[0.7rem] text-primary-400 text-center">Já no pedido: ' + jaTem + ' potes &middot; adicionar soma a essa quantidade</p>'
                 : '') +
         '</div>';
     }
@@ -416,20 +378,21 @@
         slot.innerHTML = pickerHTML();
     }
 
-    function qtdDoPicker() {
-        var campo = document.querySelector('[data-picker="qtd"]');
-        var n = Math.trunc(Number(campo && campo.value));
-        if (!isFinite(n) || n < 1) n = 1;
-        return Math.min(n, 999);
+    function potesDoPicker() {
+        var campo = document.querySelector('[data-picker="potes"]');
+        return Cart.ajustarAoPasso(campo && campo.value);
     }
 
-    function atualizarValorDoPicker() {
-        var alvo = document.querySelector('[data-picker="valor"]');
-        if (alvo) alvo.textContent = Cart.formatarBRL(qtdDoPicker() * Cart.precoCaixa(pickerBox));
+    function atualizarPicker() {
+        var potes = potesDoPicker();
+        var valor = document.querySelector('[data-picker="valor"]');
+        var caixas = document.querySelector('[data-picker="caixas"]');
+        if (valor) valor.textContent = Cart.formatarBRL(Cart.precoDePotes(potes));
+        if (caixas) caixas.innerHTML = '<i class="fa-solid fa-box-open mr-1 opacity-70"></i>' + Cart.descreverCaixas(potes);
     }
 
-    // O modal é um singleton e o anterior/próximo reentra na mesma função, então
-    // o seletor sempre reseta para o produto que acabou de abrir.
+    // O modal é singleton e o anterior/próximo reentra na mesma função, então o
+    // seletor sempre reseta para o produto que acabou de abrir.
     window.onProductModalOpen = function (id, nomeCru) {
         if (!id) {
             // Card sem data-id: tenta casar pelo nome, como content-loader.js faz.
@@ -448,7 +411,7 @@
         }
         pickerId = prod.id;
         pickerNome = prod.nome;
-        pickerBox = Cart.TAMANHOS[0];
+        pickerPotes = PASSO;
         renderPicker();
     };
 
@@ -457,48 +420,51 @@
         if (!alvo || !pickerId) return;
 
         var acao = alvo.getAttribute('data-picker');
-        var campo = document.querySelector('[data-picker="qtd"]');
+        var campo = document.querySelector('[data-picker="potes"]');
 
-        if (acao === 'tamanho') {
-            pickerBox = parseInt(alvo.getAttribute('data-valor'), 10);
-            renderPicker();
-        } else if (acao === 'mais') {
-            campo.value = qtdDoPicker() + 1;
-            atualizarValorDoPicker();
+        if (acao === 'mais') {
+            campo.value = potesDoPicker() + PASSO;
+            atualizarPicker();
         } else if (acao === 'menos') {
-            campo.value = Math.max(1, qtdDoPicker() - 1);
-            atualizarValorDoPicker();
+            campo.value = Math.max(PASSO, potesDoPicker() - PASSO);
+            atualizarPicker();
         } else if (acao === 'adicionar') {
-            var qtd = qtdDoPicker();
-            Cart.adicionar(pickerId, pickerNome, pickerBox, qtd);
-            toast(qtd + (qtd === 1 ? ' caixa' : ' caixas') + ' de ' + pickerBox + ' de ' + pickerNome + ' no pedido');
-            renderPicker(); // atualiza o "Já no pedido"
+            var potes = potesDoPicker();
+            Cart.adicionar(pickerId, pickerNome, potes);
+            toast(potes + ' potes de ' + pickerNome + ' no pedido (' + Cart.descreverCaixas(potes) + ')');
+            renderPicker();
         }
     });
 
+    // Digitar solto é permitido; o valor só é arredondado ao múltiplo do passo
+    // quando o campo perde o foco, para não brigar com quem está digitando.
     document.addEventListener('input', function (e) {
-        if (e.target.matches && e.target.matches('[data-picker="qtd"]')) atualizarValorDoPicker();
+        if (e.target.matches && e.target.matches('[data-picker="potes"]')) atualizarPicker();
     });
+    document.addEventListener('blur', function (e) {
+        if (e.target.matches && e.target.matches('[data-picker="potes"]')) {
+            e.target.value = potesDoPicker();
+            atualizarPicker();
+        }
+    }, true);
 
-    /* Botão "Adicionar" nos cards do catálogo: abre o modal já no seletor.
-     * Precisa ser rechamado a cada re-render da busca, que refaz o innerHTML
-     * inteiro do grid e destrói todos os listeners. */
+    /* Botões nos cards. Precisa ser rechamado a cada re-render da busca, que
+     * refaz o innerHTML inteiro do grid e destrói todos os listeners. */
     window.setupCartControls = function () {
-        // Home: adiciona direto a caixa padrao, sem modal. O ajuste fino de
-        // tamanho e quantidade fica na gaveta, que a home tambem tem.
+        // Home: adiciona direto a menor quantidade, sem modal. O ajuste fino
+        // acontece na gaveta, que a home também tem.
         document.querySelectorAll('.cart-quick-add').forEach(function (botao) {
             if (botao.dataset.ligado) return;
             botao.dataset.ligado = '1';
             botao.addEventListener('click', function (e) {
                 e.stopPropagation();
-                var id = botao.getAttribute('data-id');
                 var nome = botao.getAttribute('data-nome');
-                var box = Cart.TAMANHOS[0];
-                Cart.adicionar(id, nome, box, 1);
-                toast('1 caixa de ' + box + ' de ' + nome + ' no pedido');
+                Cart.adicionar(botao.getAttribute('data-id'), nome, PASSO);
+                toast(PASSO + ' potes de ' + nome + ' no pedido');
             });
         });
 
+        // Catálogo: abre o modal já no seletor.
         document.querySelectorAll('.cart-add-btn').forEach(function (botao) {
             if (botao.dataset.ligado) return;
             botao.dataset.ligado = '1';
@@ -506,8 +472,8 @@
                 // Sem isto o clique subiria até a raiz do card, que também abre
                 // o modal — abriria duas vezes.
                 e.stopPropagation();
-                // .surface-card, nao [data-id]: o proprio botao carrega data-id,
-                // e closest() comeca no proprio elemento.
+                // .surface-card, não [data-id]: o próprio botão carrega data-id,
+                // e closest() começa no próprio elemento.
                 var card = botao.closest('.surface-card');
                 if (card && typeof window.openProductModal === 'function') {
                     window.openProductModal(card);
@@ -530,8 +496,8 @@
         ligarLista: ligarLista
     };
 
-    // A página de pedido reusa o Cart e o toast, mas não quer o botão
-    // flutuante nem a gaveta: <body data-cart-ui="off">.
+    // A página de pedido reusa o Cart e o toast, mas não quer o botão flutuante
+    // nem a gaveta: <body data-cart-ui="off">.
     function iniciar() {
         montarToast(); // o toast serve as duas páginas
         if (document.body.dataset.cartUi === 'off') return;

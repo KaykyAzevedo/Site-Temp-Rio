@@ -248,7 +248,7 @@
     }
 
     function blocoTotais(t, comAcento) {
-        var linha = '*TOTAL:* ' + t.caixas + ' caixas / ' + t.potes + ' potes / ' +
+        var linha = '*TOTAL:* ' + t.potes + ' potes = ' + t.caixas + ' caixas / ' +
                     Cart.formatarBRL(t.valorCentavos);
         var min = t.atingiuMinimo
             ? 'Pedido minimo (' + t.minimoPotes + ' potes): OK'
@@ -260,8 +260,8 @@
     function textoCompleto(itens, t, d, comAcento) {
         var nome = function (s) { return comAcento ? s : semAcento(s); };
         var linhas = itens.map(function (it, i) {
-            return (i + 1) + ') ' + nome(it.nome) + ' - cx ' + it.box + ' - ' +
-                   it.qty + ' cx = ' + it.potes + ' potes';
+            return (i + 1) + ') ' + nome(it.nome) + ' - ' + it.potes + ' potes (' +
+                   nome(it.descricaoCaixas) + ')';
         });
         return '*NOVO PEDIDO - TEMP RIO*\n\n' +
                blocoCliente(d, comAcento) + '\n\n' +
@@ -270,20 +270,17 @@
                (d.observacoes ? '\n\n*Obs:* ' + (comAcento ? d.observacoes : semAcento(d.observacoes)) : '');
     }
 
-    // B: agrupado por tamanho de caixa. Cabe praticamente qualquer pedido real.
+    // B: uma linha só com sabor e potes. A montagem das caixas fica de fora —
+    // ela é derivável dos potes e o vendedor a recalcula do mesmo jeito.
     function textoCompacto(itens, t, d, comAcento) {
         var nome = function (s) { return comAcento ? s : semAcento(s); };
-        var grupos = Cart.TAMANHOS.map(function (tam) {
-            var doTamanho = itens.filter(function (it) { return it.box === tam; });
-            if (!doTamanho.length) return null;
-            var caixas = doTamanho.reduce(function (a, it) { return a + it.qty; }, 0);
-            return '*CX ' + tam + ' (' + caixas + ' cx):* ' +
-                   doTamanho.map(function (it) { return nome(it.nome) + ' ' + it.qty; }).join(', ');
-        }).filter(Boolean);
+        var lista = itens.map(function (it) {
+            return nome(it.nome) + ' ' + it.potes;
+        }).join(', ');
 
         return '*NOVO PEDIDO - TEMP RIO*\n\n' +
                blocoCliente(d, comAcento) + '\n\n' +
-               grupos.join('\n') + '\n\n' +
+               '*ITENS (potes):* ' + lista + '\n\n' +
                blocoTotais(t, comAcento) +
                (d.observacoes ? '\n\n*Obs:* ' + (comAcento ? d.observacoes : semAcento(d.observacoes)) : '');
     }
@@ -410,15 +407,14 @@
      * Renderização
      * =================================================================== */
     function resumoHTML(t) {
-        var minimoBRL = Cart.formatarBRL(t.minimoPotes * Cart.config.precoPorPoteCentavos);
+        var minimoBRL = Cart.formatarBRL(Cart.precoDePotes(t.minimoPotes));
         var pct = Math.round(t.progresso * 100);
 
         var aviso = t.atingiuMinimo
             ? '<p class="flex items-center gap-2 text-xs font-bold text-green-400">' +
                   '<i class="fa-solid fa-circle-check"></i> Pedido mínimo atingido</p>'
             : '<div class="cart-aviso p-3 text-xs leading-relaxed">' +
-                  '<strong class="font-bold">Faltam ' + t.faltamPotes + ' potes</strong> — ' +
-                  t.faltamCaixas[24] + ' caixas de 24 ou ' + t.faltamCaixas[48] + ' de 48.<br>' +
+                  '<strong class="font-bold">Faltam ' + t.faltamPotes + ' potes</strong>.<br>' +
                   '<span class="opacity-80">Você pode enviar assim mesmo; o vendedor confirma.</span>' +
               '</div>';
 
@@ -435,8 +431,8 @@
         aviso +
 
         '<div class="space-y-1.5 text-sm border-t border-white/5 pt-4">' +
-            '<div class="flex justify-between text-textSecondary"><span>Caixas</span><span class="text-white">' + t.caixas + '</span></div>' +
             '<div class="flex justify-between text-textSecondary"><span>Potes</span><span class="text-white">' + t.potes + '</span></div>' +
+            '<div class="flex justify-between text-textSecondary"><span>Caixas a enviar</span><span class="text-white">' + t.caixas + '</span></div>' +
             '<div class="flex justify-between text-textSecondary"><span>Preço por pote</span><span class="text-white">' +
                 Cart.formatarBRL(Cart.config.precoPorPoteCentavos) + '</span></div>' +
         '</div>' +

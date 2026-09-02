@@ -1,6 +1,14 @@
 /* Carrinho de pedidos — estado, matemática e persistência.
  *
- * Este arquivo NÃO toca no DOM. Toda a interface vive em js/cart-ui.js e
+ * MODELO: o cliente escolhe QUANTOS POTES quer de cada sabor, em múltiplos de
+ * 24. O site monta as caixas sozinho, sempre preferindo as maiores: 72 potes
+ * viram 1 caixa de 48 + 1 de 24. Como a caixa grande é o dobro da pequena,
+ * sobra no máximo UMA caixa pequena por sabor.
+ *
+ * A montagem é puramente logística: o pote custa o mesmo em qualquer caixa,
+ * então o preço de 72 potes é o mesmo independente de como sejam embalados.
+ *
+ * Este arquivo NÃO toca no DOM. A interface vive em js/cart-ui.js e
  * js/pedido.js, que apenas escutam o evento 'cart:change'.
  *
  * Carregado no <head>, depois de js/config.js e data/produtos.js.
@@ -48,31 +56,27 @@
     /* ===================================================================
      * Configuração comercial
      * =================================================================== */
-    var CHAVE = 'temprio.cart.v1';
-    var VERSAO = 1;
-    var MAX_CAIXAS = 999;
-    var MAX_LINHAS = 146; // 73 sabores x 2 tamanhos
+    var CHAVE = 'temprio.cart.v2';
+    var CHAVE_ANTIGA = 'temprio.cart.v1';
+    var VERSAO = 2;
+    var MAX_POTES_POR_SABOR = 24000; // 1000 caixas pequenas: teto sanitário
+    var MAX_LINHAS = 73;             // um sabor por linha
 
-    // siteConfig e produtos sao declarados com `const` no escopo global; `const`
-    // NAO vira propriedade de window, entao tem que ser lido pelo identificador nu.
+    // siteConfig e produtos são declarados com `const` no escopo global; `const`
+    // NÃO vira propriedade de window, então tem que ser lido pelo identificador nu.
     var cfg = (typeof siteConfig !== 'undefined' && siteConfig.pedido) ? siteConfig.pedido : {
         precoPorPoteCentavos: 400,
         caixas: [{ potes: 24, precoCentavos: 9600 }, { potes: 48, precoCentavos: 19200 }],
         minimoPotes: 480
     };
 
-    var TAMANHOS = cfg.caixas.map(function (c) { return c.potes; });
-
-    function caixaDe(potes) {
-        for (var i = 0; i < cfg.caixas.length; i++) {
-            if (cfg.caixas[i].potes === potes) return cfg.caixas[i];
-        }
-        return null;
-    }
+    // Da maior para a menor: a montagem é gulosa, preferindo caixas grandes.
+    var CAIXAS = cfg.caixas.slice().sort(function (a, b) { return b.potes - a.potes; });
+    var PASSO = CAIXAS[CAIXAS.length - 1].potes; // menor caixa = incremento mínimo
 
     // Guarda de consistência: pega a edição futura em que alguém muda o preço
     // da caixa e esquece do preço por pote (ou vice-versa).
-    cfg.caixas.forEach(function (c) {
+    CAIXAS.forEach(function (c) {
         var esperado = c.potes * cfg.precoPorPoteCentavos;
         if (c.precoCentavos !== esperado) {
             console.warn(
@@ -84,97 +88,146 @@
         }
     });
 
+    /* Monta as caixas de uma quantidade de potes, preferindo as maiores.
+     * Guloso funciona porque cada caixa é múltiplo da menor. */
+    function montarCaixas(potes) {
+        // Normaliza antes de montar: um valor fora do passo perderia potes em
+        // silencio na divisao (1000 viraria 984 em caixas, com preco de 1000).
+        var restante = ajustarAoPasso(potes);
+        var caixas = [];
+        CAIXAS.forEach(function (c) {
+            var n = Math.floor(restante / c.potes);
+            if (n > 0) {
+                caixas.push({ potes: c.potes, caixas: n });
+                restante -= n * c.potes;
+            }
+        });
+        return caixas; // restante é sempre 0 quando potes é múltiplo do PASSO
+    }
+
+    function totalDeCaixas(potes) {
+        return montarCaixas(potes).reduce(function (a, c) { return a + c.caixas; }, 0);
+    }
+
+    // "1 caixa de 48 + 1 de 24"
+    function descreverCaixas(potes) {
+        var partes = montarCaixas(potes).map(function (c) {
+            return c.caixas + (c.caixas === 1 ? ' caixa de ' : ' caixas de ') + c.potes;
+        });
+        return partes.length ? partes.join(' + ') : 'nenhuma caixa';
+    }
+
+    // Arredonda para o múltiplo de PASSO mais próximo, nunca abaixo de um passo.
+    function ajustarAoPasso(potes) {
+        var n = Math.round(Number(potes) / PASSO) * PASSO;
+        if (!isFinite(n) || n < PASSO) n = PASSO;
+        return Math.min(n, MAX_POTES_POR_SABOR);
+    }
+
     /* ===================================================================
      * Persistência
      * =================================================================== */
     var temStorage = true;
-    var emMemoria = null; // usado quando o localStorage não está disponível
+    var emMemoria = null;
 
-    function lerStorage() {
+    function lerStorage(chave) {
         if (!temStorage) return emMemoria;
-        try {
-            return window.localStorage.getItem(CHAVE);
-        } catch (e) {
-            temStorage = false;
-            return null;
-        }
+        try { return window.localStorage.getItem(chave); }
+        catch (e) { temStorage = false; return null; }
     }
 
     function gravarStorage(texto) {
         if (!temStorage) { emMemoria = texto; return; }
-        try {
-            window.localStorage.setItem(CHAVE, texto);
-        } catch (e) {
-            // Cota estourada ou storage bloqueado no meio da sessão.
-            temStorage = false;
-            emMemoria = texto;
-        }
+        try { window.localStorage.setItem(CHAVE, texto); }
+        catch (e) { temStorage = false; emMemoria = texto; }
     }
 
-    function apagarStorage() {
-        emMemoria = null;
-        if (!temStorage) return;
-        try { window.localStorage.removeItem(CHAVE); } catch (e) { /* nada a fazer */ }
+    function apagarChave(chave) {
+        if (!temStorage) { emMemoria = null; return; }
+        try { window.localStorage.removeItem(chave); } catch (e) { /* nada a fazer */ }
     }
 
-    /* Saneamento: nunca confiar no que veio do storage. O usuário pode ter
-     * editado à mão, outra aba pode ter gravado no meio, ou o dado pode ser
-     * de uma versão antiga. Qualquer falha -> carrinho vazio e chave removida
-     * (senão um valor envenenado explode a cada carregamento de página). */
+    /* Saneamento: nunca confiar no que veio do storage. Qualquer falha
+     * estrutural limpa a chave, senão um valor envenenado explode a cada
+     * carregamento de página. */
     function sanear(bruto) {
         if (!bruto) return [];
 
         var dados;
-        try {
-            dados = JSON.parse(bruto);
-        } catch (e) {
-            apagarStorage();
-            return [];
-        }
+        try { dados = JSON.parse(bruto); }
+        catch (e) { apagarChave(CHAVE); return []; }
 
         if (!dados || typeof dados !== 'object' || dados.v !== VERSAO || !Array.isArray(dados.items)) {
-            apagarStorage();
+            apagarChave(CHAVE);
             return [];
         }
 
-        var porChave = Object.create(null);
+        var porId = Object.create(null);
         var ordem = [];
 
         dados.items.forEach(function (bruta) {
             if (!bruta || typeof bruta !== 'object') return;
             if (typeof bruta.id !== 'string' || !bruta.id) return;
-            if (TAMANHOS.indexOf(bruta.box) === -1) return;
 
-            var qty = Math.trunc(Number(bruta.qty));
-            if (!isFinite(qty) || qty < 1) return;
-            if (qty > MAX_CAIXAS) qty = MAX_CAIXAS;
+            var potes = Math.trunc(Number(bruta.potes));
+            if (!isFinite(potes) || potes < PASSO) return;
+            if (potes % PASSO !== 0) potes = ajustarAoPasso(potes);
+            potes = Math.min(potes, MAX_POTES_POR_SABOR);
 
-            var chave = bruta.id + '|' + bruta.box;
-            if (porChave[chave]) {
+            if (porId[bruta.id]) {
                 // Deduplica somando — defesa contra escrita concorrente entre abas.
-                porChave[chave].qty = Math.min(porChave[chave].qty + qty, MAX_CAIXAS);
+                porId[bruta.id].potes = Math.min(porId[bruta.id].potes + potes, MAX_POTES_POR_SABOR);
                 return;
             }
-            porChave[chave] = {
+            porId[bruta.id] = {
                 id: bruta.id,
                 nome: typeof bruta.nome === 'string' && bruta.nome ? bruta.nome : bruta.id,
-                box: bruta.box,
-                qty: qty
+                potes: potes
             };
-            ordem.push(chave);
+            ordem.push(bruta.id);
         });
 
-        return ordem.slice(0, MAX_LINHAS).map(function (k) { return porChave[k]; });
+        return ordem.slice(0, MAX_LINHAS).map(function (k) { return porId[k]; });
     }
 
-    var itens = sanear(lerStorage());
+    /* Carrinho antigo (v1: sabor + tamanho + quantidade de caixas) vira o novo
+     * somando os potes por sabor. Ninguém perde o pedido na virada do modelo. */
+    function migrarDaV1() {
+        var bruto = lerStorage(CHAVE_ANTIGA);
+        if (!bruto) return [];
+
+        var dados;
+        try { dados = JSON.parse(bruto); } catch (e) { apagarChave(CHAVE_ANTIGA); return []; }
+        if (!dados || dados.v !== 1 || !Array.isArray(dados.items)) { apagarChave(CHAVE_ANTIGA); return []; }
+
+        var porId = Object.create(null);
+        var ordem = [];
+        dados.items.forEach(function (it) {
+            if (!it || typeof it.id !== 'string') return;
+            var potes = Math.trunc(Number(it.qty)) * Math.trunc(Number(it.box));
+            if (!isFinite(potes) || potes < PASSO) return;
+            if (!porId[it.id]) {
+                porId[it.id] = { id: it.id, nome: it.nome || it.id, potes: 0 };
+                ordem.push(it.id);
+            }
+            porId[it.id].potes = Math.min(porId[it.id].potes + potes, MAX_POTES_POR_SABOR);
+        });
+
+        apagarChave(CHAVE_ANTIGA);
+        return ordem.map(function (k) { return porId[k]; });
+    }
+
+    var itens = sanear(lerStorage(CHAVE));
+    if (!itens.length) {
+        var migrados = migrarDaV1();
+        if (migrados.length) {
+            itens = migrados;
+            gravarStorage(JSON.stringify({ v: VERSAO, updatedAt: Date.now(), items: itens }));
+        }
+    }
 
     function gravar() {
-        gravarStorage(JSON.stringify({
-            v: VERSAO,
-            updatedAt: Date.now(),
-            items: itens
-        }));
+        gravarStorage(JSON.stringify({ v: VERSAO, updatedAt: Date.now(), items: itens }));
         avisar();
     }
 
@@ -184,16 +237,13 @@
         }));
     }
 
-    /* Produto que saiu do catálogo depois de ter entrado no carrinho.
-     * Marcamos em memória (nunca persistimos) para a interface avisar, mas
-     * jamais apagamos a linha por conta própria: quem decide é o cliente. */
     function catalogo() {
         return (typeof produtos !== 'undefined' && Array.isArray(produtos)) ? produtos : null;
     }
 
     function existeNoCatalogo(id) {
         var lista = catalogo();
-        if (!lista) return true; // sem catalogo carregado, nao ha como julgar
+        if (!lista) return true; // sem catálogo carregado, não há como julgar
         return lista.some(function (p) { return p.id === id; });
     }
 
@@ -209,18 +259,19 @@
                 // um nome atualiza carrinhos antigos); o snapshot é só o resgate.
                 nome: produto ? produto.nome : it.nome,
                 imagem: produto ? produto.imagem : null,
-                box: it.box,
-                qty: it.qty,
-                subtotalCentavos: it.qty * caixaDe(it.box).precoCentavos,
-                potes: it.qty * it.box,
+                potes: it.potes,
+                caixas: montarCaixas(it.potes),
+                totalCaixas: totalDeCaixas(it.potes),
+                descricaoCaixas: descreverCaixas(it.potes),
+                subtotalCentavos: it.potes * cfg.precoPorPoteCentavos,
                 stale: !existeNoCatalogo(it.id)
             };
         });
     }
 
-    function indiceDe(id, box) {
+    function indiceDe(id) {
         for (var i = 0; i < itens.length; i++) {
-            if (itens[i].id === id && itens[i].box === box) return i;
+            if (itens[i].id === id) return i;
         }
         return -1;
     }
@@ -229,12 +280,11 @@
      * Matemática
      * =================================================================== */
     function totais() {
-        var caixas = 0, potes = 0, valorCentavos = 0;
+        var caixas = 0, potes = 0;
 
         itens.forEach(function (it) {
-            caixas += it.qty;
-            potes += it.qty * it.box;
-            valorCentavos += it.qty * caixaDe(it.box).precoCentavos;
+            potes += it.potes;
+            caixas += totalDeCaixas(it.potes);
         });
 
         var minimo = cfg.minimoPotes;
@@ -244,17 +294,13 @@
             linhas: itens.length,
             caixas: caixas,
             potes: potes,
-            valorCentavos: valorCentavos,
+            valorCentavos: potes * cfg.precoPorPoteCentavos,
             minimoPotes: minimo,
             faltamPotes: faltam,
-            // Quantas caixas ainda faltariam, por tamanho. Arredonda para cima:
-            // o cliente não compra meia caixa.
-            faltamCaixas: TAMANHOS.reduce(function (acc, t) {
-                acc[t] = Math.ceil(faltam / t);
-                return acc;
-            }, {}),
             atingiuMinimo: potes >= minimo,
-            progresso: minimo > 0 ? Math.min(potes / minimo, 1) : 1
+            progresso: minimo > 0 ? Math.min(potes / minimo, 1) : 1,
+            // Como fica o total em caixas físicas quando o mínimo for atingido.
+            caixasDoMinimo: descreverCaixas(minimo)
         };
     }
 
@@ -264,7 +310,8 @@
      * API pública
      * =================================================================== */
     window.Cart = {
-        TAMANHOS: TAMANHOS.slice(),
+        PASSO: PASSO,
+        TAMANHOS: CAIXAS.map(function (c) { return c.potes; }),
         config: cfg,
 
         // O carrinho está sendo salvo? Falso em aba anônima ou com storage
@@ -273,72 +320,55 @@
 
         itens: function () { return comStale(); },
 
-        quantidade: function (id, box) {
-            var i = indiceDe(id, box);
-            return i === -1 ? 0 : itens[i].qty;
+        potes: function (id) {
+            var i = indiceDe(id);
+            return i === -1 ? 0 : itens[i].potes;
         },
 
         vazio: function () { return itens.length === 0; },
 
         totais: totais,
 
-        precoCaixa: function (box) {
-            var c = caixaDe(box);
-            return c ? c.precoCentavos : 0;
+        montarCaixas: montarCaixas,
+        descreverCaixas: descreverCaixas,
+        ajustarAoPasso: ajustarAoPasso,
+
+        precoDePotes: function (potes) {
+            return (Number(potes) || 0) * cfg.precoPorPoteCentavos;
         },
 
-        adicionar: function (id, nome, box, qty) {
-            if (TAMANHOS.indexOf(box) === -1) return false;
-            qty = Math.trunc(Number(qty));
-            if (!isFinite(qty) || qty < 1) return false;
-
-            var i = indiceDe(id, box);
+        adicionar: function (id, nome, potes) {
+            potes = ajustarAoPasso(potes);
+            var i = indiceDe(id);
             if (i === -1) {
                 if (itens.length >= MAX_LINHAS) return false;
-                itens.push({ id: id, nome: nome || id, box: box, qty: Math.min(qty, MAX_CAIXAS) });
+                itens.push({ id: id, nome: nome || id, potes: potes });
             } else {
-                itens[i].qty = Math.min(itens[i].qty + qty, MAX_CAIXAS);
+                itens[i].potes = Math.min(itens[i].potes + potes, MAX_POTES_POR_SABOR);
             }
             gravar();
             return true;
         },
 
-        definirQuantidade: function (id, box, qty) {
-            var i = indiceDe(id, box);
+        definirPotes: function (id, potes) {
+            var i = indiceDe(id);
             if (i === -1) return false;
 
-            qty = Math.trunc(Number(qty));
-            if (!isFinite(qty) || qty < 1) {
+            // Zero ou negativo remove (e o botao de diminuir chega a zero assim).
+            // Qualquer valor positivo abaixo de uma caixa e engano de digitacao:
+            // sobe para a caixa minima em vez de apagar a linha.
+            var bruto = Number(potes);
+            if (!isFinite(bruto) || bruto <= 0) {
                 itens.splice(i, 1);
             } else {
-                itens[i].qty = Math.min(qty, MAX_CAIXAS);
+                itens[i].potes = ajustarAoPasso(bruto);
             }
             gravar();
             return true;
         },
 
-        // Troca o tamanho de uma linha já no carrinho. Se a linha de destino
-        // já existir, funde as duas somando as caixas.
-        trocarTamanho: function (id, de, para) {
-            if (de === para) return false;
-            if (TAMANHOS.indexOf(para) === -1) return false;
-
-            var origem = indiceDe(id, de);
-            if (origem === -1) return false;
-
-            var destino = indiceDe(id, para);
-            if (destino === -1) {
-                itens[origem].box = para;
-            } else {
-                itens[destino].qty = Math.min(itens[destino].qty + itens[origem].qty, MAX_CAIXAS);
-                itens.splice(origem, 1);
-            }
-            gravar();
-            return true;
-        },
-
-        remover: function (id, box) {
-            var i = indiceDe(id, box);
+        remover: function (id) {
+            var i = indiceDe(id);
             if (i === -1) return false;
             itens.splice(i, 1);
             gravar();
@@ -347,7 +377,7 @@
 
         limpar: function () {
             itens = [];
-            apagarStorage();
+            apagarChave(CHAVE);
             avisar();
         },
 
