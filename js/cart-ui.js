@@ -58,9 +58,7 @@
 
                 // Rodapé
                 '<footer class="shrink-0 border-t border-borderSubtle p-5 space-y-4 bg-[#111111]" id="cart-rodape"></footer>' +
-            '</aside>' +
-
-            '<div class="cart-toast" id="cart-toast" role="status" aria-live="polite"></div>';
+            '</aside>';
 
         var wrap = document.createElement('div');
         wrap.innerHTML = html;
@@ -69,7 +67,6 @@
         fab = document.getElementById('cart-fab');
         backdrop = document.getElementById('cart-backdrop');
         gaveta = document.getElementById('cart-drawer');
-        toastEl = document.getElementById('cart-toast');
 
         fab.addEventListener('click', abrir);
         backdrop.addEventListener('click', fechar);
@@ -77,8 +74,25 @@
 
         // Delegação: a lista é reconstruída a cada mudança, então não dá para
         // ligar listener item a item.
-        document.getElementById('cart-lista').addEventListener('click', aoClicarNaLista);
-        document.getElementById('cart-lista').addEventListener('change', aoMudarQuantidade);
+        ligarLista(document.getElementById('cart-lista'));
+    }
+
+    function montarToast() {
+        if (document.getElementById('cart-toast')) return;
+        toastEl = document.createElement('div');
+        toastEl.className = 'cart-toast';
+        toastEl.id = 'cart-toast';
+        toastEl.setAttribute('role', 'status');
+        toastEl.setAttribute('aria-live', 'polite');
+        document.body.appendChild(toastEl);
+    }
+
+    // Liga a delegação de eventos em qualquer container que renderize linhas de
+    // carrinho — a gaveta e a página de pedido usam o mesmo template.
+    function ligarLista(el) {
+        if (!el) return;
+        el.addEventListener('click', aoClicarNaLista);
+        el.addEventListener('change', aoMudarQuantidade);
     }
 
     /* ===================================================================
@@ -334,12 +348,16 @@
         fechar: fechar,
         aberta: aberta,
         toast: toast,
-        render: render
+        render: render,
+        // Reusados por js/pedido.js, que renderiza a mesma linha sem a gaveta.
+        linhaHTML: linhaHTML,
+        ligarLista: ligarLista
     };
 
     // A página de pedido reusa o Cart e o toast, mas não quer o botão
     // flutuante nem a gaveta: <body data-cart-ui="off">.
     function iniciar() {
+        montarToast(); // o toast serve as duas páginas
         if (document.body.dataset.cartUi === 'off') return;
         montar();
         render();

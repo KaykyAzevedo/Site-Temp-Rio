@@ -181,3 +181,77 @@
     .cart-progresso-barra,
     .cart-float { transition: none; }
 }
+
+/* ===================== Formulário de pedido ===================== */
+/* Primeiro formulário do site. A receita vem do campo de busca do catálogo
+   (fundo #1A1A1A, borda borderSubtle, foco primary-500), trocando o
+   rounded-full por rounded-xl: é campo de formulário, não de busca. */
+.campo-input,
+.campo-select {
+    width: 100%;
+    background-color: #1A1A1A;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: #FFFFFF;
+    font-size: 1rem;
+    border-radius: 0.75rem;
+    padding: 0.875rem 1rem;
+    outline: none;
+    transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.campo-input::placeholder { color: rgba(255, 255, 255, 0.3); }
+
+.campo-input:hover,
+.campo-select:hover { border-color: rgba(242, 140, 82, 0.5); }
+
+.campo-input:focus,
+.campo-select:focus {
+    border-color: #F28C52;
+    background-color: #222222;
+    box-shadow: 0 0 0 1px #F28C52;
+}
+
+/* O Tailwind entra sem o plugin de forms, então a seta nativa do select fica
+   ilegível no fundo escuro. Escondemos e desenhamos a nossa. */
+.campo-select {
+    appearance: none;
+    -webkit-appearance: none;
+    padding-right: 2.5rem;
+}
+
+.campo-seta {
+    position: absolute;
+    right: 1rem;
+    bottom: 1.05rem;
+    pointer-events: none;
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 0.75rem;
+}
+
+/* Vermelho é EXCLUSIVO de erro de campo. Avisos não bloqueantes (mínimo não
+   atingido, ViaCEP fora do ar) usam o laranja da marca — ver .cart-aviso. */
+.campo.is-erro .campo-input,
+.campo.is-erro .campo-select {
+    border-color: #ef4444;
+    box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.35);
+}
+
+.campo-msg {
+    display: none;
+    margin-top: 0.5rem;
+    font-size: 0.75rem;
+    color: #f87171;
+}
+
+.campo.is-erro .campo-msg { display: block; }
+
+/* Dica neutra (ex.: "preenchido pelo CEP", "buscando endereço...") */
+.campo-dica {
+    display: none;
+    margin-top: 0.5rem;
+    font-size: 0.7rem;
+    color: rgba(255, 255, 255, 0.45);
+}
+
+.campo-dica.is-visivel { display: block; }
+.campo-dica.is-alerta { color: #F5A474; }
