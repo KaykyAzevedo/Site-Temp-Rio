@@ -341,6 +341,167 @@
     }
 
     /* ===================================================================
+     * Seletor de caixa dentro do modal de produto
+     *
+     * O seletor completo vive num lugar só: o modal. O card do catálogo tem
+     * apenas um botão "Adicionar" que abre o modal já com o seletor à mostra.
+     * Motivo: o card inteiro já é o gatilho do modal (product-modal.js liga o
+     * clique na raiz do card), então cada controle dentro dele precisaria de
+     * stopPropagation e um clique errado abriria o modal por cima do que a
+     * pessoa estava mexendo. E o grid vai a 4 colunas com 73 cards.
+     * =================================================================== */
+    var pickerId = null;
+    var pickerNome = '';
+    var pickerBox = null;
+
+    function produtoPorId(id) {
+        if (typeof produtos === 'undefined' || !Array.isArray(produtos)) return null;
+        return produtos.filter(function (p) { return p.id === id; })[0] || null;
+    }
+
+    function pickerHTML() {
+        var jaTem = Cart.quantidade(pickerId, pickerBox);
+        var qtd = jaTem || 1;
+        var precoCaixa = Cart.precoCaixa(pickerBox);
+
+        var pilulas = Cart.TAMANHOS.map(function (t) {
+            var ativo = t === pickerBox;
+            return '<button type="button" data-picker="tamanho" data-valor="' + t + '"' +
+                ' class="flex-1 px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-widest border transition-colors ' +
+                (ativo
+                    ? 'bg-primary-500 text-white border-primary-500'
+                    : 'bg-white/5 text-textSecondary border-white/10 hover:border-primary-500/50') +
+                '">' + t + ' potes<br><span class="text-[0.65rem] font-normal opacity-80">' +
+                Cart.formatarBRL(Cart.precoCaixa(t)) + '</span></button>';
+        }).join('');
+
+        return '' +
+        '<div class="bg-white/5 border border-white/10 rounded-xl p-5 space-y-4">' +
+            '<p class="text-primary-500 text-sm font-bold uppercase tracking-widest flex items-center gap-2">' +
+                '<i class="fa-solid fa-box"></i> Adicionar ao pedido' +
+            '</p>' +
+            '<p class="text-xs text-textSecondary font-light">' +
+                Cart.formatarBRL(Cart.config.precoPorPoteCentavos) + ' por pote &middot; caixa fechada de um único sabor' +
+            '</p>' +
+
+            '<div class="flex gap-2">' + pilulas + '</div>' +
+
+            '<div class="flex items-center justify-between gap-3">' +
+                '<div class="flex items-center gap-2">' +
+                    '<button type="button" data-picker="menos" aria-label="Menos uma caixa" class="' + BTN_CIRCULO + '">' +
+                        '<i class="fa-solid fa-minus text-xs"></i></button>' +
+                    '<input type="number" inputmode="numeric" min="1" max="999" value="' + qtd + '" data-picker="qtd"' +
+                        ' aria-label="Quantidade de caixas"' +
+                        ' class="w-16 text-center bg-[#111111] border border-borderSubtle rounded-lg text-white py-2 outline-none focus:border-primary-500">' +
+                    '<button type="button" data-picker="mais" aria-label="Mais uma caixa" class="' + BTN_CIRCULO + '">' +
+                        '<i class="fa-solid fa-plus text-xs"></i></button>' +
+                '</div>' +
+                '<span class="text-xs text-textSecondary">' + pickerBox + ' potes por caixa</span>' +
+            '</div>' +
+
+            '<button type="button" data-picker="adicionar" class="btn-primary w-full py-3 rounded-xl font-bold text-sm">' +
+                'Adicionar &mdash; <span data-picker="valor">' + Cart.formatarBRL(qtd * precoCaixa) + '</span>' +
+            '</button>' +
+
+            (jaTem
+                ? '<p class="text-[0.7rem] text-primary-400 text-center">Já no pedido: ' + jaTem +
+                  (jaTem === 1 ? ' caixa' : ' caixas') + ' de ' + pickerBox + ' &middot; adicionar soma a essa quantidade</p>'
+                : '') +
+        '</div>';
+    }
+
+    function renderPicker() {
+        var slot = document.getElementById('modal-picker-slot');
+        if (!slot || !pickerId) return;
+        slot.innerHTML = pickerHTML();
+    }
+
+    function qtdDoPicker() {
+        var campo = document.querySelector('[data-picker="qtd"]');
+        var n = Math.trunc(Number(campo && campo.value));
+        if (!isFinite(n) || n < 1) n = 1;
+        return Math.min(n, 999);
+    }
+
+    function atualizarValorDoPicker() {
+        var alvo = document.querySelector('[data-picker="valor"]');
+        if (alvo) alvo.textContent = Cart.formatarBRL(qtdDoPicker() * Cart.precoCaixa(pickerBox));
+    }
+
+    // O modal é um singleton e o anterior/próximo reentra na mesma função, então
+    // o seletor sempre reseta para o produto que acabou de abrir.
+    window.onProductModalOpen = function (id, nomeCru) {
+        if (!id) {
+            // Card sem data-id: tenta casar pelo nome, como content-loader.js faz.
+            var alvo = String(nomeCru || '').toUpperCase();
+            var achado = (typeof produtos !== 'undefined' ? produtos : []).filter(function (p) {
+                return p.nome.toUpperCase() === alvo;
+            })[0];
+            id = achado ? achado.id : null;
+        }
+        var prod = produtoPorId(id);
+        if (!prod) {
+            var slot = document.getElementById('modal-picker-slot');
+            if (slot) slot.innerHTML = '';
+            pickerId = null;
+            return;
+        }
+        pickerId = prod.id;
+        pickerNome = prod.nome;
+        pickerBox = Cart.TAMANHOS[0];
+        renderPicker();
+    };
+
+    document.addEventListener('click', function (e) {
+        var alvo = e.target.closest('[data-picker]');
+        if (!alvo || !pickerId) return;
+
+        var acao = alvo.getAttribute('data-picker');
+        var campo = document.querySelector('[data-picker="qtd"]');
+
+        if (acao === 'tamanho') {
+            pickerBox = parseInt(alvo.getAttribute('data-valor'), 10);
+            renderPicker();
+        } else if (acao === 'mais') {
+            campo.value = qtdDoPicker() + 1;
+            atualizarValorDoPicker();
+        } else if (acao === 'menos') {
+            campo.value = Math.max(1, qtdDoPicker() - 1);
+            atualizarValorDoPicker();
+        } else if (acao === 'adicionar') {
+            var qtd = qtdDoPicker();
+            Cart.adicionar(pickerId, pickerNome, pickerBox, qtd);
+            toast(qtd + (qtd === 1 ? ' caixa' : ' caixas') + ' de ' + pickerBox + ' de ' + pickerNome + ' no pedido');
+            renderPicker(); // atualiza o "Já no pedido"
+        }
+    });
+
+    document.addEventListener('input', function (e) {
+        if (e.target.matches && e.target.matches('[data-picker="qtd"]')) atualizarValorDoPicker();
+    });
+
+    /* Botão "Adicionar" nos cards do catálogo: abre o modal já no seletor.
+     * Precisa ser rechamado a cada re-render da busca, que refaz o innerHTML
+     * inteiro do grid e destrói todos os listeners. */
+    window.setupCartControls = function () {
+        document.querySelectorAll('.cart-add-btn').forEach(function (botao) {
+            if (botao.dataset.ligado) return;
+            botao.dataset.ligado = '1';
+            botao.addEventListener('click', function (e) {
+                // Sem isto o clique subiria até a raiz do card, que também abre
+                // o modal — abriria duas vezes.
+                e.stopPropagation();
+                // .surface-card, nao [data-id]: o proprio botao carrega data-id,
+                // e closest() comeca no proprio elemento.
+                var card = botao.closest('.surface-card');
+                if (card && typeof window.openProductModal === 'function') {
+                    window.openProductModal(card);
+                }
+            });
+        });
+    };
+
+    /* ===================================================================
      * API pública e boot
      * =================================================================== */
     window.CartUI = {

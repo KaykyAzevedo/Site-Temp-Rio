@@ -38,7 +38,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!container) return;
 
         container.innerHTML = produtos.filter(p => p.destaque).slice(0, 4).map((prod, index) => `
-                <div class="${CLASSES_CARD}" style="transition-delay: ${50 * index}ms;">${imagemProduto(prod)}
+                <div class="${CLASSES_CARD}" data-id="${prod.id}" style="transition-delay: ${50 * index}ms;">${imagemProduto(prod)}
                     <div class="p-6 pt-2 text-center bg-[#1A1A1A] relative z-10 flex flex-col justify-center items-center flex-1">
                         <h4 class="text-xl font-bold text-white uppercase tracking-wider">${prod.nome}</h4>
                         <div class="w-8 h-1 bg-primary-500 mx-auto rounded-full mt-3 opacity-0 group-hover:opacity-100 group-hover:w-16 transition-all duration-500"></div>
@@ -54,16 +54,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const renderCatalog = (items) => {
             container.innerHTML = items.map(prod => `
-                <div class="${CLASSES_CARD}">${imagemProduto(prod, { lazy: true, overlay: OVERLAY_LUPA })}
+                <div class="${CLASSES_CARD}" data-id="${prod.id}">${imagemProduto(prod, { lazy: true, overlay: OVERLAY_LUPA })}
                     <div class="p-6 pt-4 bg-[#1A1A1A] relative z-10 flex flex-col flex-1 border-t border-white/5">
                         <h4 class="text-lg font-bold text-white uppercase tracking-wide mb-1 leading-tight">${prod.nome}</h4>
-                        <p class="text-primary-500 text-xs font-bold tracking-widest uppercase mb-4">100% Natural</p>
+                        <p class="text-primary-500 text-xs font-bold tracking-widest uppercase mb-3">100% Natural</p>
+                        <button type="button" class="cart-add-btn mt-auto w-full py-2.5 rounded-xl border border-primary-500/40 text-primary-400 text-xs font-bold uppercase tracking-widest hover:bg-primary-500 hover:text-white transition-all" data-id="${prod.id}">
+                            Adicionar
+                        </button>
                     </div>
                 </div>
             `).join('');
 
-            // Os cards foram recriados: religa o modal e as animações de entrada.
+            // Os cards foram recriados: religa modal, carrinho e animações de entrada.
             if (window.setupModal) window.setupModal();
+            if (window.setupCartControls) window.setupCartControls();
             if (window.initAnimations) window.initAnimations();
         };
 
@@ -148,6 +152,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Inicializadores que dependem do HTML já injetado acima.
     if (window.initAnimations) window.initAnimations();
+    if (window.setupCartControls) window.setupCartControls();
     if (window.initFaq) window.initFaq();
     if (window.initSliders) window.initSliders();
     if (window.initCounters) window.initCounters();
