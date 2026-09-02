@@ -100,7 +100,7 @@ const productData = {
         alergicos: "PODE CONTER SOJA, TRIGO, AMÊNDOA E PISTACHE. CONTÉM GLÚTEN",
         nutricional: null
     },
-    "LINHAÇA": {
+    "LINHAÇA DOURADA": {
         ingredientes: "Linhaça Dourada",
         alergicos: "PODE CONTER SOJA, TRIGO, AMÊNDOA E PISTACHE. CONTÉM GLÚTEN",
         nutricional: {
@@ -168,7 +168,7 @@ const productData = {
             ]
         }
     },
-    "SAL ROSA GROSSO": {
+    "SAL ROSA DO HIMALAIA GROSSO": {
         ingredientes: "Sal Rosa do Himalaia Grosso",
         alergicos: "PODE CONTER SOJA, TRIGO, AMÊNDOA E PISTACHE. CONTÉM GLÚTEN",
         nutricional: {
@@ -210,7 +210,7 @@ const productData = {
             ]
         }
     },
-    "PSYLLIUM": {
+    "PSYLLIUM HUSK": {
         ingredientes: "Psyllium Husk",
         alergicos: "PODE CONTER SOJA, TRIGO, AMÊNDOA E PISTACHE. CONTÉM GLÚTEN",
         nutricional: null
@@ -236,6 +236,7 @@ const productData = {
             ]
         }
     },
+    // PENDENTE: ficha orfa - nenhum produto do catalogo tem esse nome
     "ANA": {
         ingredientes: "Sal, cebola granulada, cebolinha verde desidratada, amido de milho, especiarias, açúcar, aroma idêntico ao natural de galinha, óleo de soja, antioxidante fosfato tricálcico e conservante ácido cítrico.",
         alergicos: "PODE CONTER SOJA, TRIGO, AMÊNDOA E PISTACHE. CONTÉM GLÚTEN",
@@ -257,7 +258,7 @@ const productData = {
             ]
         }
     },
-    "SAL ROSA FINO": {
+    "SAL ROSA DO HIMALAIA FINO": {
         ingredientes: "Sal Rosa do Himalaia fino",
         alergicos: "PODE CONTER SOJA, TRIGO, AMÊNDOA E PISTACHE. CONTÉM GLÚTEN",
         nutricional: {
@@ -320,6 +321,7 @@ const productData = {
             ]
         }
     },
+    // PENDENTE: ficha orfa - o produto 'Peixe' foi mapeado para PEIXE FIT
     "CALDO DE PEIXE": {
         ingredientes: "Sal, amido de milho, páprica doce, açúcar, especiarias, aroma idêntico ao natural de peixe, óleo de soja, antiumectante fosfato tricálcico e conservante ácido cítrico.",
         alergicos: "CONTÉM DERIVADOS DE SOJA. PODE CONTER TRIGO, AMÊNDOA E PISTACHE. CONTÉM GLÚTEN",
@@ -425,7 +427,7 @@ const productData = {
             ]
         }
     },
-    "COLORAU": {
+    "COLORAU COLORÍFICO": {
         ingredientes: "Farinha de milho enriquecida com ferro e ácido fólico, urucum em pó e óleo de soja.",
         alergicos: "CONTÉM DERIVADOS DE SOJA. PODE CONTER TRIGO, AMÊNDOA E PISTACHE. CONTÉM GLÚTEN",
         nutricional: {
@@ -446,7 +448,7 @@ const productData = {
             ]
         }
     },
-    "CHIMICHURRI C/PIMENTA": {
+    "CHIMICHURRI COM PIMENTA": {
         ingredientes: "Alho, cebola, caldo de galinha (sal, amido de milho, açúcar, cúrcuma, óleo de soja, salsinha, alho, cebola), salsinha, majericão, colorau especial (farinha de milho, corante natural de urucum e óleo de soja), manjerona, pimenta calabresa e cominho.",
         alergicos: "CONTÉM DERIVADOS DE SOJA. PODE CONTER TRIGO, AMÊNDOA E PISTACHE. CONTÉM GLÚTEN",
         nutricional: {
@@ -467,7 +469,7 @@ const productData = {
             ]
         }
     },
-    "COENTRO": {
+    "COENTRO EM PÓ": {
         ingredientes: "Coentro.",
         alergicos: "PODE CONTER SOJA, TRIGO, AMÊNDOA E PISTACHE. CONTÉM GLÚTEN",
         nutricional: null
@@ -493,7 +495,7 @@ const productData = {
             ]
         }
     },
-    "COMINHO": {
+    "COMINHO EM PÓ": {
         ingredientes: "Cominho e farinha de milho enriquecida com ferro e ácido fólico.",
         alergicos: "PODE CONTER SOJA, TRIGO, AMÊNDOA E PISTACHE. CONTÉM GLÚTEN",
         nutricional: {
@@ -850,7 +852,7 @@ const productData = {
             ]
         }
     },
-    "ORANGER PEPPER": {
+    "ORANGE PEPPER": {
         ingredientes: "Sal, pimenta do reino preta, cebola granulada, cúrcuma, óleo de soja, aroma idêntico ao natural de laranja, colorau, açúcar e acidulante ácido.",
         alergicos: "CONTÉM DERIVADOS DE SOJA. PODE CONTER TRIGO, AMÊNDOA E PISTACHE. CONTÉM GLÚTEN",
         nutricional: {
@@ -1170,7 +1172,7 @@ const productData = {
             ]
         }
     },
-    "HIBISCO": {
+    "HIBISCO EM FLOR": {
         ingredientes: "Hibisco em flor.",
         alergicos: "PODE CONTER SOJA, TRIGO, AMÊNDOA E PISTACHE. CONTÉM GLÚTEN",
         nutricional: null
@@ -1180,7 +1182,7 @@ const productData = {
         alergicos: "PODE CONTER SOJA, TRIGO, AMÊNDOA E PISTACHE. CONTÉM GLÚTEN",
         nutricional: null
     },
-    "LOURO EM FOLHAS": {
+    "LOURO": {
         ingredientes: "Louro.",
         alergicos: "PODE CONTER SOJA, TRIGO, AMÊNDOA E PISTACHE. CONTÉM GLÚTEN",
         nutricional: null
@@ -1227,7 +1229,7 @@ const productData = {
             ]
         }
     },
-    "PIMENTA ROSA": {
+    "PIMENTA ROSA EM GRÃOS": {
         ingredientes: "Pimenta rosa em grãos.",
         alergicos: "PODE CONTER SOJA, TRIGO, AMÊNDOA E PISTACHE. CONTÉM GLÚTEN",
         nutricional: null
@@ -1258,7 +1260,7 @@ const productData = {
         alergicos: "PODE CONTER SOJA, TRIGO, AMÊNDOA E PISTACHE. CONTÉM GLÚTEN",
         nutricional: null
     },
-    "PIMENTA CALABRESA": {
+    "PIMENTA CALABRESA EM GRÃOS": {
         ingredientes: "Pimenta calabresa em grãos.",
         alergicos: "PODE CONTER SOJA, TRIGO, AMÊNDOA E PISTACHE. CONTÉM GLÚTEN",
         nutricional: null
