@@ -1,0 +1,283 @@
+/* Painel de administrador.
+ *
+ * Ferramenta interna, não peça de marketing: a paleta é a da marca, mas o
+ * peso visual é o oposto do site. Aqui o dado é a única coisa que pode ser
+ * alta; grade, eixos e molduras ficam recessivos.
+ *
+ * Números usam Lato, não Barlow Condensed. A condensada é a voz de marca do
+ * site, e num painel de dados ela lê como decoração — além de comprimir dígito
+ * a ponto de atrapalhar a comparação.
+ */
+
+:root {
+    --adm-fundo: #0A0A0A;
+    --adm-superficie: #121212;
+    --adm-superficie-2: #191919;
+    --adm-borda: rgba(255, 255, 255, 0.08);
+    --adm-borda-forte: rgba(255, 255, 255, 0.14);
+
+    --adm-tinta: #FFFFFF;
+    --adm-tinta-2: #BFBFBF;
+    --adm-tinta-3: rgba(255, 255, 255, 0.45);
+
+    --adm-marca: #F28C52;
+
+    /* Status: cada um sempre acompanhado de ícone e rótulo, nunca cor sozinha. */
+    --adm-espera: #EAB308;
+    --adm-bom: #22C55E;
+    --adm-entregue: #38BDF8;
+    --adm-ruim: #EF4444;
+}
+
+body.admin {
+    background-color: var(--adm-fundo);
+    color: var(--adm-tinta);
+    font-family: 'Lato', sans-serif;
+}
+
+/* ===================== Cartões ===================== */
+.adm-card {
+    background-color: var(--adm-superficie);
+    border: 1px solid var(--adm-borda);
+    border-radius: 0.85rem;
+}
+
+/* ===================== Ficha de número ===================== */
+.adm-tile-rotulo {
+    font-size: 0.7rem;
+    color: var(--adm-tinta-3);
+    letter-spacing: 0.04em;
+}
+
+.adm-tile-valor {
+    font-size: 1.75rem;
+    font-weight: 600;
+    line-height: 1.1;
+    /* Proporcional, não tabular: em tamanho grande, dígitos de largura igual
+       deixam um "121" parecendo solto. Tabular só nas colunas e nos eixos. */
+    font-variant-numeric: proportional-nums;
+}
+
+/* Número principal do painel — um só por tela. */
+.adm-heroi {
+    font-size: 3rem;
+    font-weight: 700;
+    line-height: 1;
+    font-variant-numeric: proportional-nums;
+}
+
+/* ===================== Gráficos ===================== */
+.adm-grafico { width: 100%; display: block; }
+
+/* Grade e eixos: linha de 1px, sólida (nunca tracejada), um passo acima do
+   fundo. Tracejado vira ruído e sugere "projeção" onde só há grade. */
+.adm-grade { stroke: rgba(255, 255, 255, 0.07); stroke-width: 1; }
+.adm-eixo { stroke: rgba(255, 255, 255, 0.12); stroke-width: 1; }
+
+.adm-tick {
+    fill: var(--adm-tinta-3);
+    font-size: 10px;
+    font-variant-numeric: tabular-nums; /* aqui alinham em coluna: tabular */
+}
+
+.adm-barra {
+    fill: var(--adm-marca);
+    transition: opacity 0.15s ease;
+}
+
+.adm-col-alvo { fill: transparent; cursor: pointer; }
+.adm-col-alvo:hover + .adm-barra,
+.adm-barra:hover { opacity: 0.75; }
+
+.adm-linha {
+    fill: none;
+    stroke: var(--adm-marca);
+    stroke-width: 2;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+}
+
+.adm-area { fill: var(--adm-marca); opacity: 0.1; }
+
+/* Marcador com anel na cor da superfície, para seguir legível ao cruzar a linha. */
+.adm-ponto {
+    fill: var(--adm-marca);
+    stroke: var(--adm-superficie);
+    stroke-width: 2;
+}
+
+.adm-rotulo-direto {
+    fill: var(--adm-tinta-2);
+    font-size: 10px;
+    font-weight: 700;
+}
+
+/* ===================== Dica de valor ===================== */
+.adm-dica {
+    position: fixed;
+    pointer-events: none;
+    z-index: 60;
+    background-color: var(--adm-superficie-2);
+    border: 1px solid var(--adm-borda-forte);
+    border-radius: 0.5rem;
+    padding: 0.5rem 0.7rem;
+    font-size: 0.75rem;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+    opacity: 0;
+    transition: opacity 0.12s ease;
+    white-space: nowrap;
+}
+
+.adm-dica.is-visivel { opacity: 1; }
+
+/* ===================== Tabela ===================== */
+/* Toda visualização tem uma tabela equivalente: nenhum valor fica preso
+   atrás do passar do mouse. */
+.adm-tabela { width: 100%; font-size: 0.8rem; border-collapse: collapse; }
+
+.adm-tabela th {
+    text-align: left;
+    padding: 0.5rem 0.7rem;
+    font-size: 0.65rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--adm-tinta-3);
+    background-color: rgba(255, 255, 255, 0.03);
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.adm-tabela td {
+    padding: 0.55rem 0.7rem;
+    border-top: 1px solid var(--adm-borda);
+    color: var(--adm-tinta-2);
+}
+
+.adm-tabela td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--adm-tinta);
+}
+
+.adm-tabela tbody tr:hover td { background-color: rgba(255, 255, 255, 0.03); }
+
+/* ===================== Selo de status ===================== */
+.adm-selo {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.adm-selo-aguardando { background: rgba(234, 179, 8, 0.14);  color: #FDE047; }
+.adm-selo-confirmado { background: rgba(34, 197, 94, 0.14);  color: #4ADE80; }
+.adm-selo-entregue   { background: rgba(56, 189, 248, 0.14); color: #7DD3FC; }
+.adm-selo-cancelado  { background: rgba(239, 68, 68, 0.14);  color: #FCA5A5; }
+
+/* ===================== Abas e filtro ===================== */
+.adm-aba {
+    padding: 0.55rem 1rem;
+    border-radius: 0.6rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--adm-tinta-3);
+    background: transparent;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: color 0.2s ease, background-color 0.2s ease;
+}
+
+.adm-aba:hover { color: var(--adm-tinta); background-color: rgba(255, 255, 255, 0.04); }
+
+.adm-aba.is-ativa {
+    color: var(--adm-tinta);
+    background-color: rgba(242, 140, 82, 0.14);
+    border-color: rgba(242, 140, 82, 0.35);
+}
+
+/* Filtro num só lugar, acima de tudo o que ele afeta. */
+.adm-filtro {
+    background-color: var(--adm-superficie);
+    border: 1px solid var(--adm-borda);
+    color: var(--adm-tinta);
+    border-radius: 0.6rem;
+    padding: 0.5rem 2.2rem 0.5rem 0.8rem;
+    font-size: 0.8rem;
+    appearance: none;
+    -webkit-appearance: none;
+    outline: none;
+}
+
+.adm-filtro:focus { border-color: var(--adm-marca); }
+
+/* ===================== Entrada ===================== */
+.adm-input {
+    width: 100%;
+    background-color: var(--adm-superficie-2);
+    border: 1px solid var(--adm-borda);
+    color: var(--adm-tinta);
+    border-radius: 0.6rem;
+    padding: 0.75rem 0.9rem;
+    font-size: 0.95rem;
+    outline: none;
+    transition: border-color 0.2s ease;
+}
+
+.adm-input:focus { border-color: var(--adm-marca); }
+
+.adm-botao {
+    background: linear-gradient(180deg, #F28C52 0%, #D96E30 100%);
+    color: #FFFFFF;
+    border: none;
+    border-radius: 0.6rem;
+    padding: 0.75rem 1rem;
+    font-weight: 700;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: filter 0.2s ease;
+}
+
+.adm-botao:hover { filter: brightness(1.08); }
+.adm-botao:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.adm-botao-fantasma {
+    background: transparent;
+    border: 1px solid var(--adm-borda-forte);
+    color: var(--adm-tinta-2);
+    border-radius: 0.5rem;
+    padding: 0.3rem 0.6rem;
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    transition: color 0.2s ease, border-color 0.2s ease;
+}
+
+.adm-botao-fantasma:hover { color: var(--adm-tinta); border-color: var(--adm-marca); }
+
+/* Refazer a busca não pode piscar esqueleto: mantém o desenho anterior
+   esmaecido, sem salto de layout. */
+.adm-carregando { opacity: 0.45; transition: opacity 0.2s ease; }
+
+.adm-vazio {
+    color: var(--adm-tinta-3);
+    font-size: 0.85rem;
+    text-align: center;
+    padding: 3rem 1rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .adm-dica, .adm-barra, .adm-aba, .adm-carregando { transition: none; }
+}
+
+/* Rede de segurança: a troca de telas do painel depende de .hidden, que vem do
+   Tailwind por CDN. Se o CDN falhar, sem isto o painel mostraria login e
+   conteúdo ao mesmo tempo. */
+.hidden { display: none !important; }

@@ -24,6 +24,9 @@
     <!-- Carrinho: estado e persistência (sem DOM). Precisa de config.js e produtos.js. -->
     <script src="./js/cart.js"></script>
 
+    <!-- Registro de pedidos e visitas no painel. So insere; nunca le. -->
+    <script src="./js/db.js"></script>
+
     <!-- Styles -->
     <link rel="stylesheet" href="./css/base.css">
     <link rel="stylesheet" href="./css/components.css">
@@ -95,7 +98,8 @@
                         <div>
                             <h2 class="text-xl font-bold uppercase tracking-wider mb-2">Seus dados</h2>
                             <p class="text-sm text-textSecondary font-light mb-6">
-                                Usados só para montar a mensagem do pedido. Nada é enviado para nenhum servidor.
+                                Usados para montar a mensagem do pedido e registrá-lo no nosso sistema.
+                                Não compartilhamos seus dados com terceiros.
                             </p>
 
                             <form id="form-pedido" novalidate class="space-y-5">

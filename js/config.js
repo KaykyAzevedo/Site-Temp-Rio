@@ -60,5 +60,22 @@ const siteConfig = {
     // de espera avisa que o cadastro está indisponível e oferece o WhatsApp.
     listaEspera: {
         endpoint: ""
+    },
+
+    // Banco do painel de administrador (Supabase).
+    //
+    // A anonKey abaixo é PÚBLICA por natureza — ela vai no código da página e
+    // qualquer visitante consegue lê-la. Isso não é vazamento: quem protege os
+    // dados são as políticas de RLS em admin/supabase.sql, que permitem ao site
+    // apenas INSERIR pedidos e visitas, nunca ler.
+    //
+    // A chave service_role do Supabase NUNCA deve entrar aqui nem em nenhum
+    // arquivo do site: ela ignora todas as políticas de segurança.
+    //
+    // COMO CONFIGURAR: siga admin/LEIAME-PAINEL.md. Enquanto estiver vazio, o
+    // site funciona igual — só não registra pedidos nem visitas.
+    supabase: {
+        url: "",
+        anonKey: ""
     }
 };

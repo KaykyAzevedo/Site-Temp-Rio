@@ -426,6 +426,37 @@
         };
     }
 
+    /* Monta a linha do pedido para o banco. Os nomes das colunas seguem o
+     * padrão do Postgres (minúsculas com underscore), não o do formulário. */
+    function pedidoParaBanco() {
+        var d = lerFormulario();
+        var t = Cart.totais();
+        return {
+            razao_social: d.razaoSocial,
+            cnpj: d.cnpj,
+            inscricao_estadual: d.inscricaoEstadual,
+            responsavel: d.nome,
+            telefone: d.telefone,
+            email: d.email,
+            cep: d.cep,
+            logradouro: d.logradouro,
+            numero: d.numero,
+            complemento: d.complemento,
+            bairro: d.bairro,
+            cidade: d.cidade,
+            uf: d.uf,
+            potes: t.potes,
+            caixas: t.caixas,
+            valor_centavos: t.valorCentavos,
+            // Guarda o pedido item a item: sem isso o painel mostraria só o
+            // total, e você não saberia quais sabores saem mais.
+            itens: Cart.itens().map(function (i) {
+                return { id: i.id, nome: i.nome, potes: i.potes, caixas: i.descricaoCaixas };
+            }),
+            observacoes: d.observacoes
+        };
+    }
+
     var enviandoEspera = false;
 
     function entrarNaListaDeEspera() {
@@ -650,6 +681,12 @@
         var envio = montarEnvio(lerFormulario());
         if (!envio) return;
 
+        // Registra o pedido no painel. Sem await de propósito: o que importa
+        // para o cliente é a mensagem do WhatsApp, e uma falha de rede aqui não
+        // pode travar o envio. O que não subir fica na fila do TempRioDB e sobe
+        // na próxima visita.
+        if (window.TempRioDB) TempRioDB.registrarPedido(pedidoParaBanco());
+
         // Copiar ANTES de navegar: a escrita na área de transferência exige o
         // gesto do usuário e pode não rodar depois que a aba perde o foco.
         copiar(envio.copia).then(function () {
@@ -715,7 +752,7 @@
         '</button>' +
 
         '<p class="text-[0.65rem] text-textSecondary text-center leading-relaxed">' +
-            'Nenhum pagamento é feito aqui. Seus dados vão só na mensagem que você envia.' +
+            'Nenhum pagamento é feito aqui. Um vendedor confirma o pedido com você.' +
         '</p>';
     }
 
