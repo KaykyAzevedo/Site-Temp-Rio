@@ -112,9 +112,23 @@
         })).then(function () { gravarFila(restantes); });
     }
 
+    /* ===================================================================
+     * Lista de espera
+     *
+     * Mesma casa dos pedidos, de propósito: antes ela ia para uma planilha do
+     * Google, e eram dois lugares para acompanhar. Quem já tiver a planilha
+     * configurada continua sendo atendido pelo caminho antigo em js/pedido.js,
+     * que só recorre a ela quando o banco não estiver disponível.
+     * =================================================================== */
+    function registrarEspera(dados) {
+        if (!cfg()) return Promise.reject(new Error('supabase nao configurado'));
+        return inserir('lista_espera', dados);
+    }
+
     window.TempRioDB = {
         configurado: function () { return !!cfg(); },
         registrarPedido: registrarPedido,
+        registrarEspera: registrarEspera,
         registrarVisita: registrarVisita,
         reenviarPedidosPendentes: reenviarPedidosPendentes
     };

@@ -175,6 +175,62 @@ create policy "admin le visitas"
   using (public.eh_admin());
 
 -- ============================================================================
+-- 3b. Lista de espera
+-- ============================================================================
+-- Quem tentou fechar pedido fora da área de entrega. Guarda o tamanho do
+-- pedido que não pôde ser atendido: é o dado que diz onde há demanda represada
+-- e onde vale a pena abrir entrega primeiro.
+create table if not exists public.lista_espera (
+  id uuid primary key default gen_random_uuid(),
+  criado_em timestamptz not null default now(),
+
+  -- Marcado no painel quando você já falou com essa empresa.
+  atendido boolean not null default false,
+
+  razao_social text,
+  cnpj text,
+  inscricao_estadual text,
+  responsavel text,
+  telefone text,
+  email text,
+
+  cep text,
+  cidade text,
+  uf text,
+  endereco text,
+
+  potes integer not null default 0,
+  caixas integer not null default 0,
+  valor_centavos bigint not null default 0,
+  itens text,
+  observacoes text
+);
+
+create index if not exists lista_espera_criado_em_idx on public.lista_espera (criado_em desc);
+create index if not exists lista_espera_uf_idx on public.lista_espera (uf);
+
+alter table public.lista_espera enable row level security;
+
+drop policy if exists "site registra espera" on public.lista_espera;
+create policy "site registra espera"
+  on public.lista_espera for insert
+  to anon, authenticated
+  with check (true);
+
+drop policy if exists "admin le espera" on public.lista_espera;
+create policy "admin le espera"
+  on public.lista_espera for select
+  to authenticated
+  using (public.eh_admin());
+
+drop policy if exists "admin atualiza espera" on public.lista_espera;
+create policy "admin atualiza espera"
+  on public.lista_espera for update
+  to authenticated
+  using (public.eh_admin())
+  with check (public.eh_admin());
+
+-- ============================================================================
 -- 4. Agregações para o dashboard
 -- ============================================================================
 -- Somar no banco em vez de baixar tudo: 12 meses de visitas podem ser milhares

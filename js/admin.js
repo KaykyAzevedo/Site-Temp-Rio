@@ -278,7 +278,9 @@
     var sb = null;
     var usuario = null;
     var abaAtual = 'dashboard';
-    var dados = { resumo: [], visitas: [], pedidos: [] };
+    var dados = { resumo: [], visitas: [], pedidos: [], espera: [] };
+
+    var ABAS = ['dashboard', 'pedidos', 'historico', 'espera', 'visitas'];
 
     /* ===================================================================
      * Autenticação
@@ -362,7 +364,7 @@
      * Carregamento
      * =================================================================== */
     function marcarCarregando(sim) {
-        ['dashboard', 'pedidos', 'historico', 'visitas'].forEach(function (a) {
+        ABAS.forEach(function (a) {
             $('#painel-' + a).classList.toggle('adm-carregando', sim);
         });
     }
@@ -380,7 +382,8 @@
             sb.rpc('resumo_mensal', { meses: meses }),
             sb.rpc('visitas_mensais', { meses: meses }),
             sb.from('pedidos').select('*').gte('criado_em', desde.toISOString())
-                .order('criado_em', { ascending: false })
+                .order('criado_em', { ascending: false }),
+            sb.from('lista_espera').select('*').order('criado_em', { ascending: false })
         ]).then(function (rs) {
             marcarCarregando(false);
 
@@ -393,6 +396,7 @@
             dados.resumo = rs[0].data || [];
             dados.visitas = rs[1].data || [];
             dados.pedidos = rs[2].data || [];
+            dados.espera = rs[3].data || [];
             desenharTudo();
         });
     }
@@ -416,7 +420,7 @@
         document.querySelectorAll('.adm-aba').forEach(function (b) {
             b.classList.toggle('is-ativa', b.getAttribute('data-aba') === qual);
         });
-        ['dashboard', 'pedidos', 'historico', 'visitas'].forEach(function (a) {
+        ABAS.forEach(function (a) {
             $('#painel-' + a).classList.toggle('hidden', a !== qual);
         });
     }
@@ -425,6 +429,7 @@
         desenharDashboard();
         desenharPedidos();
         desenharHistorico();
+        desenharEspera();
         desenharVisitas();
     }
 
@@ -769,6 +774,174 @@
                 }),
                 [false, false, false, true, true, false]);
         }
+    }
+
+    /* ===================================================================
+     * Lista de espera
+     *
+     * Antes vivia numa planilha do Google, separada dos pedidos. Trazida para
+     * cá porque a pergunta que ela responde — onde há demanda represada — só
+     * faz sentido ao lado do que já é vendido.
+     * =================================================================== */
+    /* Nome de cidade no eixo. Cortar no meio da palavra ("Belo Horizon")
+     * fica pior do que abreviar: vira "Belo H.". O nome inteiro continua na
+     * dica de valor e na tabela, então nada se perde. */
+    function rotuloPraca(nome) {
+        if (nome.length <= 11) return nome;
+        var partes = nome.split(' ').filter(function (p) {
+            return ['de', 'do', 'da', 'dos', 'das'].indexOf(p.toLowerCase()) === -1;
+        });
+        if (partes.length > 1) {
+            var abrev = partes[0] + ' ' + partes[partes.length - 1].charAt(0) + '.';
+            if (abrev.length <= 11) return abrev;
+        }
+        return nome.slice(0, 10) + '…';
+    }
+
+    function desenharEspera() {
+        var alvo = $('#painel-espera');
+        var lista = dados.espera;
+
+        if (!lista.length) {
+            alvo.innerHTML = cartaoVazio('Ninguém na lista de espera',
+                'Quando alguém de fora da área de entrega pedir para ser avisado, ' +
+                'aparece aqui — junto com o tamanho do pedido que não pôde ser atendido.');
+            return;
+        }
+
+        var pendentes = lista.filter(function (e) { return !e.atendido; });
+        var represado = pendentes.reduce(function (a, e) { return a + Number(e.valor_centavos || 0); }, 0);
+
+        // Agrupa por praça: é isto que transforma uma lista de nomes numa
+        // decisão sobre onde abrir entrega primeiro.
+        var porPraca = {};
+        pendentes.forEach(function (e) {
+            var k = (e.cidade || 'Sem cidade') + '/' + (e.uf || '--');
+            if (!porPraca[k]) porPraca[k] = { praca: k, uf: e.uf, empresas: 0, potes: 0, valor: 0 };
+            porPraca[k].empresas++;
+            porPraca[k].potes += Number(e.potes || 0);
+            porPraca[k].valor += Number(e.valor_centavos || 0);
+        });
+
+        var pracas = Object.keys(porPraca).map(function (k) { return porPraca[k]; })
+            .sort(function (a, b) { return b.valor - a.valor; });
+
+        // Mais de 8 colunas viram borrão: o resto vira "Outras".
+        var noGrafico = pracas.slice(0, 8);
+        if (pracas.length > 8) {
+            var resto = pracas.slice(8).reduce(function (a, p) {
+                return { praca: 'Outras', empresas: a.empresas + p.empresas,
+                         potes: a.potes + p.potes, valor: a.valor + p.valor };
+            }, { empresas: 0, potes: 0, valor: 0 });
+            noGrafico = noGrafico.concat([resto]);
+        }
+
+        var maiorPraca = pracas[0];
+
+        alvo.innerHTML =
+            '<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-7">' +
+                ficha('Empresas esperando', NUM.format(pendentes.length),
+                      lista.length > pendentes.length
+                        ? NUM.format(lista.length - pendentes.length) + ' já atendidas'
+                        : 'nenhuma atendida ainda') +
+                ficha('Demanda represada', brl(represado), 'soma dos pedidos não atendidos') +
+                ficha('Praça com mais demanda', maiorPraca ? maiorPraca.praca : '—',
+                      maiorPraca ? brl(maiorPraca.valor) : '') +
+                ficha('Praças diferentes', NUM.format(pracas.length), 'cidades aguardando') +
+            '</div>' +
+
+            cartaoGrafico('g-espera', 'Demanda represada por praça',
+                'Quanto de pedido cada cidade tentou fazer e não pôde ser atendida. ' +
+                'A maior barra é por onde vale a pena abrir entrega primeiro.',
+                't-espera') +
+
+            '<div class="adm-card p-5">' +
+                '<p class="font-bold text-sm mb-1">Quem está esperando</p>' +
+                '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">' +
+                    'Marque como atendida depois de falar com a empresa.' +
+                '</p>' +
+                '<div class="space-y-3">' + lista.map(cartaoEspera).join('') + '</div>' +
+            '</div>';
+
+        desenharColunas($('#g-espera'), noGrafico.map(function (p) {
+            return { rotulo: rotuloPraca(p.praca.split('/')[0]), valor: p.valor, extra: p };
+        }), {
+            formatarEixo: brlCurto,
+            formatarRotulo: brlCurto,
+            rotularMaior: true,
+            descricao: 'Demanda represada por praça',
+            dica: function (d) {
+                return '<strong>' + esc(d.extra.praca) + '</strong><br>' + esc(brl(d.valor)) +
+                       '<br>' + NUM.format(d.extra.empresas) +
+                       (d.extra.empresas === 1 ? ' empresa' : ' empresas') +
+                       ' · ' + NUM.format(d.extra.potes) + ' potes';
+            }
+        });
+
+        tabela($('#t-espera'), ['Praça', 'Empresas', 'Potes', 'Demanda represada'],
+            pracas.map(function (p) {
+                return [p.praca, NUM.format(p.empresas), NUM.format(p.potes), brl(p.valor)];
+            }), [false, true, true, true]);
+
+        ligarAcoesDeEspera(alvo);
+    }
+
+    function cartaoEspera(e) {
+        return '<div class="adm-card p-4"' + (e.atendido ? ' style="opacity:.55"' : '') + '>' +
+            '<div class="flex items-start justify-between gap-4 flex-wrap">' +
+                '<div class="min-w-0">' +
+                    '<p class="font-bold text-sm">' + esc(e.razao_social || 'Sem razão social') + '</p>' +
+                    '<p class="text-xs mt-0.5" style="color:var(--adm-tinta-3)">' +
+                        (e.cnpj ? 'CNPJ ' + esc(e.cnpj) + ' · ' : '') +
+                        esc((e.cidade || '') + '/' + (e.uf || '')) +
+                        ' · ' + esc(new Date(e.criado_em).toLocaleDateString('pt-BR')) +
+                    '</p>' +
+                    '<p class="text-xs mt-1.5" style="color:var(--adm-tinta-2)">' +
+                        esc(e.responsavel || '') + ' · ' + esc(e.telefone || '') +
+                        (e.email ? ' · ' + esc(e.email) : '') +
+                    '</p>' +
+                '</div>' +
+                '<div class="text-right shrink-0">' +
+                    '<p class="adm-tile-valor" style="font-size:1.1rem">' + esc(brl(e.valor_centavos)) + '</p>' +
+                    '<p class="text-xs" style="color:var(--adm-tinta-3)">' +
+                        NUM.format(e.potes) + ' potes</p>' +
+                '</div>' +
+            '</div>' +
+
+            (e.itens
+                ? '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">' + esc(e.itens) + '</p>'
+                : '') +
+
+            '<div class="flex items-center gap-2 flex-wrap mt-3 pt-3" style="border-top:1px solid var(--adm-borda)">' +
+                (e.atendido
+                    ? '<span class="adm-selo adm-selo-entregue"><i class="fa-solid fa-check"></i>Atendida</span>' +
+                      '<button type="button" class="adm-botao-fantasma" data-espera="' + esc(e.id) + '" data-atendido="false">Reabrir</button>'
+                    : '<button type="button" class="adm-botao-fantasma" data-espera="' + esc(e.id) + '" data-atendido="true">' +
+                      '<i class="fa-solid fa-check mr-1"></i>Marcar atendida</button>') +
+                '<a href="https://wa.me/' + esc(String(e.telefone || '').replace(/\D/g, '').replace(/^/, '55')) + '"' +
+                    ' target="_blank" rel="noopener" class="adm-botao-fantasma ml-auto">' +
+                    '<i class="fa-brands fa-whatsapp mr-1"></i>Chamar</a>' +
+            '</div>' +
+        '</div>';
+    }
+
+    function ligarAcoesDeEspera(raiz) {
+        raiz.querySelectorAll('button[data-espera]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                b.disabled = true;
+                sb.from('lista_espera')
+                    .update({ atendido: b.getAttribute('data-atendido') === 'true' })
+                    .eq('id', b.getAttribute('data-espera'))
+                    .then(function (r) {
+                        b.disabled = false;
+                        if (r.error) {
+                            window.alert('Não foi possível atualizar: ' + r.error.message);
+                            return;
+                        }
+                        carregar();
+                    });
+            });
+        });
     }
 
     /* ===================================================================

@@ -361,9 +361,41 @@
         catch (e) { /* sem storage: perde-se a rede de segurança, não o fluxo */ }
     }
 
+    /* Converte para os nomes de coluna do banco (minúsculas com underscore). */
+    function esperaParaBanco(d) {
+        return {
+            razao_social: d.razaoSocial,
+            cnpj: d.cnpj,
+            inscricao_estadual: d.inscricaoEstadual,
+            responsavel: d.responsavel,
+            telefone: d.telefone,
+            email: d.email,
+            cep: d.cep,
+            cidade: d.cidade,
+            uf: d.uf,
+            endereco: d.endereco,
+            potes: d.potes,
+            caixas: d.caixas,
+            valor_centavos: d.valorCentavos,
+            itens: d.itens,
+            observacoes: d.observacoes
+        };
+    }
+
+    /* Destino do cadastro, em ordem de preferência:
+     *   1. o banco do painel, para a lista de espera aparecer junto dos pedidos;
+     *   2. a planilha do Google, se o banco ainda não estiver configurado.
+     * Assim quem já montou a planilha continua atendido durante a transição. */
+    function postarEspera(dados) {
+        if (window.TempRioDB && TempRioDB.configurado()) {
+            return TempRioDB.registrarEspera(esperaParaBanco(dados));
+        }
+        return postarEsperaNaPlanilha(dados);
+    }
+
     /* text/plain evita o preflight do CORS. O Apps Script não responde a
      * OPTIONS, então uma requisição "simples" é a única que passa direto. */
-    function postarEspera(dados) {
+    function postarEsperaNaPlanilha(dados) {
         var url = endpointEspera();
         if (!url) return Promise.reject(new Error('sem endpoint'));
 
@@ -391,7 +423,8 @@
      * carregamento da página: se a pessoa voltar, o cadastro dela sobe. */
     function reenviarPendentes() {
         var fila = lerFila();
-        if (!fila.length || !endpointEspera()) return;
+        var temDestino = (window.TempRioDB && TempRioDB.configurado()) || endpointEspera();
+        if (!fila.length || !temDestino) return;
 
         var restantes = [];
         var pendencias = fila.map(function (item) {
@@ -420,7 +453,8 @@
             // quanta demanda está represada em cada praça.
             potes: t.potes,
             caixas: t.caixas,
-            valor: Cart.formatarBRL(t.valorCentavos),
+            valorCentavos: t.valorCentavos,               // para o banco
+            valor: Cart.formatarBRL(t.valorCentavos),     // para a planilha
             itens: Cart.itens().map(function (i) { return i.nome + ' ' + i.potes; }).join(', '),
             observacoes: d.observacoes
         };
@@ -481,7 +515,8 @@
             botao.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Enviando...';
         }
 
-        if (!endpointEspera()) {
+        var temDestino = (window.TempRioDB && TempRioDB.configurado()) || endpointEspera();
+        if (!temDestino) {
             // Ainda não configurado: guarda para subir depois e avisa sem mentir.
             gravarFila(lerFila().concat([dados]));
             enviandoEspera = false;

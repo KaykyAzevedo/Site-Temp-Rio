@@ -1,7 +1,7 @@
 # Painel de administrador — como ligar
 
 O painel fica em `admin.html`. Ele mostra pedidos, histórico por cliente,
-dashboard de vendas mensal e visitas.
+dashboard de vendas mensal, lista de espera e visitas.
 
 **Leia a primeira seção antes de qualquer coisa.** Ela explica por que o painel
 começa vazio, e por que "vendas" não é a mesma coisa que "pedidos".
@@ -131,6 +131,24 @@ há o que ganhar com isso), e um pedido falso é visível na hora na aba Pedidos
 você cancela. Se algum dia virar problema, o caminho é um servidor próprio
 intermediando a gravação, e eu faço essa mudança.
 
+## Lista de espera
+
+Quem tenta fechar pedido fora da área de entrega entra nesta lista. Ela ficava
+numa planilha do Google à parte; agora vive no mesmo banco dos pedidos, e o
+painel a mostra numa aba própria — um lugar só para acompanhar.
+
+A aba responde a pergunta que interessa: **onde há demanda represada**. O
+gráfico soma, por cidade, o valor dos pedidos que não puderam ser atendidos. A
+maior barra é por onde vale a pena abrir entrega primeiro.
+
+Depois de falar com uma empresa, marque **Atendida** — ela sai da conta de
+demanda represada mas continua na lista.
+
+Se você já tinha configurado a planilha do Google, ela continua funcionando
+como reserva: o site só recorre a ela quando o Supabase não estiver
+configurado. Os cadastros que já estão na planilha não migram sozinhos; se
+quiser trazê-los, dá para digitá-los ou eu escrevo um importador.
+
 ## Visitas
 
 Cada abertura de página grava uma linha com: **qual página, quando, e um id de
@@ -166,6 +184,6 @@ Tudo num arquivo só, `js/config.js`:
 ```js
 entrega:     { ufsAtendidas: ["RJ"], ... }   // onde você entrega
 pedido:      { precoPorPoteCentavos, caixas, minimoPotes }
-listaEspera: { endpoint }                    // planilha da lista de espera
+listaEspera: { endpoint }                    // planilha, só como reserva
 supabase:    { url, anonKey }                // banco do painel
 ```

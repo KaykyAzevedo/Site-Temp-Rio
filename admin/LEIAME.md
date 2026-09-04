@@ -1,4 +1,13 @@
-# Lista de espera — como ligar a planilha
+# Lista de espera na planilha do Google — caminho alternativo
+
+> **Este não é mais o caminho principal.** A lista de espera passou a viver no
+> mesmo banco dos pedidos, e aparece numa aba do painel — veja
+> `admin/LEIAME-PAINEL.md`. O site só recorre à planilha quando o Supabase não
+> estiver configurado.
+>
+> Siga este documento apenas se você quiser a planilha como reserva, ou se
+> ainda não for montar o painel.
+
 
 Quem tenta fechar pedido fora da área de entrega vê a mensagem de
 indisponibilidade e um botão **"Entrar na lista de espera"**. Este documento
