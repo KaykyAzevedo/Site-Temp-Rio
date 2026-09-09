@@ -53,9 +53,16 @@ quanto se perde entre o clique e o negócio fechado — costuma ser o número ma
    | 1º | `admin/supabase.sql` | `pedidos`, `visitas`, `admins`, `lista_espera`, as políticas de segurança e as funções do dashboard |
    | 2º | `admin/supabase-regioes.sql` | `regioes` e as faixas de CEP que calculam o frete |
    | 3º | `admin/supabase-vitrine.sql` | `vitrines` e a seção "Onde comprar" |
+   | 4º a 8º | `admin/migracoes/004` a `008` | cadastro de clientes, catálogo, itens de pedido e relatórios |
 
-   A ordem importa: os dois últimos usam a função `eh_admin()`, que nasce no
+   A ordem importa: todos os outros usam a função `eh_admin()`, que nasce no
    primeiro. Rodar fora de ordem dá erro de função inexistente.
+
+   A pasta `admin/migracoes/` tem um LEIAME próprio com o que cada arquivo faz,
+   como conferir que deu certo e como desfazer. O nono arquivo é opcional e o
+   cabeçalho dele explica por que não deve ser rodado sem pensar.
+
+   O mapa completo do banco, com diagrama, está em `admin/ESTRUTURA-BANCO.md`.
 
 ### 3. Pegar as chaves
 
