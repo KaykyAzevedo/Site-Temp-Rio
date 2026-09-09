@@ -278,9 +278,10 @@
     var sb = null;
     var usuario = null;
     var abaAtual = 'dashboard';
-    var dados = { resumo: [], visitas: [], pedidos: [], espera: [], regioes: [], faixas: [] };
+    var dados = { resumo: [], visitas: [], pedidos: [], espera: [],
+                  regioes: [], faixas: [], vitrines: [] };
 
-    var ABAS = ['dashboard', 'pedidos', 'historico', 'espera', 'regioes', 'visitas'];
+    var ABAS = ['dashboard', 'pedidos', 'historico', 'espera', 'vitrine', 'regioes', 'visitas'];
 
     /* ===================================================================
      * Autenticação
@@ -385,7 +386,8 @@
                 .order('criado_em', { ascending: false }),
             sb.from('lista_espera').select('*').order('criado_em', { ascending: false }),
             sb.from('regioes').select('*').order('prioridade', { ascending: false }),
-            sb.from('regioes_faixas_cep').select('*')
+            sb.from('regioes_faixas_cep').select('*'),
+            sb.from('vitrines').select('*').order('criado_em', { ascending: false })
         ]).then(function (rs) {
             marcarCarregando(false);
 
@@ -401,6 +403,7 @@
             dados.espera = rs[3].data || [];
             dados.regioes = rs[4].data || [];
             dados.faixas = rs[5].data || [];
+            dados.vitrines = rs[6].data || [];
             desenharTudo();
         });
     }
@@ -434,6 +437,7 @@
         desenharPedidos();
         desenharHistorico();
         desenharEspera();
+        desenharVitrine();
         desenharRegioes();
         desenharVisitas();
     }
@@ -945,6 +949,185 @@
                         }
                         carregar();
                     });
+            });
+        });
+    }
+
+    /* ===================================================================
+     * Vitrine "Onde comprar"
+     *
+     * Aprovar publica a loja do lojista na seção do catálogo, pelo prazo do
+     * plano. As datas são calculadas NO BANCO (função decidir_vitrine): assim o
+     * prazo não depende do relógio da máquina de quem clicou.
+     * =================================================================== */
+    var PLANOS = {
+        basic:   { rotulo: 'Basic',   icone: 'fa-star' },
+        pro:     { rotulo: 'Pro',     icone: 'fa-star-half-stroke' },
+        premium: { rotulo: 'Premium', icone: 'fa-crown' }
+    };
+
+    function diasRestantes(dataFim) {
+        if (!dataFim) return 0;
+        var fim = new Date(String(dataFim).slice(0, 10) + 'T00:00:00');
+        var hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+        var d = Math.round((fim - hoje) / 86400000);
+        return d < 0 ? 0 : d + 1; // data_fim é o último dia inclusive
+    }
+
+    function vigente(v) {
+        return v.status === 'aprovado' && diasRestantes(v.data_fim) > 0;
+    }
+
+    function desenharVitrine() {
+        var alvo = $('#painel-vitrine');
+        var lista = dados.vitrines;
+
+        if (!lista.length) {
+            alvo.innerHTML = cartaoVazio('Nenhum pedido de destaque',
+                'Quando um cliente aceitar o convite no fim do pedido, ele aparece aqui ' +
+                'para você aprovar. O convite só é oferecido a partir do segundo pedido ' +
+                'ou de pedidos grandes.');
+            return;
+        }
+
+        var pendentes = lista.filter(function (v) { return v.status === 'pendente'; });
+        var noAr = lista.filter(vigente);
+        var encerradas = lista.filter(function (v) {
+            return v.status === 'aprovado' && !vigente(v);
+        });
+        var rejeitadas = lista.filter(function (v) { return v.status === 'rejeitado'; });
+
+        alvo.innerHTML =
+            '<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-7">' +
+                ficha('Esperando você', NUM.format(pendentes.length),
+                      pendentes.length ? 'aprove ou recuse' : 'nada pendente') +
+                ficha('No ar agora', NUM.format(noAr.length), 'aparecendo no catálogo') +
+                ficha('Já encerradas', NUM.format(encerradas.length), 'prazo cumprido') +
+                ficha('Recusadas', NUM.format(rejeitadas.length), '') +
+            '</div>' +
+
+            (pendentes.length
+                ? '<p class="font-bold text-sm mb-3">Esperando aprovação</p>' +
+                  '<div class="space-y-3 mb-8">' + pendentes.map(cartaoVitrine).join('') + '</div>'
+                : '') +
+
+            (noAr.length
+                ? '<p class="font-bold text-sm mb-3">No ar agora</p>' +
+                  '<div class="space-y-3 mb-8">' + noAr.map(cartaoVitrine).join('') + '</div>'
+                : '') +
+
+            (encerradas.length + rejeitadas.length
+                ? '<details><summary class="text-xs cursor-pointer mb-3" style="color:var(--adm-tinta-3)">' +
+                  'Ver encerradas e recusadas (' + (encerradas.length + rejeitadas.length) + ')</summary>' +
+                  '<div class="space-y-3 mt-3">' +
+                  encerradas.concat(rejeitadas).map(cartaoVitrine).join('') + '</div></details>'
+                : '');
+
+        ligarAcoesDeVitrine(alvo);
+    }
+
+    function cartaoVitrine(v) {
+        var plano = PLANOS[v.tipo] || { rotulo: v.tipo, icone: 'fa-star' };
+        var dias = diasRestantes(v.data_fim);
+        var estaNoAr = vigente(v);
+
+        var etiqueta;
+        if (v.status === 'pendente') {
+            etiqueta = '<span class="adm-selo adm-selo-aguardando"><i class="fa-solid fa-clock"></i>Pendente</span>';
+        } else if (v.status === 'rejeitado') {
+            etiqueta = '<span class="adm-selo adm-selo-cancelado"><i class="fa-solid fa-circle-xmark"></i>Recusada</span>';
+        } else if (estaNoAr) {
+            etiqueta = '<span class="adm-selo adm-selo-confirmado"><i class="fa-solid fa-circle-check"></i>' +
+                       'No ar · ' + dias + (dias === 1 ? ' dia' : ' dias') + '</span>';
+        } else {
+            etiqueta = '<span class="adm-selo adm-selo-entregue"><i class="fa-solid fa-flag-checkered"></i>Encerrada</span>';
+        }
+
+        return '<div class="adm-card p-5"' + (v.status === 'pendente' ? '' : ' style="opacity:.75"') + '>' +
+            '<div class="flex items-start justify-between gap-4 flex-wrap mb-3">' +
+                '<div>' +
+                    '<p class="font-bold">' + esc(v.razao_social) + '</p>' +
+                    '<p class="text-xs mt-0.5" style="color:var(--adm-tinta-3)">' +
+                        'CNPJ ' + esc(v.cnpj) + ' · ' +
+                        esc([v.bairro, v.cidade].filter(Boolean).join(', ')) + '/' + esc(v.uf || '') +
+                        ' · ' + esc(new Date(v.criado_em).toLocaleDateString('pt-BR')) +
+                    '</p>' +
+                '</div>' +
+                etiqueta +
+            '</div>' +
+
+            '<div class="grid sm:grid-cols-3 gap-4 text-xs mb-4">' +
+                '<div>' +
+                    '<p class="adm-tile-rotulo mb-1">Plano sugerido</p>' +
+                    '<p class="text-white"><i class="fa-solid ' + plano.icone + ' mr-1" ' +
+                        'style="color:var(--adm-marca)"></i>' + esc(plano.rotulo) + ' · ' +
+                        v.dias + (v.dias === 1 ? ' dia' : ' dias') + '</p>' +
+                '</div>' +
+                '<div>' +
+                    '<p class="adm-tile-rotulo mb-1">Pedido que gerou</p>' +
+                    '<p class="text-white">' + NUM.format(v.caixas) + ' caixas · ' +
+                        esc(brl(v.valor_centavos)) + '</p>' +
+                '</div>' +
+                '<div>' +
+                    '<p class="adm-tile-rotulo mb-1">Contato</p>' +
+                    '<p style="color:var(--adm-tinta-2)">' + esc(v.responsavel || '') + '<br>' +
+                        esc(v.telefone || '') + '</p>' +
+                '</div>' +
+            '</div>' +
+
+            (v.motivos && v.motivos.length
+                ? '<p class="text-xs mb-4 p-3 rounded-lg" style="background:rgba(255,255,255,.04);color:var(--adm-tinta-2)">' +
+                  '<strong>Ganhou por:</strong> ' + esc(v.motivos.join(' · ')) + '</p>'
+                : '') +
+
+            (v.data_inicio
+                ? '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">No ar de ' +
+                  esc(new Date(v.data_inicio + 'T00:00:00').toLocaleDateString('pt-BR')) + ' a ' +
+                  esc(new Date(v.data_fim + 'T00:00:00').toLocaleDateString('pt-BR')) + '</p>'
+                : '') +
+
+            (v.status === 'pendente'
+                ? '<div class="flex items-center gap-2 flex-wrap pt-3" style="border-top:1px solid var(--adm-borda)">' +
+                      '<button type="button" class="adm-botao" style="padding:.5rem .9rem;font-size:.8rem" ' +
+                          'data-vitrine="' + esc(v.id) + '" data-aprovar="true">' +
+                          '<i class="fa-solid fa-check mr-1"></i>Publicar no site</button>' +
+                      '<button type="button" class="adm-botao-fantasma" ' +
+                          'data-vitrine="' + esc(v.id) + '" data-aprovar="false">Recusar</button>' +
+                      linkWhats(v.telefone) +
+                  '</div>'
+                : '') +
+        '</div>';
+    }
+
+    /* Sem telefone não há botão: um wa.me/55 abre uma conversa vazia e parece
+     * um bug do painel. */
+    function linkWhats(telefone) {
+        var so = String(telefone || '').replace(/\D/g, '');
+        if (so.length < 10) return '';
+        if (so.length <= 11) so = '55' + so;
+        return '<a href="https://wa.me/' + so + '" target="_blank" rel="noopener"' +
+               ' class="adm-botao-fantasma ml-auto">' +
+               '<i class="fa-brands fa-whatsapp mr-1"></i>Chamar</a>';
+    }
+
+    function ligarAcoesDeVitrine(raiz) {
+        raiz.querySelectorAll('button[data-vitrine]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                var aprovar = b.getAttribute('data-aprovar') === 'true';
+                if (!aprovar && !window.confirm('Recusar este pedido de destaque?')) return;
+
+                b.disabled = true;
+                // decidir_vitrine calcula as datas no banco. Fazer isso aqui
+                // deixaria o prazo à mercê do relógio desta máquina.
+                sb.rpc('decidir_vitrine', {
+                    p_id: b.getAttribute('data-vitrine'),
+                    p_aprovar: aprovar,
+                    p_observacao: null
+                }).then(function (r) {
+                    b.disabled = false;
+                    if (r.error) { window.alert('Não foi possível decidir: ' + r.error.message); return; }
+                    carregar();
+                });
             });
         });
     }

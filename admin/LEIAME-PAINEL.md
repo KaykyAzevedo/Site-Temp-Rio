@@ -45,9 +45,17 @@ quanto se perde entre o clique e o negócio fechado — costuma ser o número ma
 ### 2. Criar as tabelas
 
 1. No projeto, abra **SQL Editor**.
-2. Cole **todo** o conteúdo de `admin/supabase.sql` e clique em **Run**.
-3. Deve terminar sem erro. Isso cria as tabelas `pedidos`, `visitas` e
-   `admins`, as políticas de segurança e as funções do dashboard.
+2. Cole e rode **na ordem**, um de cada vez, clicando em **Run** e conferindo
+   que termina sem erro antes de passar para o próximo:
+
+   | Ordem | Arquivo | O que cria |
+   |---|---|---|
+   | 1º | `admin/supabase.sql` | `pedidos`, `visitas`, `admins`, `lista_espera`, as políticas de segurança e as funções do dashboard |
+   | 2º | `admin/supabase-regioes.sql` | `regioes` e as faixas de CEP que calculam o frete |
+   | 3º | `admin/supabase-vitrine.sql` | `vitrines` e a seção "Onde comprar" |
+
+   A ordem importa: os dois últimos usam a função `eh_admin()`, que nasce no
+   primeiro. Rodar fora de ordem dá erro de função inexistente.
 
 ### 3. Pegar as chaves
 
@@ -161,6 +169,51 @@ visitantes. Por isso o site não precisa de aviso de cookies por causa disso.
 "Sessões" é a aproximação de quantas pessoas navegaram; "páginas vistas" é
 quantas telas foram abertas no total.
 
+## Vitrine "Onde comprar"
+
+Cortesia pelo volume: a loja do cliente aparece numa seção do catálogo, por
+alguns dias, para quem procura os temperos encontrar onde comprar.
+
+**Como funciona.** Depois de enviar o pedido pelo WhatsApp — nunca antes, para
+não atravessar a compra —, o cliente que se qualifica recebe um convite na tela.
+Se ele aceitar, o pedido cai na aba **Vitrine** como Pendente. Nada vai ao ar
+sem você aprovar.
+
+**Quem se qualifica.** Basta um dos dois gatilhos:
+
+| Gatilho | Valor |
+|---|---|
+| Pedido grande | 21 caixas ou mais |
+| Cliente que volta | 2º pedido ou mais |
+
+O tamanho do pedido define o plano; dois bônus podem subir um nível cada:
+
+| Plano | Pedido | Dias no ar |
+|---|---|---|
+| Basic | até 20 caixas | 1 |
+| Pro | 21 a 60 caixas | 3 |
+| Premium | acima de 60 caixas | 7 |
+
+| Bônus | Sobe um nível |
+|---|---|
+| 3 pedidos ou mais | sim |
+| Pedido acima de R$ 5.760,00 | sim |
+
+**Só no Rio.** A regra está em `js/config.js` e também como restrição no banco,
+que recusa qualquer vitrine de outro estado — uma checagem só na tela seria
+contornável por quem editasse a página.
+
+**O prazo é contado no banco**, na hora que você aprova, e o último dia conta
+inteiro: um plano de 3 dias aprovado hoje sai do ar depois de amanhã, à
+meia-noite. O cliente vê a contagem regressiva no próprio site.
+
+**O que o visitante vê.** Só o nome da loja e o endereço. Telefone, e-mail e
+CNPJ do comprador ficam no banco e não saem na parte pública — a seção lê uma
+*view* com essas colunas de fora, não a tabela.
+
+Quando não há nenhuma vitrine aprovada e vigente, a seção some do catálogo
+sozinha: um título com o vazio embaixo seria pior do que nada.
+
 ## Se algo não funcionar
 
 **"Painel ainda não conectado"** → `siteConfig.supabase` está vazio em
@@ -186,4 +239,5 @@ entrega:     { ufsAtendidas: ["RJ"], ... }   // onde você entrega
 pedido:      { precoPorPoteCentavos, caixas, minimoPotes }
 listaEspera: { endpoint }                    // planilha, só como reserva
 supabase:    { url, anonKey }                // banco do painel
+vitrine:     { planos, caixasParaSugerir, ... }  // quem ganha destaque
 ```

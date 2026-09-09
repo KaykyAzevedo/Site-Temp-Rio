@@ -313,3 +313,41 @@
     opacity: 0.5;
     cursor: not-allowed;
 }
+
+/* ===================== Convite da vitrine ===================== */
+/* Aparece depois do envio do pedido, nunca antes: um pop-up que se coloca
+   entre o cliente e a compra custa mais do que a vitrine vale. */
+.vitrine-fundo {
+    position: fixed;
+    inset: 0;
+    z-index: 1003; /* acima do toast, que é 1002 */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    background-color: rgba(0, 0, 0, 0.82);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+    animation: vitrineEntra 0.28s ease-out;
+}
+
+.vitrine-painel {
+    width: 100%;
+    max-width: 28rem;
+    max-height: 90vh;
+    overflow-y: auto;
+    background-color: #111111;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 1rem;
+    padding: 1.75rem;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
+}
+
+@keyframes vitrineEntra {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .vitrine-fundo { animation: none; }
+}

@@ -77,5 +77,29 @@ const siteConfig = {
     supabase: {
         url: "",
         anonKey: ""
+    },
+
+    // Vitrine "Onde comprar Temp Rio": a loja do lojista em destaque no site,
+    // como cortesia por volume. Não é vendida — ver js/vitrine.js.
+    vitrine: {
+        // Limiares em CAIXAS. Os números originais da ideia (10/30) não
+        // serviam: o pedido mínimo já é 10 caixas, então todo pedido nasceria
+        // no teto do Basic. Estes mantêm a proporção sobre os números reais.
+        planos: [
+            { tipo: "basic",   rotulo: "Basic Display",   ateCaixas: 20,   dias: 1 },
+            { tipo: "pro",     rotulo: "Pro Display",     ateCaixas: 60,   dias: 3 },
+            { tipo: "premium", rotulo: "Premium Display", ateCaixas: null, dias: 7 }
+        ],
+
+        // Gatilhos da sugestão: basta um dos dois.
+        caixasParaSugerir: 21,
+        pedidosParaSugerir: 2,
+
+        // Bônus: cada um sobe um nível, sem passar do topo.
+        pedidosParaRecorrente: 3,
+        valorParaBonusCentavos: 576000, // 3x o pedido mínimo
+
+        // Exclusividade Rio. Também garantida no banco, por constraint.
+        ufsPermitidas: ["RJ"]
     }
 };

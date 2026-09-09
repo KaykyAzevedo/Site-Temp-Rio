@@ -34,6 +34,9 @@
     <script src="./data/regioes.js"></script>
     <script src="./js/entrega.js"></script>
 
+    <!-- Vitrine "Onde comprar": regra de sugestao e leitura publica. -->
+    <script src="./js/vitrine.js"></script>
+
     <!-- Styles -->
     <link rel="stylesheet" href="./css/base.css">
     <link rel="stylesheet" href="./css/components.css">
@@ -99,6 +102,10 @@
                             class="w-full bg-[#1A1A1A] border border-borderSubtle text-white text-base rounded-full focus:ring-primary-500 focus:border-primary-500 block pl-12 pr-4 py-3.5 transition-all outline-none hover:border-primary-500/50 focus:bg-[#222]">
                     </div>
                 </div>
+
+                <!-- Onde comprar: lojas parceiras em destaque. Some sozinha
+                     quando nao ha nenhuma vitrine aprovada e vigente. -->
+                <section id="vitrine-secao" class="hidden mb-14"></section>
 
                 <!-- Carregado via JS -->
                 <div class="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6" id="catalogGrid">

@@ -798,7 +798,138 @@
             }
             var janela = window.open(envio.url, '_blank', 'noopener');
             if (!janela) window.location.href = envio.url; // popup bloqueado
+
+            // Convite da vitrine só depois do envio, e só se a aba continuar
+            // aberta. Se o WhatsApp assumiu a tela, não há convite a mostrar.
+            if (janela) setTimeout(talvezOferecerVitrine, 900);
         });
+    }
+
+    /* ===================================================================
+     * Vitrine "Onde comprar"
+     *
+     * O convite aparece DEPOIS do envio, não antes. Antes, ele se colocaria
+     * entre o cliente e a ação que ele veio fazer — e um pop-up que atrasa a
+     * compra custa mais do que a vitrine vale. Depois, é o momento natural do
+     * "você acabou de ganhar isto".
+     * =================================================================== */
+    function historicoDoCliente(cnpj) {
+        var c = (typeof siteConfig !== 'undefined' && siteConfig.supabase) || null;
+        if (!c || !c.url || !c.anonKey) return Promise.resolve({ pedidos: 1 });
+
+        return fetch(c.url.replace(/\/+$/, '') + '/rest/v1/rpc/historico_do_cliente', {
+            method: 'POST',
+            headers: {
+                apikey: c.anonKey, Authorization: 'Bearer ' + c.anonKey,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ p_cnpj: cnpj })
+        })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (linhas) {
+                var h = Array.isArray(linhas) ? linhas[0] : linhas;
+                // O pedido recém-enviado pode ainda não ter sido gravado quando
+                // a contagem chega. Garantir o mínimo de 1 evita sugerir com
+                // base em "zero pedidos".
+                return { pedidos: Math.max(Number(h && h.pedidos) || 0, 1),
+                         caixas: Number(h && h.caixas) || 0,
+                         valorCentavos: Number(h && h.valor_centavos) || 0 };
+            })
+            .catch(function () { return { pedidos: 1 }; });
+    }
+
+    function talvezOferecerVitrine() {
+        if (typeof window.Vitrine === 'undefined') return;
+
+        var d = lerFormulario();
+        var t = Cart.totais();
+
+        historicoDoCliente(d.cnpj).then(function (h) {
+            var s = Vitrine.sugerir(
+                { caixas: t.caixas, valorCentavos: t.valorCentavos, uf: d.uf }, h);
+            if (s.elegivel) mostrarConviteVitrine(s, d, t);
+        });
+    }
+
+    function mostrarConviteVitrine(s, d, t) {
+        var caixa = document.createElement('div');
+        caixa.id = 'convite-vitrine';
+        caixa.className = 'vitrine-fundo';
+        caixa.innerHTML =
+            '<div class="vitrine-painel">' +
+                '<p class="text-[0.65rem] font-bold uppercase tracking-widest text-primary-400 mb-3">' +
+                    'Cortesia pelo seu pedido</p>' +
+                '<h2 class="text-2xl font-bold mb-3" style="font-family:\'Barlow Condensed\',sans-serif;">' +
+                    'Quer sua loja em destaque no site?</h2>' +
+                '<p class="text-sm text-textSecondary font-light leading-relaxed mb-4">' +
+                    'Colocamos <strong class="text-white">' + esc(d.razaoSocial) + '</strong> na seção ' +
+                    '“Onde comprar Temp Rio”, para quem procura nossos temperos encontrar você. ' +
+                    'Não custa nada — é cortesia pelo volume.</p>' +
+
+                '<div class="cart-line p-4 mb-4">' +
+                    '<p class="text-sm font-bold text-white mb-1">' + esc(s.rotulo) + ' &middot; ' +
+                        (s.dias === 1 ? '1 dia' : s.dias + ' dias') + ' em destaque</p>' +
+                    '<p class="text-xs text-textSecondary">Você ganhou por: ' +
+                        esc(s.motivos.join(' · ')) + '</p>' +
+                '</div>' +
+
+                '<p class="text-[0.7rem] text-textSecondary mb-5">' +
+                    'Um vendedor confere e aprova antes de publicar.</p>' +
+
+                '<div class="flex flex-col sm:flex-row gap-3">' +
+                    '<button type="button" id="vitrine-aceitar" class="btn-primary flex-1 py-3 rounded-xl font-bold text-sm">' +
+                        'Quero aparecer</button>' +
+                    '<button type="button" id="vitrine-depois" ' +
+                        'class="flex-1 py-3 rounded-xl border border-white/12 text-white/70 hover:text-white hover:border-white/25 transition-all text-sm font-bold">' +
+                        'Agora não</button>' +
+                '</div>' +
+            '</div>';
+
+        document.body.appendChild(caixa);
+        window.ScrollLock.acquire('convite-vitrine');
+
+        function fechar() {
+            window.ScrollLock.release('convite-vitrine');
+            caixa.remove();
+        }
+
+        document.getElementById('vitrine-depois').addEventListener('click', fechar);
+
+        document.getElementById('vitrine-aceitar').addEventListener('click', function () {
+            var b = this;
+            b.disabled = true;
+            b.textContent = 'Enviando...';
+            solicitarVitrine(s, d, t).then(function (ok) {
+                fechar();
+                CartUI.toast(ok
+                    ? 'Pedido de destaque enviado! Um vendedor aprova em breve.'
+                    : 'Não conseguimos enviar agora — fale com um vendedor no WhatsApp.');
+            });
+        });
+    }
+
+    function solicitarVitrine(s, d, t) {
+        var c = (typeof siteConfig !== 'undefined' && siteConfig.supabase) || null;
+        if (!c || !c.url || !c.anonKey) return Promise.resolve(false);
+
+        return fetch(c.url.replace(/\/+$/, '') + '/rest/v1/vitrines', {
+            method: 'POST',
+            headers: {
+                apikey: c.anonKey, Authorization: 'Bearer ' + c.anonKey,
+                'Content-Type': 'application/json', Prefer: 'return=minimal'
+            },
+            body: JSON.stringify({
+                cnpj: d.cnpj, razao_social: d.razaoSocial, responsavel: d.nome,
+                telefone: d.telefone, email: d.email,
+                cep: d.cep, logradouro: d.logradouro, numero: d.numero,
+                complemento: d.complemento, bairro: d.bairro,
+                cidade: d.cidade, uf: d.uf,
+                regiao: (consultaEntrega().regiao || {}).nome || null,
+                caixas: t.caixas, valor_centavos: t.valorCentavos,
+                motivos: s.motivos,
+                tipo: s.tipo, dias: s.dias, status: 'pendente'
+            })
+        }).then(function (r) { return r.ok; }).catch(function () { return false; });
     }
 
     /* ===================================================================
