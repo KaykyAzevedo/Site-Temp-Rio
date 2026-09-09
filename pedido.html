@@ -27,6 +27,10 @@
     <!-- Registro de pedidos e visitas no painel. So insere; nunca le. -->
     <script src="./js/db.js"></script>
 
+    <!-- Regioes de entrega: CEP -> regiao, taxa e prazo. -->
+    <script src="./data/regioes.js"></script>
+    <script src="./js/entrega.js"></script>
+
     <!-- Styles -->
     <link rel="stylesheet" href="./css/base.css">
     <link rel="stylesheet" href="./css/components.css">
@@ -172,7 +176,12 @@
                                     </div>
                                     <div class="campo" data-campo="bairro">
                                         <label for="f-bairro" class="block text-xs font-bold uppercase tracking-widest text-textSecondary mb-2">Bairro *</label>
-                                        <input id="f-bairro" name="bairro" type="text" class="campo-input" placeholder="Bairro">
+                                        <input id="f-bairro" name="bairro" type="text" class="campo-input" placeholder="Bairro" list="lista-bairros" autocomplete="off">
+                                        <!-- Preenchido por js/pedido.js com os bairros das regiões ativas.
+                                             Usa datalist nativo: sem biblioteca, funciona com teclado e
+                                             leitor de tela, e não atrapalha quem digita um bairro que
+                                             não está na lista. -->
+                                        <datalist id="lista-bairros"></datalist>
                                         <p class="campo-msg"></p>
                                     </div>
                                 </div>

@@ -278,9 +278,9 @@
     var sb = null;
     var usuario = null;
     var abaAtual = 'dashboard';
-    var dados = { resumo: [], visitas: [], pedidos: [], espera: [] };
+    var dados = { resumo: [], visitas: [], pedidos: [], espera: [], regioes: [], faixas: [] };
 
-    var ABAS = ['dashboard', 'pedidos', 'historico', 'espera', 'visitas'];
+    var ABAS = ['dashboard', 'pedidos', 'historico', 'espera', 'regioes', 'visitas'];
 
     /* ===================================================================
      * Autenticação
@@ -383,7 +383,9 @@
             sb.rpc('visitas_mensais', { meses: meses }),
             sb.from('pedidos').select('*').gte('criado_em', desde.toISOString())
                 .order('criado_em', { ascending: false }),
-            sb.from('lista_espera').select('*').order('criado_em', { ascending: false })
+            sb.from('lista_espera').select('*').order('criado_em', { ascending: false }),
+            sb.from('regioes').select('*').order('prioridade', { ascending: false }),
+            sb.from('regioes_faixas_cep').select('*')
         ]).then(function (rs) {
             marcarCarregando(false);
 
@@ -397,6 +399,8 @@
             dados.visitas = rs[1].data || [];
             dados.pedidos = rs[2].data || [];
             dados.espera = rs[3].data || [];
+            dados.regioes = rs[4].data || [];
+            dados.faixas = rs[5].data || [];
             desenharTudo();
         });
     }
@@ -430,6 +434,7 @@
         desenharPedidos();
         desenharHistorico();
         desenharEspera();
+        desenharRegioes();
         desenharVisitas();
     }
 
@@ -938,6 +943,160 @@
                             window.alert('Não foi possível atualizar: ' + r.error.message);
                             return;
                         }
+                        carregar();
+                    });
+            });
+        });
+    }
+
+    /* ===================================================================
+     * Regiões de entrega
+     *
+     * Ativar e desativar tem efeito imediato no site: a página de pedido lê
+     * esta tabela para calcular o frete. Desativar uma região não apaga nada —
+     * quem tentar comprar de lá cai na lista de espera, e você reativa depois.
+     * =================================================================== */
+    function faixasDe(regiaoId) {
+        return dados.faixas.filter(function (f) { return f.regiao_id === regiaoId; });
+    }
+
+    function formatarCep(c) {
+        var d = String(c || '').replace(/\D/g, '');
+        return d.length === 8 ? d.slice(0, 5) + '-' + d.slice(5) : d;
+    }
+
+    function desenharRegioes() {
+        var alvo = $('#painel-regioes');
+        var lista = dados.regioes;
+
+        if (!lista.length) {
+            alvo.innerHTML = cartaoVazio('Nenhuma região cadastrada',
+                'Rode admin/supabase-regioes.sql no SQL Editor do Supabase. ' +
+                'Enquanto isso, o site usa as regiões do arquivo data/regioes.js.');
+            return;
+        }
+
+        var ativas = lista.filter(function (r) { return r.ativo; });
+        var comFaixa = lista.filter(function (r) { return faixasDe(r.id).length > 0; });
+
+        alvo.innerHTML =
+            '<div class="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-7">' +
+                ficha('Regiões atendidas', NUM.format(ativas.length),
+                      'de ' + NUM.format(lista.length) + ' cadastradas') +
+                ficha('Frete médio', ativas.length
+                        ? brl(Math.round(ativas.reduce(function (a, r) {
+                              return a + Number(r.taxa_centavos); }, 0) / ativas.length))
+                        : brl(0),
+                      'entre as regiões ativas') +
+                ficha('Sem faixa de CEP', NUM.format(lista.length - comFaixa.length),
+                      (lista.length - comFaixa.length) ? 'nunca vão casar com um CEP' : 'todas configuradas') +
+            '</div>' +
+
+            '<div class="adm-card p-4 mb-5" style="border-color:rgba(242,140,82,.3);background:rgba(242,140,82,.06)">' +
+                '<p class="text-xs leading-relaxed" style="color:var(--adm-tinta-2)">' +
+                    '<strong>As taxas e prazos vieram de um exemplo, não de você.</strong> ' +
+                    'As faixas de CEP também são aproximadas, não uma fonte oficial dos Correios. ' +
+                    'Confira e ajuste tudo antes de publicar: um limite errado cobra frete errado ' +
+                    'ou recusa um cliente válido.' +
+                '</p>' +
+            '</div>' +
+
+            '<div class="space-y-3">' + lista.map(cartaoRegiao).join('') + '</div>';
+
+        ligarAcoesDeRegiao(alvo);
+    }
+
+    function cartaoRegiao(r) {
+        var faixas = faixasDe(r.id);
+
+        return '<div class="adm-card p-5"' + (r.ativo ? '' : ' style="opacity:.55"') + '>' +
+            '<div class="flex items-start justify-between gap-4 flex-wrap mb-4">' +
+                '<div>' +
+                    '<p class="font-bold">' + esc(r.nome) + '</p>' +
+                    '<p class="text-xs mt-1" style="color:var(--adm-tinta-3)">' +
+                        (faixas.length
+                            ? faixas.map(function (f) {
+                                  return esc(formatarCep(f.cep_inicio)) + ' a ' + esc(formatarCep(f.cep_fim));
+                              }).join(' · ')
+                            : '<span style="color:#FCA5A5">Sem faixa de CEP — esta região nunca vai casar com um pedido</span>') +
+                    '</p>' +
+                '</div>' +
+                (r.ativo
+                    ? '<span class="adm-selo adm-selo-confirmado"><i class="fa-solid fa-circle-check"></i>Entregando</span>'
+                    : '<span class="adm-selo adm-selo-cancelado"><i class="fa-solid fa-ban"></i>Sem entrega</span>') +
+            '</div>' +
+
+            '<div class="flex items-end gap-4 flex-wrap">' +
+                '<div>' +
+                    '<label class="adm-tile-rotulo block mb-1" for="taxa-' + esc(r.id) + '">Frete (R$)</label>' +
+                    '<input id="taxa-' + esc(r.id) + '" type="number" min="0" step="0.01" ' +
+                        'value="' + (Number(r.taxa_centavos) / 100).toFixed(2) + '" ' +
+                        'class="adm-input" style="width:110px" data-campo-regiao="taxa" data-id="' + esc(r.id) + '">' +
+                '</div>' +
+                '<div>' +
+                    '<label class="adm-tile-rotulo block mb-1" for="prazo-' + esc(r.id) + '">Prazo (dias úteis)</label>' +
+                    '<input id="prazo-' + esc(r.id) + '" type="number" min="0" step="1" ' +
+                        'value="' + Number(r.prazo_dias) + '" ' +
+                        'class="adm-input" style="width:110px" data-campo-regiao="prazo" data-id="' + esc(r.id) + '">' +
+                '</div>' +
+                '<button type="button" class="adm-botao" style="padding:.55rem .9rem;font-size:.8rem" ' +
+                    'data-salvar-regiao="' + esc(r.id) + '">Salvar</button>' +
+                '<button type="button" class="adm-botao-fantasma ml-auto" ' +
+                    'data-alternar-regiao="' + esc(r.id) + '" data-ativo="' + (r.ativo ? 'false' : 'true') + '">' +
+                    (r.ativo
+                        ? '<i class="fa-solid fa-ban mr-1"></i>Suspender entrega'
+                        : '<i class="fa-solid fa-play mr-1"></i>Voltar a entregar') +
+                '</button>' +
+            '</div>' +
+
+            (r.bairros && r.bairros.length
+                ? '<p class="text-xs mt-4 pt-3" style="border-top:1px solid var(--adm-borda);color:var(--adm-tinta-3)">' +
+                  esc(r.bairros.join(' · ')) + '</p>'
+                : '') +
+        '</div>';
+    }
+
+    function ligarAcoesDeRegiao(raiz) {
+        raiz.querySelectorAll('button[data-alternar-regiao]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                var ativo = b.getAttribute('data-ativo') === 'true';
+                if (!ativo && !window.confirm(
+                        'Suspender a entrega nesta região?\n\n' +
+                        'Quem tentar comprar de lá vai ver a mensagem de indisponibilidade ' +
+                        'e a opção de entrar na lista de espera. Nada é apagado.')) return;
+
+                b.disabled = true;
+                sb.from('regioes').update({ ativo: ativo })
+                    .eq('id', b.getAttribute('data-alternar-regiao'))
+                    .then(function (r) {
+                        b.disabled = false;
+                        if (r.error) { window.alert('Não foi possível atualizar: ' + r.error.message); return; }
+                        carregar();
+                    });
+            });
+        });
+
+        raiz.querySelectorAll('button[data-salvar-regiao]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                var id = b.getAttribute('data-salvar-regiao');
+                var taxa = raiz.querySelector('[data-campo-regiao="taxa"][data-id="' + id + '"]');
+                var prazo = raiz.querySelector('[data-campo-regiao="prazo"][data-id="' + id + '"]');
+
+                // Centavos inteiros: o preço nunca vira float em lugar nenhum
+                // do sistema, e não vai começar aqui.
+                var centavos = Math.round(Number(taxa.value) * 100);
+                var dias = Math.trunc(Number(prazo.value));
+                if (!isFinite(centavos) || centavos < 0) { window.alert('Frete inválido.'); return; }
+                if (!isFinite(dias) || dias < 0) { window.alert('Prazo inválido.'); return; }
+
+                b.disabled = true;
+                b.textContent = 'Salvando...';
+                sb.from('regioes').update({ taxa_centavos: centavos, prazo_dias: dias })
+                    .eq('id', id)
+                    .then(function (r) {
+                        b.disabled = false;
+                        b.textContent = 'Salvar';
+                        if (r.error) { window.alert('Não foi possível salvar: ' + r.error.message); return; }
                         carregar();
                     });
             });

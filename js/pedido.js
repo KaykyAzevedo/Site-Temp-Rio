@@ -312,30 +312,82 @@
     /* ===================================================================
      * Aviso de entrega — o FAQ do site já promete isto
      * =================================================================== */
-    function ufsAtendidas() {
-        return (siteConfig.entrega && siteConfig.entrega.ufsAtendidas) || ['RJ'];
+    /* A decisão de atender passa a ser por CEP, não por estado.
+     *
+     * Antes bastava UF === RJ. Agora o CEP resolve uma REGIÃO, que carrega taxa
+     * e prazo próprios e pode ser desativada no painel. Uma região desativada é
+     * diferente de um CEP fora de área: no primeiro caso a área é nossa e a
+     * entrega volta; no segundo nunca atendemos ali. */
+    function consultaEntrega() {
+        if (typeof window.Entrega === 'undefined') {
+            return { situacao: 'atende', regiao: null, taxaCentavos: 0, prazoDias: 0 };
+        }
+        return Entrega.consultar(inputDe('cep').value);
     }
 
-    // Sem UF ainda, não bloqueia nada: só depois que o CEP resolve é que dá
-    // para julgar. O padrão é "atende", para nunca travar quem não preencheu.
+    // Sem CEP preenchido não bloqueia nada — só depois que o CEP existe é que
+    // dá para julgar. O padrão é "atende", para nunca travar quem não preencheu.
     function atendeEndereco() {
-        var uf = inputDe('uf').value;
-        if (!uf) return true;
-        return ufsAtendidas().indexOf(uf) !== -1;
+        var cep = inputDe('cep').value.replace(/\D/g, '');
+        if (cep.length !== 8) return true;
+        return consultaEntrega().situacao === 'atende';
+    }
+
+    function freteCentavos() {
+        var c = consultaEntrega();
+        return c.situacao === 'atende' ? (c.taxaCentavos || 0) : 0;
+    }
+
+    function totalComFrete() {
+        return Cart.totais().valorCentavos + freteCentavos();
     }
 
     function atualizarAvisoEntrega() {
-        var uf = inputDe('uf').value;
         var box = $('#aviso-entrega');
-        if (!uf) { box.classList.add('hidden'); return; }
+        var cep = inputDe('cep').value.replace(/\D/g, '');
 
+        if (cep.length !== 8) { box.classList.add('hidden'); render(); return; }
+
+        var c = consultaEntrega();
         box.classList.remove('hidden');
-        box.textContent = atendeEndereco()
-            ? (siteConfig.entrega && siteConfig.entrega.prazoAtendido) ||
-              'Entrega em até 7 dias em todo o estado do Rio de Janeiro.'
-            : 'Ainda não entregamos nesse endereço — veja as opções no resumo ao lado.';
+        box.classList.toggle('cart-aviso', c.situacao !== 'atende');
+
+        if (c.situacao === 'atende') {
+            // O cliente vê taxa e prazo ANTES de confirmar — é o ponto do módulo.
+            box.innerHTML =
+                '<span class="font-bold">' + esc(c.regiao.nome) + '</span> · ' +
+                'Frete <span class="font-bold">' + esc(Cart.formatarBRL(c.taxaCentavos)) + '</span> · ' +
+                'Entrega em ' + esc(Entrega.formatarPrazo(c.prazoDias));
+        } else if (c.situacao === 'indisponivel') {
+            box.textContent = 'Estamos temporariamente sem entrega em ' +
+                (c.regiao ? c.regiao.nome : 'sua região') +
+                ' — veja as opções no resumo ao lado.';
+        } else {
+            box.textContent = 'Ainda não entregamos nesse endereço — veja as opções no resumo ao lado.';
+        }
 
         render(); // o resumo muda de cara quando o endereço sai da área
+    }
+
+    /* Bairros das regiões ativas, para o autocompletar do campo.
+     *
+     * Só das ativas de propósito: sugerir um bairro que não é atendido leva o
+     * cliente a preencher o pedido inteiro para tomar um não no fim.
+     *
+     * As regiões podem chegar do banco depois do carregamento da página, então
+     * a lista é montada de novo quando isso acontece. */
+    function montarListaDeBairros() {
+        var lista = document.getElementById('lista-bairros');
+        if (!lista || typeof window.Entrega === 'undefined') return;
+
+        function preencher() {
+            lista.innerHTML = Entrega.bairrosAtendidos().map(function (b) {
+                return '<option value="' + esc(b.bairro) + '">' + esc(b.regiao) + '</option>';
+            }).join('');
+        }
+
+        preencher();
+        Entrega.pronto().then(preencher);
     }
 
     /* ===================================================================
@@ -482,6 +534,11 @@
             potes: t.potes,
             caixas: t.caixas,
             valor_centavos: t.valorCentavos,
+            // Frete separado do valor dos produtos: no painel, faturamento de
+            // mercadoria e custo de entrega são números diferentes, e somá-los
+            // numa coluna só tornaria impossível separá-los depois.
+            frete_centavos: freteCentavos(),
+            regiao: (consultaEntrega().regiao || {}).nome || null,
             // Guarda o pedido item a item: sem isso o painel mostraria só o
             // total, e você não saberia quais sabores saem mais.
             itens: Cart.itens().map(function (i) {
@@ -572,8 +629,19 @@
     }
 
     function blocoTotais(t, comAcento) {
-        var linha = '*TOTAL:* ' + t.potes + ' potes = ' + t.caixas + ' caixas / ' +
+        var c = consultaEntrega();
+        var frete = freteCentavos();
+
+        var linha = '*Produtos:* ' + t.potes + ' potes = ' + t.caixas + ' caixas / ' +
                     Cart.formatarBRL(t.valorCentavos);
+
+        // Região, frete e prazo vão na mensagem: é o que o vendedor precisa
+        // para conferir sem reabrir o site.
+        if (c.situacao === 'atende' && c.regiao) {
+            linha += '\n*Frete:* ' + Cart.formatarBRL(frete) +
+                     ' (' + c.regiao.nome + ', ' + Entrega.formatarPrazo(c.prazoDias) + ')' +
+                     '\n*TOTAL:* ' + Cart.formatarBRL(t.valorCentavos + frete);
+        }
         var min = t.atingiuMinimo
             ? 'Pedido minimo (' + t.minimoPotes + ' potes): OK'
             : 'Abaixo do minimo: faltam ' + t.faltamPotes + ' potes';
@@ -736,6 +804,43 @@
     /* ===================================================================
      * Renderização
      * =================================================================== */
+    /* Linhas de subtotal e frete. Antes do CEP ser preenchido o frete ainda é
+     * desconhecido, e dizer "R$ 0,00" seria mentira — melhor dizer que falta o
+     * CEP do que mostrar um número que vai mudar. */
+    function blocoFrete(t) {
+        var cep = inputDe('cep').value.replace(/\D/g, '');
+        var c = consultaEntrega();
+
+        var linhaFrete;
+        if (cep.length !== 8) {
+            linhaFrete = '<span class="text-textSecondary">Informe o CEP</span>';
+        } else if (c.situacao === 'atende') {
+            linhaFrete = '<span class="text-white">' + esc(Cart.formatarBRL(c.taxaCentavos)) + '</span>';
+        } else {
+            linhaFrete = '<span class="text-textSecondary">—</span>';
+        }
+
+        return '<div class="space-y-1.5 text-sm border-t border-white/5 pt-4">' +
+            '<div class="flex justify-between text-textSecondary">' +
+                '<span>Produtos</span>' +
+                '<span class="text-white">' + esc(Cart.formatarBRL(t.valorCentavos)) + '</span>' +
+            '</div>' +
+            '<div class="flex justify-between text-textSecondary">' +
+                '<span>Frete' +
+                    (c.situacao === 'atende' && c.regiao
+                        ? ' <span class="text-[0.65rem] opacity-70">(' + esc(c.regiao.nome) + ')</span>'
+                        : '') +
+                '</span>' + linhaFrete +
+            '</div>' +
+            (c.situacao === 'atende'
+                ? '<div class="flex justify-between text-textSecondary">' +
+                      '<span>Prazo</span>' +
+                      '<span class="text-white">' + esc(Entrega.formatarPrazo(c.prazoDias)) + '</span>' +
+                  '</div>'
+                : '') +
+        '</div>';
+    }
+
     function resumoHTML(t) {
         var minimoBRL = Cart.formatarBRL(Cart.precoDePotes(t.minimoPotes));
         var pct = Math.round(t.progresso * 100);
@@ -767,10 +872,14 @@
                 Cart.formatarBRL(Cart.config.precoPorPoteCentavos) + '</span></div>' +
         '</div>' +
 
+        // Produtos e frete separados: o cliente precisa ver de onde vem cada
+        // parte antes de confirmar, não só um número final.
+        blocoFrete(t) +
+
         '<div class="flex items-end justify-between border-t border-white/5 pt-4">' +
             '<span class="text-[0.6rem] text-textSecondary uppercase tracking-widest">Total</span>' +
             '<span class="text-3xl font-bold text-white leading-none" style="font-family:\'Barlow Condensed\',sans-serif;">' +
-                Cart.formatarBRL(t.valorCentavos) + '</span>' +
+                Cart.formatarBRL(totalComFrete()) + '</span>' +
         '</div>' +
 
         (atendeEndereco() ? blocoEnvio() : blocoForaDaArea());
@@ -813,13 +922,24 @@
             '</a>';
         }
 
+        // "Sem entrega agora" e "nunca atendemos aqui" são situações diferentes
+        // para quem lê: uma tem volta anunciada, a outra não. Dizer a mesma
+        // frase nos dois casos é mentir num deles.
+        var c = consultaEntrega();
+        var temporario = c.situacao === 'indisponivel';
+        var titulo = temporario
+            ? 'Sem entrega em ' + esc(c.regiao ? c.regiao.nome : onde) + ' no momento'
+            : 'Ainda não entregamos em ' + esc(onde);
+        var explicacao = temporario
+            ? 'A sua região é atendida, mas está temporariamente sem entrega. ' +
+              'Entre na lista e avisamos assim que voltar.'
+            : 'Entre na lista de espera e avisamos assim que chegarmos à sua região.';
+
         return '' +
         '<div class="cart-aviso p-4 space-y-2">' +
             '<p class="flex items-center gap-2 text-sm font-bold">' +
-                '<i class="fa-solid fa-truck"></i> Ainda não entregamos em ' + esc(onde) + '</p>' +
-            '<p class="text-xs leading-relaxed opacity-90">' +
-                'Hoje a nossa entrega cobre o estado do Rio de Janeiro. ' +
-                'Entre na lista de espera e avisamos assim que chegarmos à sua região.</p>' +
+                '<i class="fa-solid fa-truck"></i> ' + titulo + '</p>' +
+            '<p class="text-xs leading-relaxed opacity-90">' + explicacao + '</p>' +
         '</div>' +
 
         '<button type="button" id="btn-espera" class="btn-primary w-full py-4 rounded-xl font-bold text-sm flex items-center justify-center gap-2">' +
@@ -900,9 +1020,15 @@
         });
         inputDe('cep').addEventListener('input', function () {
             this.value = mascararCep(this.value);
+            // Região, frete e prazo saem do próprio CEP e não dependem do
+            // ViaCEP. Se a consulta de endereço falhar, o cliente ainda vê
+            // quanto vai pagar de frete.
+            atualizarAvisoEntrega();
             if (this.value.replace(/\D/g, '').length === 8) buscarCep();
         });
         inputDe('cep').addEventListener('blur', buscarCep);
+
+        montarListaDeBairros();
 
         // Validação: blur valida; input só LIMPA erro, nunca cria enquanto digita.
         Object.keys(REGRAS).forEach(function (nome) {
@@ -924,6 +1050,13 @@
         uf.addEventListener('change', salvarRascunho);
 
         carregarRascunho();
+
+        // As regiões podem vir do banco depois do carregamento da página. Se
+        // vierem diferentes do arquivo local, taxa e prazo mudam — então a tela
+        // é redesenhada quando chegarem.
+        if (window.Entrega) {
+            Entrega.pronto().then(function () { atualizarAvisoEntrega(); });
+        }
 
         // Cadastro que ficou preso numa falha de rede sobe agora.
         reenviarPendentes();
