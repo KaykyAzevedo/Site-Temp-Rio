@@ -233,7 +233,7 @@
                 class: v === 0 ? 'adm-eixo' : 'adm-grade'
             }));
             var t = el('text', { x: L - 8, y: vy + 3, class: 'adm-tick', 'text-anchor': 'end' });
-            t.textContent = NUM.format(Math.round(v));
+            t.textContent = opcoes.formatarEixo ? opcoes.formatarEixo(v) : NUM.format(Math.round(v));
             svg.appendChild(t);
         });
 
@@ -272,6 +272,79 @@
         destino.appendChild(svg);
     }
 
+    /* Rosca em vez de pizza fechada: o buraco no meio é onde o total entra
+     * como texto, sem precisar de uma legenda separada só para ele. Até 6
+     * fatias na cor da marca em opacidades diferentes — mais que isso e a
+     * diferença de tom para de ser distinguível; o resto vira "Outras". */
+    var CORES_FATIA = ['#F28C52', '#38BDF8', '#4ADE80', '#FDE047', '#A78BFA', '#FB7185', 'rgba(255,255,255,0.25)'];
+
+    function desenharPizza(destino, legendaDestino, dados_, opcoes) {
+        opcoes = opcoes || {};
+        var largura = destino.clientWidth || 320;
+        var altura = opcoes.altura || 260;
+        var cx = largura / 2, cy = altura / 2;
+        var rExterno = Math.min(largura, altura) / 2 - 8;
+        var rInterno = rExterno * 0.6;
+
+        var svg = el('svg', {
+            viewBox: '0 0 ' + largura + ' ' + altura, class: 'adm-grafico', role: 'img',
+            'aria-label': opcoes.descricao || 'Gráfico de rosca'
+        });
+
+        var total = dados_.reduce(function (a, d) { return a + d.valor; }, 0);
+        if (!total) { destino.innerHTML = ''; destino.appendChild(svg); if (legendaDestino) legendaDestino.innerHTML = ''; return; }
+
+        var anguloAtual = -Math.PI / 2;
+        dados_.forEach(function (d, i) {
+            var fatia = (d.valor / total) * Math.PI * 2;
+            var a0 = anguloAtual, a1 = anguloAtual + fatia;
+            anguloAtual = a1;
+            var grandeArco = fatia > Math.PI ? 1 : 0;
+
+            var pt = function (r, a) { return [cx + r * Math.cos(a), cy + r * Math.sin(a)]; };
+            var p0e = pt(rExterno, a0), p1e = pt(rExterno, a1);
+            var p0i = pt(rInterno, a1), p1i = pt(rInterno, a0);
+
+            var caminho = el('path', {
+                class: 'adm-fatia',
+                fill: CORES_FATIA[i % CORES_FATIA.length],
+                d: 'M' + p0e[0] + ',' + p0e[1] +
+                   ' A' + rExterno + ',' + rExterno + ' 0 ' + grandeArco + ' 1 ' + p1e[0] + ',' + p1e[1] +
+                   ' L' + p0i[0] + ',' + p0i[1] +
+                   ' A' + rInterno + ',' + rInterno + ' 0 ' + grandeArco + ' 0 ' + p1i[0] + ',' + p1i[1] + ' Z'
+            });
+            caminho.addEventListener('mousemove', function (ev) {
+                var pct = Math.round((d.valor / total) * 100);
+                mostrarDica(ev, opcoes.dica ? opcoes.dica(d, pct) :
+                    '<strong>' + esc(d.rotulo) + '</strong><br>' + NUM.format(d.valor) + ' (' + pct + '%)');
+            });
+            caminho.addEventListener('mouseleave', esconderDica);
+            svg.appendChild(caminho);
+        });
+
+        var totalTexto = el('text', { x: cx, y: cy - 4, 'text-anchor': 'middle', class: 'adm-tile-valor', fill: 'currentColor' });
+        totalTexto.setAttribute('style', 'font-size:1.1rem;font-weight:700');
+        totalTexto.textContent = opcoes.formatarTotal ? opcoes.formatarTotal(total) : NUM.format(total);
+        svg.appendChild(totalTexto);
+        var totalRotulo = el('text', { x: cx, y: cy + 14, 'text-anchor': 'middle', class: 'adm-tick' });
+        totalRotulo.textContent = opcoes.rotuloTotal || 'total';
+        svg.appendChild(totalRotulo);
+
+        destino.innerHTML = '';
+        destino.appendChild(svg);
+
+        if (legendaDestino) {
+            legendaDestino.innerHTML = dados_.map(function (d, i) {
+                return '<div class="adm-legenda-item">' +
+                    '<span class="adm-legenda-cor" style="background:' + CORES_FATIA[i % CORES_FATIA.length] + '"></span>' +
+                    '<span>' + esc(d.rotulo) + '</span>' +
+                    '<span class="ml-auto" style="color:var(--adm-tinta-3)">' +
+                        (opcoes.formatarLegenda ? opcoes.formatarLegenda(d.valor) : NUM.format(d.valor)) + '</span>' +
+                '</div>';
+            }).join('');
+        }
+    }
+
     /* ===================================================================
      * Estado
      * =================================================================== */
@@ -279,9 +352,20 @@
     var usuario = null;
     var abaAtual = 'dashboard';
     var dados = { resumo: [], visitas: [], pedidos: [], espera: [],
-                  regioes: [], faixas: [], vitrines: [] };
+                  regioes: [], faixas: [], vitrines: [], usuarios: [], clientes: [],
+                  vendasRegiao: [], vendasProduto: [] };
 
-    var ABAS = ['dashboard', 'pedidos', 'historico', 'espera', 'vitrine', 'regioes', 'visitas'];
+    var ABAS = ['dashboard', 'pedidos', 'clientes', 'historico', 'vendas',
+                'espera', 'vitrine', 'regioes', 'visitas'];
+
+    /* Filtros globais: afetam Pedidos, Clientes e Dashboard de vendas — as
+     * três telas que mostram linha a linha, em vez de um agregado já pronto
+     * como o Dashboard principal ou a Lista de espera. */
+    var filtros = {
+        de: null, ate: null, busca: '', regioes: [], tipoCliente: 'todos', status: []
+    };
+
+    var STATUS_TODOS = ['aguardando', 'confirmado', 'entregue', 'cancelado'];
 
     /* ===================================================================
      * Autenticação
@@ -322,6 +406,159 @@
         document.querySelectorAll('.adm-aba').forEach(function (b) {
             b.addEventListener('click', function () { trocarAba(b.getAttribute('data-aba')); });
         });
+
+        ligarFiltrosGlobais();
+        $('#btn-sino').addEventListener('click', function () {
+            marcarNotificacoesLidas();
+            trocarAba('pedidos');
+        });
+        $('#btn-fechar-modal').addEventListener('click', fecharModal);
+        $('#modal-detalhe').addEventListener('click', function (ev) {
+            if (ev.target.id === 'modal-detalhe') fecharModal();
+        });
+        document.addEventListener('keydown', function (ev) {
+            if (ev.key === 'Escape') fecharModal();
+        });
+    }
+
+    /* ===================================================================
+     * Filtros globais
+     *
+     * Chips em vez de <select multiple>: com 9 regiões e 4 status, clicar é
+     * mais rápido que segurar Ctrl numa lista nativa. Nenhum componente novo
+     * — o mesmo botão .adm-chip que o resto do painel já usa.
+     * =================================================================== */
+    function montarChipsDeFiltro() {
+        var alvoRegiao = $('#filtro-regiao');
+        if (alvoRegiao && !alvoRegiao.dataset.montado) {
+            alvoRegiao.dataset.montado = '1';
+            alvoRegiao.innerHTML = dados.regioes.map(function (r) {
+                return '<button type="button" class="adm-chip" data-regiao-chip="' + esc(r.id) + '">' +
+                       esc(r.nome) + '</button>';
+            }).join('');
+            alvoRegiao.querySelectorAll('[data-regiao-chip]').forEach(function (b) {
+                b.addEventListener('click', function () {
+                    var id = b.getAttribute('data-regiao-chip');
+                    var i = filtros.regioes.indexOf(id);
+                    if (i === -1) { filtros.regioes.push(id); b.classList.add('is-ativo'); }
+                    else { filtros.regioes.splice(i, 1); b.classList.remove('is-ativo'); }
+                    aplicarFiltros();
+                });
+            });
+        }
+
+        var alvoStatus = $('#filtro-status');
+        if (alvoStatus && !alvoStatus.dataset.montado) {
+            alvoStatus.dataset.montado = '1';
+            alvoStatus.innerHTML = STATUS_TODOS.map(function (s) {
+                return '<button type="button" class="adm-chip" data-status-chip="' + s + '">' +
+                       esc(STATUS[s].rotulo) + '</button>';
+            }).join('');
+            alvoStatus.querySelectorAll('[data-status-chip]').forEach(function (b) {
+                b.addEventListener('click', function () {
+                    var s = b.getAttribute('data-status-chip');
+                    var i = filtros.status.indexOf(s);
+                    if (i === -1) { filtros.status.push(s); b.classList.add('is-ativo'); }
+                    else { filtros.status.splice(i, 1); b.classList.remove('is-ativo'); }
+                    aplicarFiltros();
+                });
+            });
+        }
+    }
+
+    function ligarFiltrosGlobais() {
+        $('#btn-filtros').addEventListener('click', function () {
+            var corpo = $('#corpo-filtros');
+            var aberto = !corpo.classList.contains('hidden');
+            corpo.classList.toggle('hidden', aberto);
+            $('#icone-filtros').classList.toggle('fa-chevron-down', aberto);
+            $('#icone-filtros').classList.toggle('fa-chevron-up', !aberto);
+        });
+
+        $('#filtro-de').addEventListener('change', function () {
+            filtros.de = this.value || null;
+            aplicarFiltros();
+        });
+        $('#filtro-ate').addEventListener('change', function () {
+            filtros.ate = this.value || null;
+            aplicarFiltros();
+        });
+
+        var timerBusca = null;
+        $('#filtro-busca').addEventListener('input', function () {
+            var valor = this.value;
+            clearTimeout(timerBusca);
+            timerBusca = setTimeout(function () {
+                filtros.busca = valor.trim().toLowerCase();
+                aplicarFiltros();
+            }, 250);
+        });
+
+        document.querySelectorAll('[data-tipo-cliente]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                document.querySelectorAll('[data-tipo-cliente]').forEach(function (o) {
+                    o.classList.remove('is-ativo');
+                });
+                b.classList.add('is-ativo');
+                filtros.tipoCliente = b.getAttribute('data-tipo-cliente');
+                aplicarFiltros();
+            });
+        });
+
+        $('#btn-limpar-filtros').addEventListener('click', function () {
+            filtros = { de: null, ate: null, busca: '', regioes: [], tipoCliente: 'todos', status: [] };
+            $('#filtro-de').value = '';
+            $('#filtro-ate').value = '';
+            $('#filtro-busca').value = '';
+            document.querySelectorAll('[data-regiao-chip], [data-status-chip]').forEach(function (b) {
+                b.classList.remove('is-ativo');
+            });
+            document.querySelectorAll('[data-tipo-cliente]').forEach(function (b) {
+                b.classList.toggle('is-ativo', b.getAttribute('data-tipo-cliente') === 'todos');
+            });
+            aplicarFiltros();
+        });
+    }
+
+    /* Reaplica os filtros sem ir ao banco de novo: tudo que eles tocam já
+     * está carregado na memória do painel. Só as três telas que os usam são
+     * redesenhadas — não tem por que redesenhar o resto. */
+    function aplicarFiltros() {
+        var partes = [];
+        if (filtros.de || filtros.ate) {
+            partes.push((filtros.de ? new Date(filtros.de + 'T00:00:00').toLocaleDateString('pt-BR') : '…') +
+                ' a ' + (filtros.ate ? new Date(filtros.ate + 'T00:00:00').toLocaleDateString('pt-BR') : '…'));
+        }
+        if (filtros.busca) partes.push('"' + filtros.busca + '"');
+        if (filtros.regioes.length) partes.push(filtros.regioes.length + ' região(ões)');
+        if (filtros.tipoCliente !== 'todos') partes.push(filtros.tipoCliente.toUpperCase());
+        if (filtros.status.length) partes.push(filtros.status.length + ' status');
+        $('#filtros-resumo').textContent = partes.length ? partes.join(' · ') : '';
+
+        desenharPedidos();
+        desenharClientes();
+        desenharVendas();
+    }
+
+    /* Um pedido passa no filtro quando bate com CADA critério ativo — critérios
+     * vazios não restringem nada, é assim que "nenhum filtro" continua
+     * mostrando tudo. */
+    function pedidoPassaNoFiltro(p) {
+        if (filtros.de && p.criado_em < filtros.de) return false;
+        if (filtros.ate && p.criado_em.slice(0, 10) > filtros.ate) return false;
+        if (filtros.regioes.length && filtros.regioes.indexOf(p.regiao_id) === -1) return false;
+        if (filtros.status.length && filtros.status.indexOf(p.status) === -1) return false;
+        if (filtros.tipoCliente !== 'todos') {
+            var ehPJ = !!(p.cnpj && p.cnpj.replace(/\D/g, '').length > 11);
+            if (filtros.tipoCliente === 'pj' && !ehPJ) return false;
+            if (filtros.tipoCliente === 'pf' && ehPJ) return false;
+        }
+        if (filtros.busca) {
+            var alvo = (String(p.razao_social || '') + ' ' + String(p.cnpj || '') + ' ' +
+                        String(p.telefone || '') + ' ' + String(p.responsavel || '')).toLowerCase();
+            if (alvo.indexOf(filtros.busca) === -1) return false;
+        }
+        return true;
     }
 
     function entrar(e) {
@@ -349,6 +586,7 @@
     }
 
     function sair() {
+        if (canalRealtime) { sb.removeChannel(canalRealtime); canalRealtime = null; }
         sb.auth.signOut().then(function () {
             usuario = null;
             mostrarTela('login');
@@ -359,6 +597,7 @@
         mostrarTela('painel');
         $('#quem').textContent = usuario ? usuario.email : '';
         carregar();
+        ligarRealtime();
     }
 
     /* ===================================================================
@@ -387,7 +626,11 @@
             sb.from('lista_espera').select('*').order('criado_em', { ascending: false }),
             sb.from('regioes').select('*').order('prioridade', { ascending: false }),
             sb.from('regioes_faixas_cep').select('*'),
-            sb.from('vitrines').select('*').order('criado_em', { ascending: false })
+            sb.from('vitrines').select('*').order('criado_em', { ascending: false }),
+            sb.from('usuarios').select('*').eq('tipo', 'cliente'),
+            sb.from('clientes').select('*'),
+            sb.rpc('vendas_por_produto', { meses: meses }),
+            sb.rpc('visitas_por_regiao', { meses: meses })
         ]).then(function (rs) {
             marcarCarregando(false);
 
@@ -404,6 +647,11 @@
             dados.regioes = rs[4].data || [];
             dados.faixas = rs[5].data || [];
             dados.vitrines = rs[6].data || [];
+            dados.usuarios = rs[7].data || [];
+            dados.clientes = rs[8].data || [];
+            dados.vendasProduto = rs[9].data || [];
+            dados.vendasRegiao = rs[10].data || [];
+            montarChipsDeFiltro();
             desenharTudo();
         });
     }
@@ -435,7 +683,9 @@
     function desenharTudo() {
         desenharDashboard();
         desenharPedidos();
+        desenharClientes();
         desenharHistorico();
+        desenharVendas();
         desenharEspera();
         desenharVitrine();
         desenharRegioes();
@@ -445,6 +695,60 @@
     /* ===================================================================
      * Dashboard
      * =================================================================== */
+    var receitaRapidaModo = 'mes';
+
+    /* Soma confirmado+entregue por criado_em, no mesmo critério do resto do
+     * painel (resumo_mensal usa a mesma regra). "Personalizado" reaproveita o
+     * filtro global de data — não inventa um segundo par de campos de data. */
+    function receitaRapida(modo) {
+        var hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+        var de, ate;
+        if (modo === 'hoje') { de = new Date(hoje); ate = null; }
+        else if (modo === 'semana') { de = new Date(hoje); de.setDate(de.getDate() - 6); ate = null; }
+        else if (modo === 'mes') { de = new Date(hoje.getFullYear(), hoje.getMonth(), 1); ate = null; }
+        else { de = filtros.de ? new Date(filtros.de + 'T00:00:00') : null;
+               ate = filtros.ate ? new Date(filtros.ate + 'T23:59:59') : null; }
+
+        var total = 0, qtd = 0;
+        dados.pedidos.forEach(function (p) {
+            if (p.status !== 'confirmado' && p.status !== 'entregue') return;
+            var d = new Date(p.criado_em);
+            if (de && d < de) return;
+            if (ate && d > ate) return;
+            total += Number(p.valor_centavos);
+            qtd++;
+        });
+        return { total: total, qtd: qtd };
+    }
+
+    function desenharCardReceita() {
+        var r = receitaRapida(receitaRapidaModo);
+        var rotulos = { hoje: 'hoje', semana: 'nos últimos 7 dias', mes: 'este mês', personalizado: 'no período personalizado' };
+        $('#receita-valor').textContent = brl(r.total);
+        $('#receita-nota').textContent = NUM.format(r.qtd) + (r.qtd === 1 ? ' pedido confirmado ' : ' pedidos confirmados ') + rotulos[receitaRapidaModo];
+    }
+
+    /* Receita por dia dos últimos `dias` dias — usa dados.pedidos já
+     * carregado, sem ida nova ao banco. Com o filtro de período em "3 meses"
+     * ou mais, os últimos 30 dias sempre estão cobertos. */
+    function receitaPorDia(dias) {
+        var porDia = {};
+        var hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+        for (var i = dias - 1; i >= 0; i--) {
+            var d = new Date(hoje); d.setDate(d.getDate() - i);
+            porDia[d.toISOString().slice(0, 10)] = 0;
+        }
+        dados.pedidos.forEach(function (p) {
+            if (p.status !== 'confirmado' && p.status !== 'entregue') return;
+            var k = String(p.criado_em).slice(0, 10);
+            if (k in porDia) porDia[k] += Number(p.valor_centavos);
+        });
+        return Object.keys(porDia).sort().map(function (k) {
+            var d = new Date(k + 'T00:00:00');
+            return { rotulo: String(d.getDate()) + '/' + String(d.getMonth() + 1), valor: porDia[k], data: k };
+        });
+    }
+
     function desenharDashboard() {
         var alvo = $('#painel-dashboard');
         var resumo = dados.resumo;
@@ -469,6 +773,15 @@
         var ticket = totalCon ? Math.round(totalFat / totalCon) : 0;
         var conversao = totalIni ? Math.round((totalCon / totalIni) * 100) : 0;
 
+        var seteDiasAtras = new Date(); seteDiasAtras.setDate(seteDiasAtras.getDate() - 7);
+        var pedidos7d = dados.pedidos.filter(function (p) { return new Date(p.criado_em) >= seteDiasAtras; }).length;
+
+        var novosClientesMes = dados.clientes.filter(function (c) {
+            return String(c.criado_em).slice(0, 7) === mesAtual;
+        }).length;
+
+        var ultimos5 = dados.pedidos.slice(0, 5);
+
         alvo.innerHTML =
             // Um único número principal por tela.
             '<div class="adm-card p-6 mb-5">' +
@@ -479,12 +792,45 @@
                 '</p>' +
             '</div>' +
 
-            '<div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-7">' +
-                ficha('Aguardando sua confirmação', NUM.format(aguardando),
-                      aguardando ? 'Há pedidos parados na fila' : 'Fila vazia') +
+            '<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-5">' +
+                ficha('Total de clientes (mês)', NUM.format(novosClientesMes), 'cadastrados este mês') +
+                ficha('Pedidos (7 dias)', NUM.format(pedidos7d), 'últimos 7 dias') +
+                ficha('Aguardando confirmação', NUM.format(aguardando),
+                      aguardando ? 'há pedidos na fila' : 'fila vazia') +
                 ficha('Confirmados no período', NUM.format(totalCon), 'de ' + NUM.format(totalIni) + ' iniciados') +
                 ficha('Ticket médio confirmado', brl(ticket), 'por pedido fechado') +
-                ficha('Taxa de fechamento', conversao + '%', 'do clique até a confirmação') +
+                ficha('Taxa de conversão', conversao + '%', 'do clique até a confirmação') +
+            '</div>' +
+
+            '<div class="adm-card p-5 mb-7">' +
+                '<div class="flex items-start justify-between flex-wrap gap-3 mb-3">' +
+                    '<div>' +
+                        '<p class="font-bold text-sm mb-1">Receita</p>' +
+                        '<p class="text-xs" style="color:var(--adm-tinta-3)">Pedidos confirmados ou entregues, por período rápido.</p>' +
+                    '</div>' +
+                    '<div class="flex gap-1">' +
+                        '<button type="button" class="adm-chip is-ativo" data-receita-rapida="mes">Mês</button>' +
+                        '<button type="button" class="adm-chip" data-receita-rapida="semana">Semana</button>' +
+                        '<button type="button" class="adm-chip" data-receita-rapida="hoje">Hoje</button>' +
+                        '<button type="button" class="adm-chip" data-receita-rapida="personalizado">Personalizado</button>' +
+                    '</div>' +
+                '</div>' +
+                '<p id="receita-valor" class="adm-tile-valor" style="font-size:2rem"></p>' +
+                '<p id="receita-nota" class="text-xs mt-1" style="color:var(--adm-tinta-3)"></p>' +
+            '</div>' +
+
+            cartaoGrafico('g-vendas30', 'Vendas — últimos 30 dias',
+                'Receita confirmada por dia. Uma janela curta para ver picos e vales que o gráfico mensal esconde.',
+                't-vendas30') +
+
+            '<div class="adm-card p-5 mb-7">' +
+                '<div class="flex items-center justify-between mb-4">' +
+                    '<p class="font-bold text-sm">Últimos pedidos</p>' +
+                    '<span class="text-xs" style="color:var(--adm-tinta-3)">atualiza sozinho quando chega um novo</span>' +
+                '</div>' +
+                (ultimos5.length
+                    ? '<div class="space-y-2">' + ultimos5.map(linhaUltimoPedido).join('') + '</div>'
+                    : '<p class="adm-vazio">Nenhum pedido no período.</p>') +
             '</div>' +
 
             cartaoGrafico('g-faturamento', 'Faturamento confirmado por mês',
@@ -530,6 +876,39 @@
             resumo.map(function (r) {
                 return [rotuloMes(r.mes), NUM.format(r.iniciados), NUM.format(r.confirmados)];
             }), [false, true, true]);
+
+        var v30 = receitaPorDia(30);
+        desenharLinha($('#g-vendas30'), v30, {
+            formatarEixo: brlCurto,
+            descricao: 'Vendas confirmadas nos últimos 30 dias',
+            dica: function (d) { return '<strong>' + esc(d.rotulo) + '</strong><br>' + esc(brl(d.valor)); }
+        });
+        tabela($('#t-vendas30'), ['Dia', 'Receita'], v30.map(function (d) {
+            return [d.rotulo, brl(d.valor)];
+        }), [false, true]);
+
+        document.querySelectorAll('[data-receita-rapida]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                document.querySelectorAll('[data-receita-rapida]').forEach(function (o) { o.classList.remove('is-ativo'); });
+                b.classList.add('is-ativo');
+                receitaRapidaModo = b.getAttribute('data-receita-rapida');
+                desenharCardReceita();
+            });
+        });
+        desenharCardReceita();
+    }
+
+    function linhaUltimoPedido(p) {
+        return '<div class="flex items-center justify-between gap-3 py-2" style="border-bottom:1px solid var(--adm-borda)">' +
+            '<div class="min-w-0">' +
+                '<p class="text-sm font-bold truncate">' + esc(p.razao_social) + '</p>' +
+                '<p class="text-xs" style="color:var(--adm-tinta-3)">' + esc(dataHora(p.criado_em)) + '</p>' +
+            '</div>' +
+            '<div class="text-right shrink-0">' +
+                '<p class="text-sm font-bold">' + esc(brl(p.valor_centavos)) + '</p>' +
+                selo(p.status) +
+            '</div>' +
+        '</div>';
     }
 
     function ficha(rotulo, valor, nota) {
@@ -581,21 +960,176 @@
     /* ===================================================================
      * Pedidos — a fila que precisa de decisão
      * =================================================================== */
+    var pedidosVista = 'kanban';
+    var COLUNAS_KANBAN = [
+        { status: 'aguardando', titulo: 'Aguardando' },
+        { status: 'confirmado', titulo: 'Confirmado' },
+        { status: 'entregue',   titulo: 'Entregue' },
+        { status: 'cancelado',  titulo: 'Cancelado' }
+    ];
+
     function desenharPedidos() {
         var alvo = $('#painel-pedidos');
-        var fila = dados.pedidos.filter(function (p) {
-            return p.status === 'aguardando' || p.status === 'confirmado';
-        });
+        var filtrados = dados.pedidos.filter(pedidoPassaNoFiltro);
 
-        if (!fila.length) {
-            alvo.innerHTML = cartaoVazio('Nenhum pedido na fila',
-                'Pedidos aguardando confirmação e já confirmados aparecem aqui. ' +
-                'Os encerrados ficam na aba Histórico.');
+        var cabecalho =
+            '<div class="flex items-center justify-between flex-wrap gap-3 mb-5">' +
+                '<div class="flex gap-1">' +
+                    '<button type="button" class="adm-chip' + (pedidosVista === 'kanban' ? ' is-ativo' : '') +
+                        '" data-vista-pedidos="kanban"><i class="fa-solid fa-table-columns mr-1"></i>Kanban</button>' +
+                    '<button type="button" class="adm-chip' + (pedidosVista === 'tabela' ? ' is-ativo' : '') +
+                        '" data-vista-pedidos="tabela"><i class="fa-solid fa-list mr-1"></i>Tabela</button>' +
+                '</div>' +
+                botoesExportar('pedidos') +
+            '</div>';
+
+        if (!filtrados.length) {
+            alvo.innerHTML = cabecalho + cartaoVazio('Nenhum pedido com esses filtros',
+                dados.pedidos.length
+                    ? 'Há ' + NUM.format(dados.pedidos.length) + ' pedidos no período — tente limpar os filtros acima.'
+                    : 'Pedidos aparecem aqui assim que alguém enviar um pelo site.');
+            ligarBotoesExportar(alvo, { pedidos: function () { exportarPedidosCSV(filtrados); } });
+            ligarTrocaDeVista(alvo);
             return;
         }
 
-        alvo.innerHTML = '<div class="space-y-4">' + fila.map(cartaoPedido).join('') + '</div>';
-        ligarAcoesDeStatus(alvo);
+        alvo.innerHTML = cabecalho +
+            (pedidosVista === 'kanban' ? htmlKanban(filtrados) : htmlTabelaPedidos(filtrados));
+
+        if (pedidosVista === 'kanban') { ligarAcoesDeStatus(alvo); ligarDragDrop(alvo); }
+        else { ligarAcoesDeStatus(alvo); }
+
+        ligarTrocaDeVista(alvo);
+        ligarBotoesExportar(alvo, { pedidos: function () { exportarPedidosCSV(filtrados); } });
+    }
+
+    function ligarTrocaDeVista(raiz) {
+        raiz.querySelectorAll('[data-vista-pedidos]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                pedidosVista = b.getAttribute('data-vista-pedidos');
+                desenharPedidos();
+            });
+        });
+    }
+
+    function exportarPedidosCSV(lista) {
+        exportarCSV('pedidos', ['Data', 'Cliente', 'CNPJ', 'Cidade', 'UF', 'Status', 'Potes', 'Caixas', 'Valor'],
+            lista.map(function (p) {
+                return [dataHora(p.criado_em), p.razao_social, p.cnpj, p.cidade, p.uf,
+                        STATUS[p.status] ? STATUS[p.status].rotulo : p.status,
+                        p.potes, p.caixas, brl(p.valor_centavos)];
+            }));
+    }
+
+    /* ===================================================================
+     * Pedidos — Kanban
+     *
+     * Arrastar um cartão para outra coluna muda o status — a mesma chamada
+     * que os botões da view em lista já fazem, só disparada por soltar em vez
+     * de clicar. "Enviado" não é uma coluna: o banco não tem esse status (ver
+     * a nota em admin/migracoes/010_realtime_pedidos.sql — decisão tomada
+     * para não abrir uma divergência entre o Kanban e o resto do painel, que
+     * já depende de aguardando/confirmado/entregue/cancelado em toda parte,
+     * do dashboard ao resumo_mensal do banco).
+     * =================================================================== */
+    function htmlKanban(lista) {
+        return '<div class="adm-kanban">' +
+            COLUNAS_KANBAN.map(function (col) {
+                var itens = lista.filter(function (p) { return p.status === col.status; });
+                return '<div class="adm-kanban-coluna">' +
+                    '<div class="adm-kanban-cabecalho">' +
+                        '<span class="adm-kanban-titulo">' + esc(col.titulo) + '</span>' +
+                        '<span class="adm-kanban-contagem">' + itens.length + '</span>' +
+                    '</div>' +
+                    '<div class="adm-kanban-corpo" data-coluna="' + col.status + '">' +
+                        itens.map(cartaoKanban).join('') +
+                    '</div>' +
+                '</div>';
+            }).join('') +
+        '</div>';
+    }
+
+    function cartaoKanban(p) {
+        return '<div class="adm-kanban-cartao" draggable="true" data-id="' + esc(p.id) +
+                '" data-status-atual="' + esc(p.status) + '">' +
+            '<div class="flex items-start justify-between gap-2">' +
+                '<p class="text-sm font-bold truncate">' + esc(p.razao_social) + '</p>' +
+                '<button type="button" class="shrink-0" data-ver-pedido="' + esc(p.id) + '" ' +
+                    'style="color:var(--adm-tinta-3)" title="Ver detalhes"><i class="fa-regular fa-eye"></i></button>' +
+            '</div>' +
+            '<p class="text-xs mt-0.5 truncate" style="color:var(--adm-tinta-3)">' +
+                esc((p.cidade || '') + '/' + (p.uf || '')) + '</p>' +
+            '<div class="flex items-center justify-between mt-2">' +
+                '<span class="text-sm font-bold">' + esc(brl(p.valor_centavos)) + '</span>' +
+                (p.enviado_whatsapp
+                    ? '<i class="fa-brands fa-whatsapp" style="color:var(--adm-bom)" title="Mensagem já enviada"></i>'
+                    : '') +
+            '</div>' +
+            '<p class="text-xs mt-1 mb-2" style="color:var(--adm-tinta-3)">' + esc(dataHora(p.criado_em)) + '</p>' +
+            '<div class="flex items-center gap-1 flex-wrap pt-2" style="border-top:1px solid var(--adm-borda)">' +
+                acoesDeStatus(p) +
+            '</div>' +
+        '</div>';
+    }
+
+    function htmlTabelaPedidos(lista) {
+        return '<div class="adm-card p-5">' +
+            '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr>' +
+                '<th>Data</th><th>Cliente</th><th>Praça</th><th>Status</th>' +
+                '<th style="text-align:right">Valor</th><th>Ação</th>' +
+            '</tr></thead><tbody>' +
+            lista.map(function (p) {
+                return '<tr style="cursor:pointer" data-ver-pedido="' + esc(p.id) + '">' +
+                    '<td>' + esc(dataHora(p.criado_em)) + '</td>' +
+                    '<td>' + esc(p.razao_social) + '</td>' +
+                    '<td>' + esc((p.cidade || '') + '/' + (p.uf || '')) + '</td>' +
+                    '<td>' + selo(p.status) + '</td>' +
+                    '<td class="num">' + esc(brl(p.valor_centavos)) + '</td>' +
+                    '<td><div class="flex items-center gap-1 flex-wrap">' + acoesDeStatus(p) + '</div></td>' +
+                '</tr>';
+            }).join('') +
+            '</tbody></table></div>' +
+        '</div>';
+    }
+
+    function ligarDragDrop(raiz) {
+        var arrastando = null;
+
+        raiz.querySelectorAll('.adm-kanban-cartao').forEach(function (cartao) {
+            cartao.addEventListener('dragstart', function (ev) {
+                arrastando = cartao;
+                cartao.classList.add('is-arrastando');
+                ev.dataTransfer.effectAllowed = 'move';
+                ev.dataTransfer.setData('text/plain', cartao.getAttribute('data-id'));
+            });
+            cartao.addEventListener('dragend', function () {
+                cartao.classList.remove('is-arrastando');
+                arrastando = null;
+            });
+        });
+
+        raiz.querySelectorAll('.adm-kanban-corpo').forEach(function (corpo) {
+            corpo.addEventListener('dragover', function (ev) {
+                ev.preventDefault();
+                ev.dataTransfer.dropEffect = 'move';
+                corpo.classList.add('is-zona-de-solta');
+            });
+            corpo.addEventListener('dragleave', function () { corpo.classList.remove('is-zona-de-solta'); });
+            corpo.addEventListener('drop', function (ev) {
+                ev.preventDefault();
+                corpo.classList.remove('is-zona-de-solta');
+                if (!arrastando) return;
+
+                var id = arrastando.getAttribute('data-id');
+                var de = arrastando.getAttribute('data-status-atual');
+                var para = corpo.getAttribute('data-coluna');
+                if (de === para) return;
+
+                if (para === 'cancelado' && !window.confirm('Cancelar este pedido?')) return;
+
+                mudarStatus(id, para, arrastando);
+            });
+        });
     }
 
     function cartaoPedido(p) {
@@ -686,23 +1220,294 @@
 
     function ligarAcoesDeStatus(raiz) {
         raiz.querySelectorAll('button[data-status]').forEach(function (b) {
-            b.addEventListener('click', function () {
-                var id = b.getAttribute('data-id');
+            b.addEventListener('click', function (ev) {
+                ev.stopPropagation(); // o botão mora dentro do cartão/linha que abre o modal
                 var novo = b.getAttribute('data-status');
-
                 if (novo === 'cancelado' && !window.confirm('Cancelar este pedido?')) return;
-
                 b.disabled = true;
-                sb.from('pedidos').update({ status: novo }).eq('id', id).then(function (r) {
-                    b.disabled = false;
-                    if (r.error) {
-                        window.alert('Não foi possível atualizar: ' + r.error.message);
-                        return;
-                    }
-                    carregar(); // recarrega tudo: o faturamento do mês muda com isto
-                });
+                mudarStatus(b.getAttribute('data-id'), novo, b);
             });
         });
+
+        raiz.querySelectorAll('[data-ver-pedido]').forEach(function (elemento) {
+            elemento.addEventListener('click', function (ev) {
+                if (ev.target.closest('button[data-status]')) return; // clique era no botão, não na linha
+                var p = dados.pedidos.filter(function (x) { return x.id === elemento.getAttribute('data-ver-pedido'); })[0];
+                if (p) abrirModal(cartaoPedido(p));
+            });
+        });
+    }
+
+    /* Fonte única da troca de status: usada pelos botões (clique) e pelo
+     * Kanban (soltar num cartão). Confirmar dispara o WhatsApp de aviso —
+     * ver a nota em abrirWhatsAppConfirmacao sobre por que isso não é
+     * automático de verdade num site sem servidor. */
+    function mudarStatus(id, novo, elemento) {
+        var pedido = dados.pedidos.filter(function (p) { return p.id === id; })[0];
+        if (elemento) elemento.style.opacity = '0.5';
+
+        sb.from('pedidos').update({ status: novo }).eq('id', id).then(function (r) {
+            if (elemento) { elemento.style.opacity = ''; elemento.disabled = false; }
+            if (r.error) {
+                window.alert('Não foi possível atualizar: ' + r.error.message);
+                return;
+            }
+            if (novo === 'confirmado' && pedido) abrirWhatsAppConfirmacao(pedido);
+            carregar(); // recarrega tudo: o faturamento do mês muda com isto
+        });
+    }
+
+    /* "Confirmar pedido → envia mensagem automática no WhatsApp": o mais perto
+     * disso que um site sem servidor consegue chegar. O WhatsApp não tem uma
+     * API pública para enviar sem um clique da pessoa — só a API Business,
+     * que exige backend e aprovação comercial. O que dá para fazer, e o que
+     * está aqui: ao confirmar, a mensagem já sai pronta e a janela do
+     * WhatsApp já abre — falta um clique em Enviar, não escrever nada. */
+    function abrirWhatsAppConfirmacao(p) {
+        var fone = String(p.telefone || '').replace(/\D/g, '');
+        if (fone.length < 10) return; // sem telefone válido, sem link
+        if (fone.length <= 11) fone = '55' + fone;
+
+        var msg = 'Olá, ' + (p.responsavel || 'tudo bem') + '! Aqui é da Temp Rio. 🌶️\n\n' +
+            'Seu pedido de ' + NUM.format(p.potes) + ' potes (' + brl(p.valor_centavos) + ') foi *confirmado*.\n' +
+            'Em breve avisamos com os detalhes da entrega.\n\nObrigado pela confiança!';
+
+        window.open('https://wa.me/' + fone + '?text=' + encodeURIComponent(msg), '_blank', 'noopener');
+    }
+
+    /* ===================================================================
+     * Clientes
+     *
+     * `usuarios` (tipo cliente) e `clientes` (endereço/região) são tabelas
+     * separadas desde a migração 004 — um usuário pode ter mais de uma loja.
+     * Junta as duas aqui, na memória, do mesmo jeito que o Histórico já junta
+     * pedidos por CNPJ: sem view nova no banco para uma tela que só lê.
+     * =================================================================== */
+    var clientesPagina = 1;
+    var clientesFiltroAtivo = 'todos';
+    var POR_PAGINA_CLIENTES = 20;
+
+    function tipoPessoa(u) {
+        var doc = String((u && u.cnpj) || '').replace(/\D/g, '');
+        return doc.length > 11 ? 'PJ' : 'PF';
+    }
+
+    function listaClientesCombinada() {
+        var usuariosPorId = {};
+        dados.usuarios.forEach(function (u) { usuariosPorId[u.id] = u; });
+
+        return dados.clientes.map(function (c) {
+            var u = usuariosPorId[c.usuario_id] || {};
+            var pedidosDoCliente = dados.pedidos.filter(function (p) { return p.cliente_id === c.id; });
+            var fechados = pedidosDoCliente.filter(function (p) {
+                return p.status === 'confirmado' || p.status === 'entregue';
+            });
+            var gasto = fechados.reduce(function (a, p) { return a + Number(p.valor_centavos); }, 0);
+
+            return {
+                clienteId: c.id, usuarioId: u.id, nome: u.nome || '(sem nome)',
+                telefone: u.telefone || '', email: u.email || '',
+                cnpj: u.cnpj || '', cpf: u.cpf || '', tipo: tipoPessoa(u),
+                cidade: c.cidade || '', uf: c.uf || '', bairro: c.bairro || '',
+                regiaoId: c.regiao_entrega_id, ativo: c.ativo !== false,
+                criadoEm: u.criado_em || c.criado_em,
+                pedidos: pedidosDoCliente.length, fechados: fechados.length,
+                gasto: gasto, ticket: fechados.length ? Math.round(gasto / fechados.length) : 0,
+                observacoes: c.observacoes || ''
+            };
+        });
+    }
+
+    function clientePassaNoFiltro(c) {
+        if (filtros.de && String(c.criadoEm).slice(0, 10) < filtros.de) return false;
+        if (filtros.ate && String(c.criadoEm).slice(0, 10) > filtros.ate) return false;
+        if (filtros.regioes.length && filtros.regioes.indexOf(c.regiaoId) === -1) return false;
+        if (filtros.tipoCliente !== 'todos' && c.tipo.toLowerCase() !== filtros.tipoCliente) return false;
+        if (clientesFiltroAtivo !== 'todos' && (c.ativo ? 'ativos' : 'inativos') !== clientesFiltroAtivo) return false;
+        if (filtros.busca) {
+            var alvo = (c.nome + ' ' + c.cnpj + ' ' + c.cpf + ' ' + c.telefone).toLowerCase();
+            if (alvo.indexOf(filtros.busca) === -1) return false;
+        }
+        return true;
+    }
+
+    function desenharClientes() {
+        var alvo = $('#painel-clientes');
+        var todos = listaClientesCombinada();
+
+        if (!todos.length) {
+            alvo.innerHTML = cartaoVazio('Nenhum cliente ainda',
+                'Um cliente entra aqui sozinho assim que o primeiro pedido dele é gravado — ' +
+                'não existe cadastro separado no site.');
+            return;
+        }
+
+        var filtrados = todos.filter(clientePassaNoFiltro)
+            .sort(function (a, b) { return b.gasto - a.gasto; });
+        var pag = paginar(filtrados, clientesPagina, POR_PAGINA_CLIENTES);
+        clientesPagina = pag.pagina;
+
+        alvo.innerHTML =
+            '<div class="flex items-center justify-between flex-wrap gap-3 mb-5">' +
+                '<div class="flex gap-1">' +
+                    ['todos', 'ativos', 'inativos'].map(function (v) {
+                        return '<button type="button" class="adm-chip' + (clientesFiltroAtivo === v ? ' is-ativo' : '') +
+                            '" data-clientes-status="' + v + '">' + v.charAt(0).toUpperCase() + v.slice(1) + '</button>';
+                    }).join('') +
+                '</div>' +
+                botoesExportar('clientes') +
+            '</div>' +
+
+            (filtrados.length
+                ? '<div class="adm-card p-5">' +
+                  '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr>' +
+                      '<th>Nome</th><th>Telefone</th><th>Tipo</th><th style="text-align:right">Pedidos</th>' +
+                      '<th style="text-align:right">Ticket médio</th><th>Ação</th>' +
+                  '</tr></thead><tbody>' +
+                  pag.itens.map(linhaCliente).join('') +
+                  '</tbody></table></div>' +
+                  controlesDePaginacao('clientes', pag.pagina, pag.totalPaginas) +
+                  '</div>'
+                : cartaoVazio('Nenhum cliente com esses filtros',
+                      'Há ' + NUM.format(todos.length) + ' clientes ao todo — tente limpar os filtros acima.'));
+
+        ligarBotoesExportar(alvo, { clientes: function () { exportarClientesCSV(filtrados); } });
+
+        alvo.querySelectorAll('[data-clientes-status]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                clientesFiltroAtivo = b.getAttribute('data-clientes-status');
+                clientesPagina = 1;
+                desenharClientes();
+            });
+        });
+
+        alvo.querySelectorAll('[data-pagina^="clientes:"]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                clientesPagina = Number(b.getAttribute('data-pagina').split(':')[1]);
+                desenharClientes();
+            });
+        });
+
+        alvo.querySelectorAll('[data-ver-cliente]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                var c = filtrados.filter(function (x) { return x.clienteId === b.getAttribute('data-ver-cliente'); })[0];
+                if (c) abrirModal(detalheCliente(c));
+            });
+        });
+        alvo.querySelectorAll('[data-editar-cliente]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                var c = filtrados.filter(function (x) { return x.clienteId === b.getAttribute('data-editar-cliente'); })[0];
+                if (c) abrirModal(formEditarCliente(c));
+            });
+        });
+    }
+
+    function linhaCliente(c) {
+        return '<tr>' +
+            '<td>' + esc(c.nome) + (c.ativo ? '' : ' <span class="adm-selo adm-selo-cancelado" style="margin-left:.4rem">Inativo</span>') + '</td>' +
+            '<td>' + esc(c.telefone || '—') + '</td>' +
+            '<td>' + esc(c.tipo) + '</td>' +
+            '<td class="num">' + NUM.format(c.pedidos) + '</td>' +
+            '<td class="num">' + esc(brl(c.ticket)) + '</td>' +
+            '<td><div class="flex items-center gap-1 flex-wrap">' +
+                '<button type="button" class="adm-botao-fantasma" data-ver-cliente="' + esc(c.clienteId) + '">' +
+                    '<i class="fa-regular fa-eye mr-1"></i>Detalhes</button>' +
+                '<button type="button" class="adm-botao-fantasma" data-editar-cliente="' + esc(c.clienteId) + '">' +
+                    '<i class="fa-solid fa-pen mr-1"></i>Editar</button>' +
+                linkWhats(c.telefone) +
+            '</div></td>' +
+        '</tr>';
+    }
+
+    function detalheCliente(c) {
+        var pedidosDoCliente = dados.pedidos.filter(function (p) { return p.cliente_id === c.clienteId; })
+            .sort(function (a, b) { return new Date(b.criado_em) - new Date(a.criado_em); });
+
+        return '<h2 class="text-lg font-bold mb-1">' + esc(c.nome) + '</h2>' +
+            '<p class="text-xs mb-5" style="color:var(--adm-tinta-3)">' +
+                esc(c.tipo === 'PJ' ? 'CNPJ ' + c.cnpj : 'CPF ' + c.cpf) +
+                (c.bairro || c.cidade ? ' · ' + esc([c.bairro, c.cidade].filter(Boolean).join(', ')) + '/' + esc(c.uf || '') : '') +
+            '</p>' +
+            '<div class="grid sm:grid-cols-3 gap-4 mb-5">' +
+                ficha('Pedidos', NUM.format(c.pedidos), NUM.format(c.fechados) + ' fechados') +
+                ficha('Total comprado', brl(c.gasto), 'confirmado + entregue') +
+                ficha('Ticket médio', brl(c.ticket), 'por pedido fechado') +
+            '</div>' +
+            (c.telefone || c.email
+                ? '<p class="text-sm mb-5">' + esc(c.telefone) + (c.email ? ' · ' + esc(c.email) : '') + '</p>'
+                : '') +
+            '<p class="font-bold text-sm mb-3">Pedidos</p>' +
+            (pedidosDoCliente.length
+                ? '<div class="space-y-2 max-h-64 overflow-y-auto">' +
+                  pedidosDoCliente.map(function (p) {
+                      return '<div class="flex items-center justify-between text-sm py-1.5" style="border-bottom:1px solid var(--adm-borda)">' +
+                          '<span style="color:var(--adm-tinta-2)">' + esc(new Date(p.criado_em).toLocaleDateString('pt-BR')) + '</span>' +
+                          '<span>' + esc(brl(p.valor_centavos)) + '</span>' + selo(p.status) +
+                      '</div>';
+                  }).join('') + '</div>'
+                : '<p class="adm-vazio">Nenhum pedido no período carregado.</p>') +
+            (linkWhats(c.telefone)
+                ? '<div class="mt-5 pt-4" style="border-top:1px solid var(--adm-borda)">' + linkWhats(c.telefone) + '</div>'
+                : '');
+    }
+
+    /* Edição deliberadamente curta: telefone, e-mail e observações. O resto
+     * (endereço, CNPJ, região) vem do próprio pedido do cliente — mudar aqui
+     * sem mudar lá deixaria os dois discordando, e o próximo pedido sobrescreve
+     * só o que está vazio (ver o gatilho da migração 006), nunca o preenchido. */
+    function formEditarCliente(c) {
+        return '<h2 class="text-lg font-bold mb-4">Editar ' + esc(c.nome) + '</h2>' +
+            '<form id="form-editar-cliente" data-usuario="' + esc(c.usuarioId) + '" data-cliente="' + esc(c.clienteId) + '">' +
+                '<label class="adm-tile-rotulo block mb-1.5">Telefone</label>' +
+                '<input type="text" id="edit-telefone" class="adm-input mb-4" value="' + esc(c.telefone) + '">' +
+                '<label class="adm-tile-rotulo block mb-1.5">E-mail</label>' +
+                '<input type="email" id="edit-email" class="adm-input mb-4" value="' + esc(c.email) + '">' +
+                '<label class="adm-tile-rotulo block mb-1.5">Observações</label>' +
+                '<textarea id="edit-observacoes" class="adm-input mb-5" rows="3">' + esc(c.observacoes) + '</textarea>' +
+                '<div class="flex items-center gap-2">' +
+                    '<button type="submit" class="adm-botao">Salvar</button>' +
+                    '<span id="edit-cliente-erro" class="text-xs hidden" style="color:#FCA5A5"></span>' +
+                '</div>' +
+            '</form>';
+    }
+
+    // Delegado uma vez só: o formulário de edição é recriado a cada abertura
+    // do modal, então o listener não pode viver no <form> em si.
+    document.addEventListener('submit', function (ev) {
+        var form = ev.target.closest('#form-editar-cliente');
+        if (!form) return;
+        ev.preventDefault();
+
+        var telefone = $('#edit-telefone').value.trim();
+        var email = $('#edit-email').value.trim();
+        var observacoes = $('#edit-observacoes').value.trim();
+        var botao = form.querySelector('button[type="submit"]');
+        botao.disabled = true;
+
+        Promise.all([
+            sb.from('usuarios').update({ telefone: telefone, email: email || null })
+                .eq('id', form.getAttribute('data-usuario')),
+            sb.from('clientes').update({ observacoes: observacoes || null })
+                .eq('id', form.getAttribute('data-cliente'))
+        ]).then(function (rs) {
+            botao.disabled = false;
+            var falha = rs.filter(function (r) { return r.error; })[0];
+            if (falha) {
+                var erro = $('#edit-cliente-erro');
+                erro.textContent = 'Não foi possível salvar: ' + falha.error.message;
+                erro.classList.remove('hidden');
+                return;
+            }
+            fecharModal();
+            carregar();
+        });
+    });
+
+    function exportarClientesCSV(lista) {
+        exportarCSV('clientes', ['Nome', 'Telefone', 'Tipo', 'Cidade', 'UF', 'Pedidos', 'Ticket médio', 'Total comprado'],
+            lista.map(function (c) {
+                return [c.nome, c.telefone, c.tipo, c.cidade, c.uf, c.pedidos, brl(c.ticket), brl(c.gasto)];
+            }));
     }
 
     /* ===================================================================
@@ -710,11 +1515,13 @@
      * =================================================================== */
     function desenharHistorico() {
         var alvo = $('#painel-historico');
-        var pedidos = dados.pedidos;
+        var pedidos = dados.pedidos.filter(pedidoPassaNoFiltro);
 
         if (!pedidos.length) {
             alvo.innerHTML = cartaoVazio('Sem histórico no período',
-                'Escolha um período maior no filtro acima, ou aguarde os primeiros pedidos.');
+                dados.pedidos.length
+                    ? 'Há pedidos no período, mas nenhum bate com os filtros acima.'
+                    : 'Escolha um período maior no filtro acima, ou aguarde os primeiros pedidos.');
             return;
         }
 
@@ -746,6 +1553,8 @@
         });
 
         alvo.innerHTML =
+            '<div class="flex justify-end mb-4">' + botoesExportar('historico') + '</div>' +
+
             '<div class="adm-card p-5 mb-5">' +
                 '<p class="font-bold text-sm mb-1">Clientes no período</p>' +
                 '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">' +
@@ -757,10 +1566,27 @@
             '<div class="adm-card p-5">' +
                 '<p class="font-bold text-sm mb-1">Pedidos encerrados</p>' +
                 '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">' +
-                    'Entregues e cancelados. Os que ainda precisam de decisão estão na aba Pedidos.' +
+                    'Entregues e cancelados. Clique num pedido para ver os itens. ' +
+                    'Os que ainda precisam de decisão estão na aba Pedidos.' +
                 '</p>' +
                 (encerrados.length
-                    ? '<div id="t-encerrados" class="overflow-x-auto"></div>'
+                    ? '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr>' +
+                      '<th>Data</th><th>Cliente</th><th>Praça</th><th style="text-align:right">Potes</th>' +
+                      '<th style="text-align:right">Valor</th><th>Situação</th><th>Ação</th>' +
+                      '</tr></thead><tbody>' +
+                      encerrados.map(function (p) {
+                          return '<tr style="cursor:pointer" data-ver-pedido="' + esc(p.id) + '">' +
+                              '<td>' + esc(new Date(p.criado_em).toLocaleDateString('pt-BR')) + '</td>' +
+                              '<td>' + esc(p.razao_social) + '</td>' +
+                              '<td>' + esc((p.cidade || '') + '/' + (p.uf || '')) + '</td>' +
+                              '<td class="num">' + NUM.format(p.potes) + '</td>' +
+                              '<td class="num">' + esc(brl(p.valor_centavos)) + '</td>' +
+                              '<td>' + selo(p.status) + '</td>' +
+                              '<td><button type="button" class="adm-botao-fantasma" data-reenviar-recibo="' + esc(p.id) + '">' +
+                                  '<i class="fa-brands fa-whatsapp mr-1"></i>Recibo</button></td>' +
+                          '</tr>';
+                      }).join('') +
+                      '</tbody></table></div>'
                     : '<p class="adm-vazio">Nenhum pedido encerrado ainda.</p>') +
             '</div>';
 
@@ -773,16 +1599,175 @@
             }),
             [false, false, false, true, true, true, false]);
 
-        if (encerrados.length) {
-            tabela($('#t-encerrados'),
-                ['Data', 'Cliente', 'Praça', 'Potes', 'Valor', 'Situação'],
-                encerrados.map(function (p) {
-                    return [new Date(p.criado_em).toLocaleDateString('pt-BR'), p.razao_social,
-                            (p.cidade || '') + '/' + (p.uf || ''), NUM.format(p.potes),
-                            brl(p.valor_centavos), STATUS[p.status] ? STATUS[p.status].rotulo : p.status];
-                }),
-                [false, false, false, true, true, false]);
+        alvo.querySelectorAll('[data-ver-pedido]').forEach(function (elemento) {
+            elemento.addEventListener('click', function (ev) {
+                if (ev.target.closest('[data-reenviar-recibo]')) return;
+                var p = pedidos.filter(function (x) { return x.id === elemento.getAttribute('data-ver-pedido'); })[0];
+                if (p) abrirModal(cartaoPedido(p));
+            });
+        });
+        alvo.querySelectorAll('[data-reenviar-recibo]').forEach(function (b) {
+            b.addEventListener('click', function (ev) {
+                ev.stopPropagation();
+                var p = pedidos.filter(function (x) { return x.id === b.getAttribute('data-reenviar-recibo'); })[0];
+                if (p) reenviarRecibo(p);
+            });
+        });
+        ligarBotoesExportar(alvo, { historico: function () { exportarPedidosCSV(encerrados); } });
+    }
+
+    /* Recibo compacto: itens, total, status. Mais curto que a mensagem de
+     * confirmação porque aqui o pedido já é passado — é comprovante, não
+     * aviso de novidade. */
+    function reenviarRecibo(p) {
+        var fone = String(p.telefone || '').replace(/\D/g, '');
+        if (fone.length < 10) { window.alert('Este pedido não tem telefone válido.'); return; }
+        if (fone.length <= 11) fone = '55' + fone;
+
+        var itens = Array.isArray(p.itens) ? p.itens : [];
+        var linhas = itens.map(function (i) { return '• ' + i.nome + ' — ' + i.potes + ' potes'; }).join('\n');
+
+        var msg = 'Recibo Temp Rio — pedido de ' + new Date(p.criado_em).toLocaleDateString('pt-BR') + '\n\n' +
+            (linhas ? linhas + '\n\n' : '') +
+            'Total: ' + brl(p.valor_centavos) + '\n' +
+            'Situação: ' + (STATUS[p.status] ? STATUS[p.status].rotulo : p.status);
+
+        window.open('https://wa.me/' + fone + '?text=' + encodeURIComponent(msg), '_blank', 'noopener');
+    }
+
+    /* ===================================================================
+     * Dashboard de vendas
+     *
+     * Diferente do Dashboard principal (que soma tudo, sem quebrar por nada),
+     * esta aba responde "vendas de quê, e onde": por região, por produto, e a
+     * evolução dia a dia. As duas funções de banco (vendas_por_produto e
+     * visitas_por_regiao) já existem desde as migrações 007 e 008 — nasceram
+     * pensando exatamente nesta tela, que só chegou agora.
+     * =================================================================== */
+    function desenharVendas() {
+        var alvo = $('#painel-vendas');
+
+        if (!dados.resumo.length) {
+            alvo.innerHTML = cartaoVazio('Nenhuma venda ainda',
+                'Este painel de vendas preenche sozinho a partir do primeiro pedido confirmado.');
+            return;
         }
+
+        var porRegiao = dados.vendasRegiao
+            .filter(function (r) { return Number(r.faturamento_centavos) > 0; })
+            .sort(function (a, b) { return b.faturamento_centavos - a.faturamento_centavos; });
+
+        var top10 = dados.vendasProduto.slice(0, 10);
+
+        var v30 = receitaPorDia(30);
+        var acumulado = 0;
+        var v30Acumulada = v30.map(function (d) {
+            acumulado += d.valor;
+            return { rotulo: d.rotulo, valor: acumulado };
+        });
+
+        // Comparativo mês x mês anterior: as duas últimas linhas do resumo já
+        // carregado — nenhuma consulta nova.
+        var ultimo = dados.resumo[dados.resumo.length - 1];
+        var anterior = dados.resumo.length > 1 ? dados.resumo[dados.resumo.length - 2] : null;
+
+        alvo.innerHTML =
+            '<div class="flex justify-end mb-5">' + botoesExportar('vendas') + '</div>' +
+
+            '<div class="grid lg:grid-cols-2 gap-5 mb-5">' +
+                '<div class="adm-card p-5">' +
+                    '<p class="font-bold text-sm mb-1">Vendas por região</p>' +
+                    '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Faturamento confirmado + entregue, no período do filtro de mês.</p>' +
+                    (porRegiao.length
+                        ? '<div class="grid sm:grid-cols-2 gap-4 items-center">' +
+                          '<div id="g-regiao"></div><div id="leg-regiao" class="space-y-1.5"></div>' +
+                          '</div>'
+                        : '<p class="adm-vazio">Nenhuma venda com região identificada ainda.</p>') +
+                '</div>' +
+
+                '<div class="adm-card p-5">' +
+                    '<p class="font-bold text-sm mb-1">Top 10 produtos</p>' +
+                    '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Por faturamento, pedidos confirmados ou entregues.</p>' +
+                    (top10.length
+                        ? '<div id="t-top10" class="overflow-x-auto"></div>'
+                        : '<p class="adm-vazio">Sem vendas por produto no período.</p>') +
+                '</div>' +
+            '</div>' +
+
+            cartaoGrafico('g-vendasdia', 'Vendas por dia — últimos 30 dias',
+                'A mesma janela do dashboard principal, aqui ao lado da quebra por região e produto.',
+                't-vendasdia') +
+
+            cartaoGrafico('g-acumulada', 'Receita acumulada — últimos 30 dias',
+                'Soma corrida: cada ponto é tudo que entrou até aquele dia.',
+                't-acumulada') +
+
+            (anterior
+                ? '<div class="adm-card p-5">' +
+                      '<p class="font-bold text-sm mb-4">Comparativo — ' + esc(rotuloMes(ultimo.mes)) +
+                          ' vs. ' + esc(rotuloMes(anterior.mes)) + '</p>' +
+                      '<div id="t-comparativo" class="overflow-x-auto"></div>' +
+                  '</div>'
+                : '');
+
+        if (porRegiao.length) {
+            desenharPizza($('#g-regiao'), $('#leg-regiao'), porRegiao.map(function (r) {
+                return { rotulo: r.regiao_nome, valor: Number(r.faturamento_centavos) };
+            }), {
+                formatarTotal: brlCurto, rotuloTotal: 'faturado', formatarLegenda: brl,
+                descricao: 'Vendas por região',
+                dica: function (d, pct) {
+                    return '<strong>' + esc(d.rotulo) + '</strong><br>' + esc(brl(d.valor)) + ' (' + pct + '%)';
+                }
+            });
+        }
+
+        if (top10.length) {
+            tabela($('#t-top10'), ['Produto', 'Pedidos', 'Potes', 'Faturamento'],
+                top10.map(function (p) {
+                    return [p.produto_nome, NUM.format(p.pedidos), NUM.format(p.potes), brl(p.faturamento_centavos)];
+                }), [false, true, true, true]);
+        }
+
+        desenharColunas($('#g-vendasdia'), v30, {
+            formatarEixo: brlCurto, formatarRotulo: brlCurto, rotularMaior: true,
+            descricao: 'Vendas por dia, últimos 30 dias',
+            dica: function (d) { return '<strong>' + esc(d.rotulo) + '</strong><br>' + esc(brl(d.valor)); }
+        });
+        tabela($('#t-vendasdia'), ['Dia', 'Receita'], v30.map(function (d) { return [d.rotulo, brl(d.valor)]; }), [false, true]);
+
+        desenharLinha($('#g-acumulada'), v30Acumulada, {
+            formatarEixo: brlCurto,
+            descricao: 'Receita acumulada, últimos 30 dias',
+            dica: function (d) { return '<strong>' + esc(d.rotulo) + '</strong><br>' + esc(brl(d.valor)) + ' acumulado'; }
+        });
+        tabela($('#t-acumulada'), ['Dia', 'Acumulado'], v30Acumulada.map(function (d) { return [d.rotulo, brl(d.valor)]; }), [false, true]);
+
+        if (anterior) {
+            function variacao(atual, antes) {
+                if (!antes) return '—';
+                var v = ((atual - antes) / antes) * 100;
+                var seta = v > 0 ? '▲' : (v < 0 ? '▼' : '—');
+                return seta + ' ' + Math.abs(Math.round(v)) + '%';
+            }
+            tabela($('#t-comparativo'), ['Indicador', rotuloMes(anterior.mes), rotuloMes(ultimo.mes), 'Variação'], [
+                ['Faturamento', brl(anterior.faturamento_centavos), brl(ultimo.faturamento_centavos),
+                    variacao(ultimo.faturamento_centavos, anterior.faturamento_centavos)],
+                ['Pedidos confirmados', NUM.format(anterior.confirmados), NUM.format(ultimo.confirmados),
+                    variacao(ultimo.confirmados, anterior.confirmados)],
+                ['Pedidos iniciados', NUM.format(anterior.iniciados), NUM.format(ultimo.iniciados),
+                    variacao(ultimo.iniciados, anterior.iniciados)]
+            ], [false, true, true, true]);
+        }
+
+        ligarBotoesExportar(alvo, {
+            vendas: function () {
+                exportarCSV('vendas-por-produto', ['Produto', 'Pedidos', 'Potes', 'Faturamento'],
+                    dados.vendasProduto.map(function (p) {
+                        return [p.produto_nome, p.pedidos, p.potes, brl(p.faturamento_centavos)];
+                    }));
+            }
+        });
     }
 
     /* ===================================================================
@@ -1330,6 +2315,183 @@
             v.map(function (r) {
                 return [rotuloMes(r.mes), NUM.format(r.sessoes), NUM.format(r.visitas)];
             }), [false, true, true]);
+    }
+
+    /* ===================================================================
+     * Tempo real — sino e "últimos pedidos"
+     *
+     * Depende da migração 010 (admin/migracoes/010_realtime_pedidos.sql), que
+     * liga `pedidos` à publicação que o Realtime escuta. Sem ela, `sb.channel`
+     * abre normalmente mas nenhum evento chega — o sino fica mudo, sem travar
+     * nada e sem exigir tratamento de erro especial.
+     * =================================================================== */
+    var pedidosNaoVistos = 0;
+    var canalRealtime = null;
+
+    function ligarRealtime() {
+        if (!sb || typeof sb.channel !== 'function') return;
+
+        // Sair e entrar de novo sem recarregar a página não pode empilhar um
+        // segundo canal escutando por cima do primeiro.
+        if (canalRealtime) { sb.removeChannel(canalRealtime); canalRealtime = null; }
+
+        canalRealtime = sb.channel('painel-pedidos')
+            .on('postgres_changes',
+                { event: 'INSERT', schema: 'public', table: 'pedidos' },
+                function (payload) {
+                    var novo = payload.new;
+                    dados.pedidos.unshift(novo);
+                    pedidosNaoVistos++;
+                    atualizarSino();
+                    tocarAlerta();
+                    if (abaAtual === 'dashboard') desenharDashboard();
+                    if (abaAtual === 'pedidos') desenharPedidos();
+                })
+            .subscribe();
+    }
+
+    function atualizarSino() {
+        var sino = $('#btn-sino');
+        var contagem = $('#sino-contagem');
+        contagem.textContent = pedidosNaoVistos > 9 ? '9+' : String(pedidosNaoVistos);
+        contagem.classList.toggle('hidden', pedidosNaoVistos === 0);
+        if (pedidosNaoVistos > 0) {
+            sino.classList.remove('is-tocando');
+            void sino.offsetWidth; // reinicia a animação mesmo em pedidos seguidos
+            sino.classList.add('is-tocando');
+        }
+    }
+
+    function marcarNotificacoesLidas() {
+        pedidosNaoVistos = 0;
+        atualizarSino();
+    }
+
+    /* Bipe curto gerado na hora, sem arquivo de áudio: dois tons subindo,
+     * hard-fade para não estalar. AudioContext só é criado no primeiro uso —
+     * navegador nenhum deixa áudio tocar antes de alguma interação da
+     * pessoa, e como o sino já reage a um evento assíncrono, isto pode
+     * silenciosamente falhar na primeiríssima notificação da sessão. Sem
+     * problema: o sino visual (badge + balanço) continua avisando. */
+    var audioCtx = null;
+    function tocarAlerta() {
+        try {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            [880, 1180].forEach(function (freq, i) {
+                var osc = audioCtx.createOscillator();
+                var ganho = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = freq;
+                var t0 = audioCtx.currentTime + i * 0.11;
+                ganho.gain.setValueAtTime(0.0001, t0);
+                ganho.gain.exponentialRampToValueAtTime(0.18, t0 + 0.015);
+                ganho.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.18);
+                osc.connect(ganho).connect(audioCtx.destination);
+                osc.start(t0);
+                osc.stop(t0 + 0.2);
+            });
+        } catch (e) { /* áudio bloqueado pelo navegador: sem áudio, sem erro visível */ }
+    }
+
+    /* ===================================================================
+     * Modal genérico de detalhes
+     * =================================================================== */
+    function abrirModal(html) {
+        $('#modal-detalhe-corpo').innerHTML = html;
+        $('#modal-detalhe').classList.remove('hidden');
+        window.ScrollLock && window.ScrollLock.acquire('modal-admin');
+    }
+
+    function fecharModal() {
+        $('#modal-detalhe').classList.add('hidden');
+        $('#modal-detalhe-corpo').innerHTML = '';
+        window.ScrollLock && window.ScrollLock.release('modal-admin');
+    }
+
+    /* ===================================================================
+     * Exportação
+     * =================================================================== */
+    /* CSV com BOM (para o Excel no Windows abrir os acentos certos sem
+     * assistente de importação) e ; como separador — é o que o Excel em
+     * pt-BR espera por padrão, já que a vírgula aqui é decimal. */
+    function exportarCSV(nomeArquivo, colunas, linhas) {
+        function campo(v) {
+            var s = String(v == null ? '' : v).replace(/"/g, '""');
+            return '"' + s + '"';
+        }
+        var csv = colunas.map(campo).join(';') + '\r\n' +
+            linhas.map(function (l) { return l.map(campo).join(';'); }).join('\r\n');
+
+        var blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = nomeArquivo + '-' + new Date().toISOString().slice(0, 10) + '.csv';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    }
+
+    /* PDF sem biblioteca nenhuma: abre o diálogo de impressão do próprio
+     * navegador, com uma folha de estilo (@media print em css/admin.css) que
+     * esconde cabeçalho, filtros e tudo que não é o relatório. A pessoa
+     * escolhe "Salvar como PDF" no próprio diálogo — é o destino final, só
+     * que decidido por ela, não escondido atrás de um nome de botão. */
+    function exportarPDF() {
+        window.print();
+    }
+
+    function botoesExportar(idBase) {
+        return '<div class="adm-exportar">' +
+            '<button type="button" class="adm-botao-fantasma" data-exportar-csv="' + idBase + '">' +
+                '<i class="fa-solid fa-file-csv mr-1"></i>CSV</button>' +
+            '<button type="button" class="adm-botao-fantasma" data-exportar-pdf="1">' +
+                '<i class="fa-solid fa-file-pdf mr-1"></i>PDF</button>' +
+        '</div>';
+    }
+
+    function ligarBotoesExportar(raiz, exportadores) {
+        raiz.querySelectorAll('[data-exportar-csv]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                var fn = exportadores[b.getAttribute('data-exportar-csv')];
+                if (fn) fn();
+            });
+        });
+        raiz.querySelectorAll('[data-exportar-pdf]').forEach(function (b) {
+            b.addEventListener('click', exportarPDF);
+        });
+    }
+
+    /* ===================================================================
+     * Paginação
+     * =================================================================== */
+    function paginar(lista, pagina, porPagina) {
+        var totalPaginas = Math.max(1, Math.ceil(lista.length / porPagina));
+        pagina = Math.min(Math.max(1, pagina), totalPaginas);
+        return {
+            pagina: pagina,
+            totalPaginas: totalPaginas,
+            itens: lista.slice((pagina - 1) * porPagina, pagina * porPagina)
+        };
+    }
+
+    function controlesDePaginacao(id, pagina, totalPaginas) {
+        if (totalPaginas <= 1) return '';
+        var botoes = [];
+        botoes.push('<button type="button" class="adm-pagina-botao" data-pagina="' + id + ':' + (pagina - 1) + '"' +
+            (pagina === 1 ? ' disabled' : '') + '><i class="fa-solid fa-chevron-left"></i></button>');
+        for (var p = 1; p <= totalPaginas; p++) {
+            if (totalPaginas > 7 && p !== 1 && p !== totalPaginas && Math.abs(p - pagina) > 1) {
+                if (p === 2 || p === totalPaginas - 1) botoes.push('<span style="color:var(--adm-tinta-3)">…</span>');
+                continue;
+            }
+            botoes.push('<button type="button" class="adm-pagina-botao' + (p === pagina ? ' is-ativa' : '') +
+                '" data-pagina="' + id + ':' + p + '">' + p + '</button>');
+        }
+        botoes.push('<button type="button" class="adm-pagina-botao" data-pagina="' + id + ':' + (pagina + 1) + '"' +
+            (pagina === totalPaginas ? ' disabled' : '') + '><i class="fa-solid fa-chevron-right"></i></button>');
+        return '<div class="adm-paginacao">' + botoes.join('') + '</div>';
     }
 
     /* Redesenha os gráficos quando a janela muda de tamanho: o SVG é medido em

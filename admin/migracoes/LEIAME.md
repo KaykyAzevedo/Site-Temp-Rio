@@ -15,6 +15,7 @@ rodar de novo por engano não quebra nada e não duplica dado.
 | 007 | `migracoes/007_visitas_regiao.sql` | visitas por região, dispositivo e tempo de sessão |
 | 008 | `migracoes/008_crud.sql` | as operações como funções do banco |
 | 009 | `migracoes/009_opcional_ip_geo.sql` | **opcional — leia o cabeçalho antes** |
+| 010 | `migracoes/010_realtime_pedidos.sql` | liga `pedidos` ao Supabase Realtime — sino de notificação e "últimos pedidos" do painel |
 
 As três primeiras estão em `admin/` e não aqui porque já existiam antes desta
 pasta; renomeá-las quebraria as referências espalhadas pelo código.
@@ -93,3 +94,10 @@ Isso apaga o cadastro consolidado e os itens normalizados. **Os pedidos em si
 não se perdem** — `pedidos.itens` continua guardando a cópia congelada de tudo
 que foi enviado, e é dela que a migração 006 reconstrói os itens se você rodar
 de novo.
+
+Para desligar o Realtime da migração 010 (o sino do painel só para de tocar,
+nada mais muda):
+
+```sql
+alter publication supabase_realtime drop table public.pedidos;
+```

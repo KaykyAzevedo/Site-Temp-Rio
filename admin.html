@@ -75,6 +75,14 @@
                     <span class="text-xs font-bold uppercase tracking-widest" style="color:var(--adm-tinta-3)">Painel</span>
                 </div>
                 <div class="flex items-center gap-3">
+                    <!-- Sino: badge some sozinho ao abrir Pedidos ou clicar nele.
+                         Sem o Realtime ligado (migração 010), ele simplesmente
+                         nunca soa — não é um erro, é a rede de segurança
+                         funcionando sem a peça opcional. -->
+                    <button type="button" id="btn-sino" class="adm-sino" title="Novos pedidos" aria-label="Novos pedidos">
+                        <i class="fa-solid fa-bell"></i>
+                        <span id="sino-contagem" class="adm-sino-contagem hidden">0</span>
+                    </button>
                     <span id="quem" class="text-xs hidden sm:inline" style="color:var(--adm-tinta-3)"></span>
                     <button type="button" id="btn-sair" class="adm-botao-fantasma">Sair</button>
                 </div>
@@ -83,7 +91,9 @@
             <div class="max-w-7xl mx-auto px-6 pb-3 flex items-center gap-1 overflow-x-auto">
                 <button type="button" class="adm-aba is-ativa" data-aba="dashboard">Dashboard</button>
                 <button type="button" class="adm-aba" data-aba="pedidos">Pedidos</button>
+                <button type="button" class="adm-aba" data-aba="clientes">Clientes</button>
                 <button type="button" class="adm-aba" data-aba="historico">Histórico</button>
+                <button type="button" class="adm-aba" data-aba="vendas">Dashboard de vendas</button>
                 <button type="button" class="adm-aba" data-aba="espera">Lista de espera</button>
                 <button type="button" class="adm-aba" data-aba="vitrine">Vitrine</button>
                 <button type="button" class="adm-aba" data-aba="regioes">Regiões</button>
@@ -93,33 +103,99 @@
 
         <main class="max-w-7xl mx-auto px-6 py-8">
 
-            <!-- Filtro único, acima de tudo o que ele afeta. Trocar o período
-                 redesenha os dois gráficos contra a mesma fatia de tempo. -->
-            <div class="flex items-center justify-between gap-4 mb-7 flex-wrap">
-                <div class="flex items-center gap-2">
-                    <label for="filtro-periodo" class="text-xs font-bold uppercase tracking-wider" style="color:var(--adm-tinta-3)">Período</label>
-                    <div class="relative">
-                        <select id="filtro-periodo" class="adm-filtro">
-                            <option value="3">Últimos 3 meses</option>
-                            <option value="6">Últimos 6 meses</option>
-                            <option value="12" selected>Últimos 12 meses</option>
-                        </select>
-                        <i class="fa-solid fa-chevron-down absolute right-3 top-1/2 -translate-y-1/2 text-[0.6rem] pointer-events-none" style="color:var(--adm-tinta-3)"></i>
+            <!-- Filtros globais. Período sempre existiu; os quatro novos afetam
+                 Pedidos, Clientes e Histórico — as telas que mostram linha a
+                 linha, em vez de agregado já pronto. O Dashboard de vendas usa
+                 funções do banco (vendas_por_produto, visitas_por_regiao)
+                 escopadas só pelo período rápido — um filtro que não filtra
+                 nada ali seria pior que nenhum filtro. -->
+            <div class="adm-card p-4 mb-7">
+                <div class="flex items-center justify-between gap-3 mb-1">
+                    <button type="button" id="btn-filtros" class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider" style="color:var(--adm-tinta-3)">
+                        <i class="fa-solid fa-sliders"></i> Filtros
+                        <i class="fa-solid fa-chevron-down text-[0.6rem]" id="icone-filtros"></i>
+                    </button>
+                    <div class="flex items-center gap-2">
+                        <span id="filtros-resumo" class="text-xs" style="color:var(--adm-tinta-3)"></span>
+                        <button type="button" id="btn-atualizar" class="adm-botao-fantasma">
+                            <i class="fa-solid fa-rotate mr-1"></i> Atualizar
+                        </button>
                     </div>
                 </div>
-                <button type="button" id="btn-atualizar" class="adm-botao-fantasma">
-                    <i class="fa-solid fa-rotate mr-1"></i> Atualizar
-                </button>
+
+                <div id="corpo-filtros" class="hidden mt-4 pt-4" style="border-top:1px solid var(--adm-borda)">
+                    <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div>
+                            <label for="filtro-periodo" class="adm-tile-rotulo block mb-1.5">Período (rápido)</label>
+                            <div class="relative">
+                                <select id="filtro-periodo" class="adm-filtro w-full">
+                                    <option value="3">Últimos 3 meses</option>
+                                    <option value="6">Últimos 6 meses</option>
+                                    <option value="12" selected>Últimos 12 meses</option>
+                                </select>
+                                <i class="fa-solid fa-chevron-down absolute right-3 top-1/2 -translate-y-1/2 text-[0.6rem] pointer-events-none" style="color:var(--adm-tinta-3)"></i>
+                            </div>
+                        </div>
+                        <div>
+                            <label for="filtro-de" class="adm-tile-rotulo block mb-1.5">De</label>
+                            <input type="date" id="filtro-de" class="adm-input" style="padding:.55rem .7rem">
+                        </div>
+                        <div>
+                            <label for="filtro-ate" class="adm-tile-rotulo block mb-1.5">Até</label>
+                            <input type="date" id="filtro-ate" class="adm-input" style="padding:.55rem .7rem">
+                        </div>
+                        <div>
+                            <label for="filtro-busca" class="adm-tile-rotulo block mb-1.5">Buscar cliente</label>
+                            <input type="text" id="filtro-busca" class="adm-input" style="padding:.55rem .7rem"
+                                placeholder="Nome, CNPJ, CPF ou telefone">
+                        </div>
+                        <div>
+                            <label class="adm-tile-rotulo block mb-1.5">Região</label>
+                            <div id="filtro-regiao" class="adm-multiselect"></div>
+                        </div>
+                        <div>
+                            <label class="adm-tile-rotulo block mb-1.5">Tipo de cliente</label>
+                            <div class="flex gap-1">
+                                <button type="button" class="adm-chip is-ativo" data-tipo-cliente="todos">Todos</button>
+                                <button type="button" class="adm-chip" data-tipo-cliente="pj">PJ</button>
+                                <button type="button" class="adm-chip" data-tipo-cliente="pf">PF</button>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="adm-tile-rotulo block mb-1.5">Status do pedido</label>
+                            <div id="filtro-status" class="adm-multiselect"></div>
+                        </div>
+                        <div class="flex items-end">
+                            <button type="button" id="btn-limpar-filtros" class="adm-botao-fantasma">
+                                <i class="fa-solid fa-eraser mr-1"></i> Limpar filtros
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <section id="painel-dashboard"></section>
             <section id="painel-pedidos" class="hidden"></section>
+            <section id="painel-clientes" class="hidden"></section>
             <section id="painel-historico" class="hidden"></section>
+            <section id="painel-vendas" class="hidden"></section>
             <section id="painel-espera" class="hidden"></section>
             <section id="painel-vitrine" class="hidden"></section>
             <section id="painel-regioes" class="hidden"></section>
             <section id="painel-visitas" class="hidden"></section>
         </main>
+    </div>
+
+    <!-- Modal de detalhes: cliente ou itens de um pedido. Um só elemento,
+         reaproveitado pelas duas telas — evita duplicar a mecânica de
+         abrir/fechar/travar o scroll. -->
+    <div id="modal-detalhe" class="adm-modal-fundo hidden">
+        <div class="adm-modal-painel">
+            <button type="button" id="btn-fechar-modal" class="adm-modal-fechar" aria-label="Fechar">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+            <div id="modal-detalhe-corpo"></div>
+        </div>
     </div>
 
     <div id="dica" class="adm-dica"></div>

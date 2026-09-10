@@ -281,3 +281,254 @@ body.admin {
    Tailwind por CDN. Se o CDN falhar, sem isto o painel mostraria login e
    conteúdo ao mesmo tempo. */
 .hidden { display: none !important; }
+
+/* ===================== Sino de notificação ===================== */
+.adm-sino {
+    position: relative;
+    width: 2.1rem;
+    height: 2.1rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 0.5rem;
+    color: var(--adm-tinta-3);
+    cursor: pointer;
+    transition: color 0.2s ease, border-color 0.2s ease;
+}
+
+.adm-sino:hover { color: var(--adm-tinta); border-color: var(--adm-borda-forte); }
+
+.adm-sino-contagem {
+    position: absolute;
+    top: -0.3rem;
+    right: -0.3rem;
+    min-width: 1.1rem;
+    height: 1.1rem;
+    padding: 0 0.25rem;
+    border-radius: 999px;
+    background: var(--adm-ruim);
+    color: #fff;
+    font-size: 0.62rem;
+    font-weight: 700;
+    line-height: 1.1rem;
+    text-align: center;
+}
+
+/* Chacoalhada curta quando chega pedido novo — chama atenção sem ser
+   irritante (roda uma vez, não em loop). */
+@keyframes adm-sino-toca {
+    0%, 100% { transform: rotate(0); }
+    15% { transform: rotate(-14deg); }
+    30% { transform: rotate(11deg); }
+    45% { transform: rotate(-8deg); }
+    60% { transform: rotate(5deg); }
+    75% { transform: rotate(-2deg); }
+}
+
+.adm-sino.is-tocando { animation: adm-sino-toca 0.6s ease; color: var(--adm-marca); }
+
+/* ===================== Filtros globais ===================== */
+.adm-chip {
+    padding: 0.4rem 0.7rem;
+    border-radius: 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    background: var(--adm-superficie-2);
+    border: 1px solid var(--adm-borda);
+    color: var(--adm-tinta-2);
+    cursor: pointer;
+    transition: color 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.adm-chip:hover { color: var(--adm-tinta); }
+
+.adm-chip.is-ativo {
+    background: rgba(242, 140, 82, 0.14);
+    border-color: rgba(242, 140, 82, 0.4);
+    color: var(--adm-tinta);
+}
+
+/* "Multiselect" simples: chips que alternam, sem componente externo. Cabe
+   bem em regiões (9 no seed) e status (4) — listas curtas, onde um <select
+   multiple> nativo seria pior de usar do que clicar chips. */
+.adm-multiselect {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+/* ===================== Cartões de KPI (dashboard) ===================== */
+.adm-kpi-tendencia {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: 0.7rem;
+    font-weight: 700;
+}
+
+.adm-kpi-tendencia.is-alta { color: var(--adm-bom); }
+.adm-kpi-tendencia.is-baixa { color: var(--adm-ruim); }
+.adm-kpi-tendencia.is-neutra { color: var(--adm-tinta-3); }
+
+/* ===================== Pizza/rosca em SVG ===================== */
+/* Mesma família dos gráficos de coluna e linha: sem biblioteca, traço fino,
+   rótulo direto só na maior fatia. */
+.adm-fatia { stroke: var(--adm-superficie); stroke-width: 2; cursor: pointer; }
+.adm-fatia:hover { opacity: 0.82; }
+.adm-legenda-item { display: flex; align-items: center; gap: 0.5rem; font-size: 0.78rem; }
+.adm-legenda-cor { width: 0.65rem; height: 0.65rem; border-radius: 0.2rem; flex-shrink: 0; }
+
+/* ===================== Kanban de pedidos ===================== */
+.adm-kanban {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(240px, 1fr));
+    gap: 1rem;
+    overflow-x: auto;
+    padding-bottom: 0.5rem;
+}
+
+@media (max-width: 900px) {
+    .adm-kanban { grid-template-columns: repeat(4, minmax(240px, 85vw)); }
+}
+
+.adm-kanban-coluna {
+    background: var(--adm-superficie-2);
+    border: 1px solid var(--adm-borda);
+    border-radius: 0.75rem;
+    min-height: 200px;
+    display: flex;
+    flex-direction: column;
+}
+
+.adm-kanban-cabecalho {
+    padding: 0.85rem 1rem;
+    border-bottom: 1px solid var(--adm-borda);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.adm-kanban-titulo {
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.adm-kanban-contagem {
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--adm-tinta-3);
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 999px;
+    padding: 0.05rem 0.5rem;
+}
+
+.adm-kanban-corpo {
+    padding: 0.6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    flex: 1;
+    min-height: 80px;
+    transition: background-color 0.15s ease;
+}
+
+.adm-kanban-corpo.is-zona-de-solta { background: rgba(242, 140, 82, 0.08); }
+
+.adm-kanban-cartao {
+    background: var(--adm-superficie);
+    border: 1px solid var(--adm-borda);
+    border-radius: 0.6rem;
+    padding: 0.75rem;
+    cursor: grab;
+    transition: border-color 0.15s ease, opacity 0.15s ease;
+}
+
+.adm-kanban-cartao:hover { border-color: var(--adm-borda-forte); }
+.adm-kanban-cartao.is-arrastando { opacity: 0.4; }
+.adm-kanban-cartao:active { cursor: grabbing; }
+
+/* ===================== Paginação ===================== */
+.adm-paginacao {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    margin-top: 1rem;
+}
+
+.adm-pagina-botao {
+    min-width: 2rem;
+    height: 2rem;
+    padding: 0 0.4rem;
+    border-radius: 0.4rem;
+    border: 1px solid var(--adm-borda);
+    background: transparent;
+    color: var(--adm-tinta-2);
+    font-size: 0.78rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.adm-pagina-botao:hover:not(:disabled) { border-color: var(--adm-marca); color: var(--adm-tinta); }
+.adm-pagina-botao:disabled { opacity: 0.35; cursor: not-allowed; }
+.adm-pagina-botao.is-ativa { background: var(--adm-marca); border-color: var(--adm-marca); color: #fff; }
+
+/* ===================== Modal de detalhes ===================== */
+.adm-modal-fundo {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 4vh 1rem;
+    overflow-y: auto;
+}
+
+.adm-modal-painel {
+    position: relative;
+    background: var(--adm-superficie);
+    border: 1px solid var(--adm-borda-forte);
+    border-radius: 0.9rem;
+    width: 100%;
+    max-width: 640px;
+    padding: 1.75rem;
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+
+.adm-modal-fechar {
+    position: absolute;
+    top: 0.9rem;
+    right: 0.9rem;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 0.5rem;
+    background: transparent;
+    border: none;
+    color: var(--adm-tinta-3);
+    cursor: pointer;
+}
+
+.adm-modal-fechar:hover { color: var(--adm-tinta); background: rgba(255, 255, 255, 0.06); }
+
+/* ===================== Exportar / imprimir ===================== */
+.adm-exportar { display: flex; gap: 0.5rem; }
+
+@media print {
+    /* Só o conteúdo da aba ativa. Cabeçalho, abas e filtros não servem de
+       nada no papel — e o botão de exportar menos ainda. */
+    body.admin { background: #fff; color: #000; }
+    header, .adm-exportar, #corpo-filtros, #btn-filtros, #dica,
+    .adm-kanban-cartao[draggable], #modal-detalhe { display: none !important; }
+    .adm-card { border-color: #ccc; break-inside: avoid; }
+    .adm-tinta-3, .adm-tile-rotulo { color: #555 !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .adm-sino.is-tocando { animation: none; }
+}

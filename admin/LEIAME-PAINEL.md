@@ -54,6 +54,7 @@ quanto se perde entre o clique e o negócio fechado — costuma ser o número ma
    | 2º | `admin/supabase-regioes.sql` | `regioes` e as faixas de CEP que calculam o frete |
    | 3º | `admin/supabase-vitrine.sql` | `vitrines` e a seção "Onde comprar" |
    | 4º a 8º | `admin/migracoes/004` a `008` | cadastro de clientes, catálogo, itens de pedido e relatórios |
+   | 10º | `admin/migracoes/010_realtime_pedidos.sql` | sino de notificação e "últimos pedidos" ao vivo no dashboard |
 
    A ordem importa: todos os outros usam a função `eh_admin()`, que nasce no
    primeiro. Rodar fora de ordem dá erro de função inexistente.
@@ -175,6 +176,40 @@ visitantes. Por isso o site não precisa de aviso de cookies por causa disso.
 
 "Sessões" é a aproximação de quantas pessoas navegaram; "páginas vistas" é
 quantas telas foram abertas no total.
+
+## Clientes, Kanban, Dashboard de vendas e filtros
+
+**Clientes.** Uma tabela com todo lojista que já fez pedido — o cadastro se
+preenche sozinho, não existe formulário de "novo cliente" em lugar nenhum.
+Busca por nome, CNPJ, CPF ou telefone; **Detalhes** mostra o histórico
+completo de pedidos; **Editar** só altera telefone, e-mail e observações — o
+endereço e o resto vêm do próprio pedido, e editar aqui não reescreve o que já
+está preenchido lá (ver a nota da migração 006).
+
+**Pedidos em Kanban.** Quatro colunas — Aguardando, Confirmado, Entregue,
+Cancelado — as mesmas que já existiam. Arraste um cartão para mudar o status,
+ou use os botões de dentro do cartão, se preferir clicar a arrastar. O botão
+**Tabela**, ao lado do Kanban, troca para a lista em linhas, com os mesmos
+filtros. Confirmar um pedido abre o WhatsApp com uma mensagem de aviso já
+escrita — falta só clicar em enviar, porque um site sem servidor não tem como
+mandar mensagem sozinho, sem alguém apertar o botão.
+
+**Dashboard de vendas.** Vendas por região, os 10 produtos mais vendidos,
+vendas por dia e receita acumulada nos últimos 30 dias, e a comparação com o
+mês anterior — tudo a partir do mesmo período que você já escolhe no filtro.
+
+**Filtros.** No topo, acima das abas: data, busca por cliente, região e status
+do pedido. Afetam Pedidos, Clientes e Histórico ao mesmo tempo — mude um filtro
+e as três telas atualizam juntas, sem precisar refazer a busca em cada uma.
+
+**Exportar.** Nas abas que têm tabela, os botões **CSV** e **PDF** no canto
+exportam exatamente o que está na tela, já filtrado. O PDF é o diálogo de
+impressão do próprio navegador — escolha "Salvar como PDF" nele.
+
+**O sino.** Quando chega um pedido novo, o sino no topo pisca, conta e toca um
+bipe curto (o navegador só libera som depois da primeira coisa que você clica
+na página — normal não tocar exatamente no primeiro pedido da sessão). Clicar
+no sino leva para a aba Pedidos e zera a contagem.
 
 ## Vitrine "Onde comprar"
 
