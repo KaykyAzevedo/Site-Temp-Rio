@@ -115,6 +115,26 @@ Sem isso, qualquer pessoa cria conta no seu projeto. As políticas ainda barram 
 leitura (por causa da tabela `admins`), mas cadastro aberto é porta que não
 precisa existir.
 
+### 5a. Dar acesso a um vendedor (opcional)
+
+Desde a migração 014, `admins` tem uma coluna `papel`: `admin` (acesso total,
+o padrão) ou `vendedor` (só as abas Dashboard, Pedidos, Clientes e Histórico —
+o resto do painel some da tela, e o banco recusa a leitura mesmo que alguém
+tente pela API direto).
+
+Os passos são os mesmos 4 e 5a acima (criar o usuário no Supabase, confirmar
+o e-mail), e no SQL Editor:
+
+```sql
+insert into public.admins (email, papel) values ('vendedor@exemplo.com', 'vendedor');
+```
+
+Para promover a admin (ou voltar a vendedor) depois:
+
+```sql
+update public.admins set papel = 'admin' where email = 'vendedor@exemplo.com';
+```
+
 ### 6. Conferir
 
 Abra `admin.html`, faça login e o painel deve carregar. Sem pedidos ainda, ele
@@ -135,9 +155,10 @@ Quem protege os dados são as políticas de **Row Level Security** em
 |---|---|
 | Site (visitante anônimo) | **Só inserir** pedido e visita |
 | Site (visitante anônimo) | **Não pode ler nada** |
-| Você, logado e na tabela `admins` | Ler e atualizar pedidos |
+| Logado, papel `vendedor` | Ler e atualizar pedidos, clientes e usuários — só isso |
+| Logado, papel `admin` | Tudo: o de cima, mais região, vitrine, catálogo, visitas, leads |
 
-Duas consequências que valem saber:
+Três consequências que valem saber:
 
 **Esconder um botão não protege dado nenhum.** Por isso a proteção está no
 banco, não na interface — mesmo quem editar o JavaScript da página no próprio
@@ -149,6 +170,18 @@ pública. É a mesma condição da lista de espera. Na prática o risco é baixo
 há o que ganhar com isso), e um pedido falso é visível na hora na aba Pedidos —
 você cancela. Se algum dia virar problema, o caminho é um servidor próprio
 intermediando a gravação, e eu faço essa mudança.
+
+**O login em si não é feito à mão.** Senha, token de sessão e a renovação
+automática dele são do Supabase Auth, não deste código — é a mesma
+infraestrutura que projetos muito maiores usam, e reescrever isso por conta
+própria (senha em bcrypt, token JWT, refresh) seria pior segurança que a de
+hoje, não melhor. A única coisa configurável que este projeto não conseguiu
+apertar é o *tempo* de expiração da sessão (hoje no padrão do Supabase, cerca
+de 1 hora) — **Authentication → Sessions**, no painel do Supabase, tem os
+campos certos ("Time-box user sessions", "Inactivity timeout"), mas eles só
+funcionam no plano **Pro** ou acima; no plano Free ficam bloqueados,
+mostrando "Upgrade to Pro". Se algum dia migrar de plano, vale voltar lá e
+apertar esse número.
 
 ## Lista de espera
 

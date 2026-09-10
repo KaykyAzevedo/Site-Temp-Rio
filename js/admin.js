@@ -350,6 +350,7 @@
      * =================================================================== */
     var sb = null;
     var usuario = null;
+    var papel = null; // 'admin' | 'vendedor' — ver migração 014
     var abaAtual = 'dashboard';
     var dados = { resumo: [], visitas: [], pedidos: [], espera: [],
                   regioes: [], faixas: [], vitrines: [], usuarios: [], clientes: [],
@@ -357,6 +358,13 @@
 
     var ABAS = ['dashboard', 'pedidos', 'clientes', 'historico', 'vendas',
                 'espera', 'vitrine', 'regioes', 'visitas', 'leads'];
+
+    /* Abas fora do alcance de um vendedor (migração 014: RLS só libera
+     * pedidos/clientes/usuarios para quem não é admin). Esconder a aba é
+     * só UX — a proteção de verdade já está no banco; sem isto, o vendedor
+     * só veria essas telas permanentemente vazias, o que confunde mais do
+     * que ajuda. */
+    var ABAS_SO_ADMIN = ['vendas', 'espera', 'vitrine', 'regioes', 'visitas', 'leads'];
 
     /* Filtros globais: afetam Pedidos, Clientes e Dashboard de vendas — as
      * três telas que mostram linha a linha, em vez de um agregado já pronto
@@ -596,8 +604,29 @@
     function abrirPainel() {
         mostrarTela('painel');
         $('#quem').textContent = usuario ? usuario.email : '';
-        carregar();
-        ligarRealtime();
+
+        sb.rpc('meu_papel').then(function (r) {
+            papel = (r.data) || null;
+            aplicarPapel();
+            carregar();
+            ligarRealtime();
+        });
+    }
+
+    /* Esconde as abas que o papel atual não usa, e tira o usuário de uma
+     * aba escondida se ele estava nela (troca de conta na mesma sessão,
+     * por exemplo). Não mexe em RLS nem em permissão — isso já está
+     * garantido no banco (migração 014); aqui é só a tela concordar com o
+     * que o banco já decidiu. */
+    function aplicarPapel() {
+        var restrito = papel === 'vendedor';
+        document.querySelectorAll('.adm-aba').forEach(function (b) {
+            var aba = b.getAttribute('data-aba');
+            b.classList.toggle('hidden', restrito && ABAS_SO_ADMIN.indexOf(aba) !== -1);
+        });
+        if (restrito && ABAS_SO_ADMIN.indexOf(abaAtual) !== -1) {
+            trocarAba('pedidos');
+        }
     }
 
     /* ===================================================================
