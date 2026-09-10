@@ -225,6 +225,44 @@ Se um dia isso precisar mudar — por exigência legal (LGPD) ou por escala —,
 o caminho certo é `pgcrypto` + Vault no banco, não uma biblioteca de
 criptografia rodando no navegador.
 
+## Força bruta no login e abuso do formulário
+
+**O que está ligado.** Em **Authentication → Rate Limits**, no painel do
+Supabase, "Rate limit for sign-ups and sign-ins" veio configurado pela
+plataforma em 30 tentativas a cada 5 minutos por IP (360/hora) — solto demais
+para um painel de uma pessoa só. Está em **5 a cada 5 minutos (60/hora)**: um
+adivinhador de senha não passa de 5 tentativas antes de esperar; você, errando
+a senha de verdade, dificilmente bate nesse teto.
+
+**O que falta, e por que não entrou:**
+
+- **CAPTCHA no login.** O Supabase suporta de verdade (hCaptcha ou Cloudflare
+  Turnstile, em **Authentication → Attack Protection → Enable Captcha
+  protection**), mas exige uma chave secreta de uma conta sua nesses serviços
+  — não é algo que eu possa criar por você. Passo a passo, quando quiser
+  ligar: (1) crie uma conta grátis em hCaptcha.com ou
+  developers.cloudflare.com/turnstile; (2) cadastre o domínio do site e pegue
+  a **site key** e a **secret key**; (3) cole a secret key na tela de Attack
+  Protection do Supabase e salve; (4) me peça para colocar o widget no
+  formulário de login (`admin.html`) e passar o token pro
+  `signInWithPassword({ options: { captchaToken } })` — é um passo de código
+  pequeno, só depende de você ter as chaves primeiro.
+- **Bloqueio automático de conta + aviso "tentativa suspeita".** O rate
+  limit acima já reduz bastante o espaço de tentativas, mas um bloqueio de
+  conta específico com notificação exigiria um Edge Function do Supabase
+  reagindo a login falho (via Auth Hook) — é infraestrutura nova, não uma
+  função isolada, e este projeto não tem nenhuma Edge Function hoje. Fica
+  para quando/se isso virar necessidade real.
+- **Limite geral de 100 req/min na API pública.** As tabelas com INSERT
+  anônimo (`pedidos`, `leads`, `lista_espera`) não têm um limite de
+  requisições configurável no plano Free além do que a Rate Limits acima já
+  cobre para login — um limite genérico por IP em qualquer tabela exigiria
+  um proxy na frente da API (Cloudflare, ou Edge Function) ou o plano Pro.
+  O risco de hoje (pedido/lead falso) já é mitigado do jeito descrito na
+  seção de RLS: aparece na hora no painel, para cancelar.
+- **Upload de arquivo.** Não existe em lugar nenhum do site — nada a
+  limitar.
+
 ## Lista de espera
 
 Quem tenta fechar pedido fora da área de entrega entra nesta lista. Ela ficava
