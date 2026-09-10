@@ -16,6 +16,8 @@ rodar de novo por engano não quebra nada e não duplica dado.
 | 008 | `migracoes/008_crud.sql` | as operações como funções do banco |
 | 009 | `migracoes/009_opcional_ip_geo.sql` | **opcional — leia o cabeçalho antes** |
 | 010 | `migracoes/010_realtime_pedidos.sql` | liga `pedidos` ao Supabase Realtime — sino de notificação e "últimos pedidos" do painel |
+| 011 | `migracoes/011_leads_pre_registro.sql` | `leads` — contatos do pop-up de pré-registro do catálogo — e `visitas.pre_registro` |
+| 012 | `migracoes/012_completar_visita_rpc.sql` | corrige o "completar visita" (tempo de sessão, CEP, pré-registro), que nunca funcionou — leia o cabeçalho |
 
 As três primeiras estão em `admin/` e não aqui porque já existiam antes desta
 pasta; renomeá-las quebraria as referências espalhadas pelo código.

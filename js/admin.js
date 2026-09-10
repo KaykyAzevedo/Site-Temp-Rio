@@ -353,10 +353,10 @@
     var abaAtual = 'dashboard';
     var dados = { resumo: [], visitas: [], pedidos: [], espera: [],
                   regioes: [], faixas: [], vitrines: [], usuarios: [], clientes: [],
-                  vendasRegiao: [], vendasProduto: [] };
+                  vendasRegiao: [], vendasProduto: [], visitasBrutas: [], leads: [] };
 
     var ABAS = ['dashboard', 'pedidos', 'clientes', 'historico', 'vendas',
-                'espera', 'vitrine', 'regioes', 'visitas'];
+                'espera', 'vitrine', 'regioes', 'visitas', 'leads'];
 
     /* Filtros globais: afetam Pedidos, Clientes e Dashboard de vendas — as
      * três telas que mostram linha a linha, em vez de um agregado já pronto
@@ -630,7 +630,17 @@
             sb.from('usuarios').select('*').eq('tipo', 'cliente'),
             sb.from('clientes').select('*'),
             sb.rpc('vendas_por_produto', { meses: meses }),
-            sb.rpc('visitas_por_regiao', { meses: meses })
+            sb.rpc('visitas_por_regiao', { meses: meses }),
+            // Linhas cruas, não o agregado: o mapa e a tabela da aba Visitas
+            // precisam de cada sessão para filtrar por 24h/7d/30d e listar
+            // "o que aconteceu", não só "quanto". Limite de 1500 em vez de
+            // uma data: em um site de pouco tráfego uma data fixa devolveria
+            // pouca coisa; em um de muito tráfego, uma data fixa devolveria
+            // demais. O limite por linhas se adapta aos dois casos.
+            sb.from('visitas')
+                .select('pagina, sessao, criado_em, regiao_id, cep, dispositivo, referencia, segundos')
+                .order('criado_em', { ascending: false }).limit(1500),
+            sb.from('leads').select('*').order('criado_em', { ascending: false })
         ]).then(function (rs) {
             marcarCarregando(false);
 
@@ -651,6 +661,8 @@
             dados.clientes = rs[8].data || [];
             dados.vendasProduto = rs[9].data || [];
             dados.vendasRegiao = rs[10].data || [];
+            dados.visitasBrutas = rs[11].data || [];
+            dados.leads = rs[12].data || [];
             montarChipsDeFiltro();
             desenharTudo();
         });
@@ -678,6 +690,14 @@
         ABAS.forEach(function (a) {
             $('#painel-' + a).classList.toggle('hidden', a !== qual);
         });
+
+        // O mapa nasce (em desenharTudo) enquanto a aba Visitas ainda pode
+        // estar escondida — um container com display:none mede 0x0, e o
+        // Leaflet trava nesse tamanho até alguém mandar recalcular. Aqui é o
+        // momento certo: a aba acabou de ficar visível de verdade.
+        if (qual === 'visitas' && mapaVisitas) {
+            setTimeout(function () { mapaVisitas.invalidateSize(); }, 0);
+        }
     }
 
     function desenharTudo() {
@@ -690,6 +710,7 @@
         desenharVitrine();
         desenharRegioes();
         desenharVisitas();
+        desenharLeads();
     }
 
     /* ===================================================================
@@ -1388,10 +1409,21 @@
             });
         });
 
+        // "Detalhes" não abre modal: abre a própria linha, embaixo do cliente
+        // clicado — a linha de detalhe já está no DOM (ver linhaCliente),
+        // colapsada por CSS. Clicar só alterna a classe que a expande.
         alvo.querySelectorAll('[data-ver-cliente]').forEach(function (b) {
             b.addEventListener('click', function () {
-                var c = filtrados.filter(function (x) { return x.clienteId === b.getAttribute('data-ver-cliente'); })[0];
-                if (c) abrirModal(detalheCliente(c));
+                var linhaDetalhe = b.closest('tr').nextElementSibling;
+                if (!linhaDetalhe || !linhaDetalhe.classList.contains('adm-linha-detalhe')) return;
+                var colapso = linhaDetalhe.querySelector('.adm-detalhe-colapso');
+                var aberto = colapso.classList.toggle('is-aberto');
+                b.setAttribute('aria-expanded', String(aberto));
+                var icone = b.querySelector('[data-icone-detalhe]');
+                if (icone) {
+                    icone.classList.toggle('fa-chevron-down', !aberto);
+                    icone.classList.toggle('fa-chevron-up', aberto);
+                }
             });
         });
         alvo.querySelectorAll('[data-editar-cliente]').forEach(function (b) {
@@ -1410,11 +1442,20 @@
             '<td class="num">' + NUM.format(c.pedidos) + '</td>' +
             '<td class="num">' + esc(brl(c.ticket)) + '</td>' +
             '<td><div class="flex items-center gap-1 flex-wrap">' +
-                '<button type="button" class="adm-botao-fantasma" data-ver-cliente="' + esc(c.clienteId) + '">' +
-                    '<i class="fa-regular fa-eye mr-1"></i>Detalhes</button>' +
+                '<button type="button" class="adm-botao-fantasma" data-ver-cliente="' + esc(c.clienteId) + '" aria-expanded="false">' +
+                    '<i class="fa-solid fa-chevron-down mr-1" data-icone-detalhe></i>Detalhes</button>' +
                 '<button type="button" class="adm-botao-fantasma" data-editar-cliente="' + esc(c.clienteId) + '">' +
                     '<i class="fa-solid fa-pen mr-1"></i>Editar</button>' +
                 linkWhats(c.telefone) +
+            '</div></td>' +
+        '</tr>' +
+        // Linha de detalhe: nasce colapsada (CSS), logo depois da linha do
+        // cliente — "Detalhes" alterna a classe que a abre, em vez de um
+        // modal. Fica sempre no DOM, mesmo fechada, para a transição de
+        // altura ter o que animar (ver .adm-detalhe-colapso em admin.css).
+        '<tr class="adm-linha-detalhe">' +
+            '<td colspan="6"><div class="adm-detalhe-colapso">' +
+                '<div class="adm-detalhe-conteudo">' + detalheCliente(c) + '</div>' +
             '</div></td>' +
         '</tr>';
     }
@@ -1423,18 +1464,17 @@
         var pedidosDoCliente = dados.pedidos.filter(function (p) { return p.cliente_id === c.clienteId; })
             .sort(function (a, b) { return new Date(b.criado_em) - new Date(a.criado_em); });
 
-        return '<h2 class="text-lg font-bold mb-1">' + esc(c.nome) + '</h2>' +
-            '<p class="text-xs mb-5" style="color:var(--adm-tinta-3)">' +
+        return '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">' +
                 esc(c.tipo === 'PJ' ? 'CNPJ ' + c.cnpj : 'CPF ' + c.cpf) +
                 (c.bairro || c.cidade ? ' · ' + esc([c.bairro, c.cidade].filter(Boolean).join(', ')) + '/' + esc(c.uf || '') : '') +
             '</p>' +
-            '<div class="grid sm:grid-cols-3 gap-4 mb-5">' +
+            '<div class="grid sm:grid-cols-3 gap-4 mb-4">' +
                 ficha('Pedidos', NUM.format(c.pedidos), NUM.format(c.fechados) + ' fechados') +
                 ficha('Total comprado', brl(c.gasto), 'confirmado + entregue') +
                 ficha('Ticket médio', brl(c.ticket), 'por pedido fechado') +
             '</div>' +
             (c.telefone || c.email
-                ? '<p class="text-sm mb-5">' + esc(c.telefone) + (c.email ? ' · ' + esc(c.email) : '') + '</p>'
+                ? '<p class="text-sm mb-4">' + esc(c.telefone) + (c.email ? ' · ' + esc(c.email) : '') + '</p>'
                 : '') +
             '<p class="font-bold text-sm mb-3">Pedidos</p>' +
             (pedidosDoCliente.length
@@ -1447,7 +1487,7 @@
                   }).join('') + '</div>'
                 : '<p class="adm-vazio">Nenhum pedido no período carregado.</p>') +
             (linkWhats(c.telefone)
-                ? '<div class="mt-5 pt-4" style="border-top:1px solid var(--adm-borda)">' + linkWhats(c.telefone) + '</div>'
+                ? '<div class="mt-4 pt-4" style="border-top:1px solid var(--adm-borda)">' + linkWhats(c.telefone) + '</div>'
                 : '');
     }
 
@@ -2278,6 +2318,12 @@
         var alvo = $('#painel-visitas');
         var v = dados.visitas;
 
+        // O HTML inteiro do painel é substituído logo abaixo — o <div> que o
+        // mapa ocupava deixa de existir. Um objeto Leaflet apontando para um
+        // nó removido do DOM trava na próxima atualização, então ele morre
+        // aqui e nasce de novo em desenharMonitorGeografico().
+        if (mapaVisitas) { mapaVisitas.remove(); mapaVisitas = null; mapaVisitasCamada = null; }
+
         if (!v.length) {
             alvo.innerHTML = cartaoVazio('Nenhuma visita registrada',
                 'A contagem começa quando o site com o painel conectado entrar no ar. ' +
@@ -2298,7 +2344,9 @@
 
             cartaoGrafico('g-visitas', 'Sessões por mês',
                 'Uma sessão é uma pessoa navegando. Sem cookie, sem terceiros, sem IP guardado.',
-                't-visitas');
+                't-visitas') +
+
+            htmlMonitorGeografico();
 
         desenharLinha($('#g-visitas'), v.map(function (r) {
             return { rotulo: rotuloMes(r.mes), valor: Number(r.sessoes), extra: r };
@@ -2315,6 +2363,320 @@
             v.map(function (r) {
                 return [rotuloMes(r.mes), NUM.format(r.sessoes), NUM.format(r.visitas)];
             }), [false, true, true]);
+
+        ligarMonitorGeografico(alvo);
+        desenharMonitorGeografico();
+    }
+
+    /* ===================================================================
+     * Monitor geográfico — mapa e tabela de visitas por região
+     *
+     * "Onde" vem do CEP que o próprio visitante digita na página de pedido,
+     * não de IP nem de geolocalização do navegador — a mesma fonte que a
+     * migração 007 já usa para o relatório mensal, aqui só olhada sessão a
+     * sessão. Sem coleta nova, sem custo de API paga, sem novo dado pessoal:
+     * ver a nota grande no topo de admin/migracoes/007_visitas_regiao.sql.
+     *
+     * Bolha por região, não ponto por visita: o dado é "essa sessão bateu no
+     * CEP tal", não uma coordenada exata — um verdadeiro mapa de calor
+     * inventaria uma precisão que a coleta não tem.
+     * =================================================================== */
+    var REGIAO_COORDS = {
+        'centro':            [-22.9068, -43.1729],
+        'zona-sul':          [-22.9707, -43.1823],
+        'zona-norte':        [-22.9235, -43.2369],
+        'barra-jacarepagua': [-22.9990, -43.3652],
+        'zona-oeste':        [-22.8756, -43.6217],
+        'niteroi':           [-22.8832, -43.1034],
+        'sao-goncalo':       [-22.8268, -43.0539],
+        'baixada':           [-22.7556, -43.4111]
+        // 'resto-rj' fica de fora de propósito: é "todo o resto do estado",
+        // sem um ponto único que o represente sem enganar.
+    };
+
+    var visitasJanela = '7d';
+    var visitasPagina = 1;
+    var POR_PAGINA_VISITAS = 20;
+    var mapaVisitas = null;
+    var mapaVisitasCamada = null;
+
+    function regiaoNome(id) {
+        if (!id) return 'Sem CEP informado';
+        var r = dados.regioes.filter(function (x) { return x.id === id; })[0];
+        return r ? r.nome : id;
+    }
+
+    var DISPOSITIVO_ROTULO = { celular: 'Celular', tablet: 'Tablet', computador: 'Computador' };
+
+    function visitaBrutaPassaNaJanela(r) {
+        if (visitasJanela === 'tudo') return true;
+        var horas = visitasJanela === '24h' ? 24 : (visitasJanela === '7d' ? 24 * 7 : 24 * 30);
+        var corte = Date.now() - horas * 60 * 60 * 1000;
+        return new Date(r.criado_em).getTime() >= corte;
+    }
+
+    function htmlMonitorGeografico() {
+        return '<div class="adm-card p-5 mb-7">' +
+            '<div class="flex items-start justify-between flex-wrap gap-3 mb-1">' +
+                '<div>' +
+                    '<p class="font-bold text-sm mb-1">Monitor geográfico</p>' +
+                    '<p class="text-xs" style="color:var(--adm-tinta-3)">' +
+                        'Por região de CEP consultado na página de pedido — não por IP. ' +
+                        'Só conta quem chegou a consultar o frete.' +
+                    '</p>' +
+                '</div>' +
+                '<div class="flex gap-1">' +
+                    ['24h', '7d', '30d', 'tudo'].map(function (j) {
+                        var rot = j === '24h' ? 'Últimas 24h' : j === '7d' ? '7 dias' : j === '30d' ? '30 dias' : 'Tudo';
+                        return '<button type="button" class="adm-chip' + (visitasJanela === j ? ' is-ativo' : '') +
+                            '" data-visitas-janela="' + j + '">' + rot + '</button>';
+                    }).join('') +
+                '</div>' +
+            '</div>' +
+            '<div id="mapa-visitas" style="height:360px;border-radius:.75rem;margin-top:1rem;overflow:hidden"></div>' +
+            '<div id="stats-visitas" class="grid sm:grid-cols-2 gap-4 mt-5"></div>' +
+            '<div class="flex items-center justify-between flex-wrap gap-3 mt-6 mb-3">' +
+                '<p class="font-bold text-sm">Sessões recentes</p>' +
+                botoesExportar('visitas-geo') +
+            '</div>' +
+            '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">' +
+                'Sessões anônimas — sem nome, sem contato. Vira contato só quando a pessoa preenche o pop-up (aba Leads).' +
+            '</p>' +
+            '<div id="tabela-visitas-geo"></div>' +
+        '</div>';
+    }
+
+    function ligarMonitorGeografico(alvo) {
+        alvo.querySelectorAll('[data-visitas-janela]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                visitasJanela = b.getAttribute('data-visitas-janela');
+                visitasPagina = 1;
+                desenharVisitas();
+            });
+        });
+    }
+
+    function desenharMonitorGeografico() {
+        var filtradas = dados.visitasBrutas.filter(visitaBrutaPassaNaJanela);
+
+        // --- Mapa: uma bolha por região, raio proporcional a sessões distintas ---
+        var alvoMapa = $('#mapa-visitas');
+        if (alvoMapa && typeof L !== 'undefined') {
+            if (!mapaVisitas) {
+                mapaVisitas = L.map('mapa-visitas', { scrollWheelZoom: false })
+                    .setView([-22.92, -43.35], 10);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '&copy; OpenStreetMap',
+                    maxZoom: 18
+                }).addTo(mapaVisitas);
+            }
+            if (mapaVisitasCamada) { mapaVisitas.removeLayer(mapaVisitasCamada); }
+
+            var porRegiaoMapa = {};
+            filtradas.forEach(function (r) {
+                if (!r.regiao_id || !REGIAO_COORDS[r.regiao_id]) return;
+                porRegiaoMapa[r.regiao_id] = (porRegiaoMapa[r.regiao_id] || 0) + 1;
+            });
+            var maiorContagem = Math.max.apply(null, Object.keys(porRegiaoMapa).map(function (k) { return porRegiaoMapa[k]; }).concat([1]));
+
+            mapaVisitasCamada = L.layerGroup();
+            Object.keys(porRegiaoMapa).forEach(function (id) {
+                var n = porRegiaoMapa[id];
+                var raio = 8 + Math.round((n / maiorContagem) * 26);
+                L.circleMarker(REGIAO_COORDS[id], {
+                    radius: raio, color: '#F28C52', weight: 1,
+                    fillColor: '#F28C52', fillOpacity: 0.45
+                }).bindTooltip(regiaoNome(id) + ': ' + NUM.format(n) + (n === 1 ? ' sessão' : ' sessões'))
+                  .addTo(mapaVisitasCamada);
+            });
+            mapaVisitasCamada.addTo(mapaVisitas);
+            // Mapa sem bolha nenhuma (nenhum CEP consultado na janela) já é
+            // avisado pelo cartão "Por região" logo abaixo — sem duplicar o
+            // aviso dentro do próprio mapa.
+            setTimeout(function () { if (mapaVisitas) mapaVisitas.invalidateSize(); }, 50);
+        } else if (alvoMapa) {
+            alvoMapa.innerHTML = '<p class="adm-vazio">Mapa indisponível (biblioteca não carregou).</p>';
+        }
+
+        // --- Estatísticas: região e dispositivo, só desta janela ---
+        var porRegiao = {}, porDispositivo = {};
+        filtradas.forEach(function (r) {
+            var rid = r.regiao_id || 'sem-cep';
+            porRegiao[rid] = (porRegiao[rid] || 0) + 1;
+            var disp = r.dispositivo || 'desconhecido';
+            porDispositivo[disp] = (porDispositivo[disp] || 0) + 1;
+        });
+        var listaRegiao = Object.keys(porRegiao)
+            .map(function (id) { return { rotulo: id === 'sem-cep' ? 'Sem CEP informado' : regiaoNome(id), valor: porRegiao[id] }; })
+            .sort(function (a, b) { return b.valor - a.valor; });
+        var listaDispositivo = Object.keys(porDispositivo)
+            .map(function (d) { return { rotulo: DISPOSITIVO_ROTULO[d] || 'Desconhecido', valor: porDispositivo[d] }; })
+            .sort(function (a, b) { return b.valor - a.valor; });
+
+        var alvoStats = $('#stats-visitas');
+        if (alvoStats) {
+            alvoStats.innerHTML =
+                '<div class="adm-card p-4">' +
+                    '<p class="font-bold text-sm mb-3">Por região</p>' +
+                    (listaRegiao.length
+                        ? listaRegiao.map(function (d) {
+                              return '<div class="flex items-center justify-between text-sm py-1">' +
+                                  '<span>' + esc(d.rotulo) + '</span><span style="color:var(--adm-tinta-3)">' + NUM.format(d.valor) + '</span></div>';
+                          }).join('')
+                        : '<p class="adm-vazio">Sem dados nesta janela.</p>') +
+                '</div>' +
+                '<div class="adm-card p-4">' +
+                    '<p class="font-bold text-sm mb-3">Por dispositivo</p>' +
+                    (listaDispositivo.length
+                        ? listaDispositivo.map(function (d) {
+                              return '<div class="flex items-center justify-between text-sm py-1">' +
+                                  '<span>' + esc(d.rotulo) + '</span><span style="color:var(--adm-tinta-3)">' + NUM.format(d.valor) + '</span></div>';
+                          }).join('')
+                        : '<p class="adm-vazio">Sem dados nesta janela.</p>') +
+                '</div>';
+        }
+
+        // --- Tabela de sessões recentes ---
+        var ordenadas = filtradas.slice().sort(function (a, b) { return new Date(b.criado_em) - new Date(a.criado_em); });
+        var pag = paginar(ordenadas, visitasPagina, POR_PAGINA_VISITAS);
+        visitasPagina = pag.pagina;
+
+        var alvoTabela = $('#tabela-visitas-geo');
+        if (alvoTabela) {
+            alvoTabela.innerHTML = ordenadas.length
+                ? '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr>' +
+                      '<th>Quando</th><th>Página</th><th>Região</th><th>Dispositivo</th>' +
+                  '</tr></thead><tbody>' +
+                      pag.itens.map(function (r) {
+                          return '<tr>' +
+                              '<td>' + esc(dataHora(r.criado_em)) + '</td>' +
+                              '<td>' + esc(r.pagina || '—') + '</td>' +
+                              '<td>' + esc(regiaoNome(r.regiao_id)) + '</td>' +
+                              '<td>' + esc(DISPOSITIVO_ROTULO[r.dispositivo] || '—') + '</td>' +
+                          '</tr>';
+                      }).join('') +
+                  '</tbody></table></div>' +
+                  controlesDePaginacao('visitasgeo', pag.pagina, pag.totalPaginas)
+                : '<p class="adm-vazio">Nenhuma sessão nesta janela.</p>';
+
+            alvoTabela.querySelectorAll('[data-pagina^="visitasgeo:"]').forEach(function (b) {
+                b.addEventListener('click', function () {
+                    visitasPagina = Number(b.getAttribute('data-pagina').split(':')[1]);
+                    desenharMonitorGeografico();
+                });
+            });
+        }
+
+        var raizExportar = $('#painel-visitas');
+        if (raizExportar) {
+            ligarBotoesExportar(raizExportar, {
+                'visitas-geo': function () { exportarVisitasGeoCSV(ordenadas); }
+            });
+        }
+    }
+
+    function exportarVisitasGeoCSV(lista) {
+        exportarCSV('visitas-por-regiao', ['Data', 'Página', 'Região', 'CEP', 'Dispositivo', 'Referência'],
+            lista.map(function (r) {
+                return [dataHora(r.criado_em), r.pagina, regiaoNome(r.regiao_id), r.cep || '', DISPOSITIVO_ROTULO[r.dispositivo] || '', r.referencia || ''];
+            }));
+    }
+
+    /* ===================================================================
+     * Leads — captados pelo pop-up de pré-registro do catálogo
+     *
+     * Mesmo padrão de tabela/paginação/exportação de Clientes. Diferente de
+     * Clientes, um lead não vira cliente sozinho — é só um contato que se
+     * ofereceu, ainda sem pedido nenhum (ver admin/migracoes/011).
+     * =================================================================== */
+    var leadsPagina = 1;
+    var POR_PAGINA_LEADS = 20;
+    var leadsFiltroTipo = 'todos'; // todos | cpf | cnpj
+
+    function leadPassaNoFiltro(l) {
+        if (filtros.de && String(l.criado_em).slice(0, 10) < filtros.de) return false;
+        if (filtros.ate && String(l.criado_em).slice(0, 10) > filtros.ate) return false;
+        if (leadsFiltroTipo !== 'todos' && l.tipo_documento !== leadsFiltroTipo) return false;
+        if (filtros.busca) {
+            var alvo = (String(l.nome || '') + ' ' + String(l.telefone || '') + ' ' + String(l.documento || '')).toLowerCase();
+            if (alvo.indexOf(filtros.busca) === -1) return false;
+        }
+        return true;
+    }
+
+    function desenharLeads() {
+        var alvo = $('#painel-leads');
+        var todos = dados.leads;
+
+        if (!todos.length) {
+            alvo.innerHTML = cartaoVazio('Nenhum lead ainda',
+                'Um lead aparece aqui assim que alguém preenche o pop-up de pré-registro no catálogo — ' +
+                'nome, telefone e CPF ou CNPJ, antes mesmo do primeiro pedido.');
+            return;
+        }
+
+        var filtrados = todos.filter(leadPassaNoFiltro);
+        var pag = paginar(filtrados, leadsPagina, POR_PAGINA_LEADS);
+        leadsPagina = pag.pagina;
+
+        alvo.innerHTML =
+            '<div class="flex items-center justify-between flex-wrap gap-3 mb-5">' +
+                '<div class="flex gap-1">' +
+                    ['todos', 'cpf', 'cnpj'].map(function (v) {
+                        return '<button type="button" class="adm-chip' + (leadsFiltroTipo === v ? ' is-ativo' : '') +
+                            '" data-leads-tipo="' + v + '">' + (v === 'todos' ? 'Todos' : v.toUpperCase()) + '</button>';
+                    }).join('') +
+                '</div>' +
+                botoesExportar('leads') +
+            '</div>' +
+
+            (filtrados.length
+                ? '<div class="adm-card p-5">' +
+                  '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr>' +
+                      '<th>Quando</th><th>Nome</th><th>Telefone</th><th>Documento</th>' +
+                      '<th>Origem</th><th>Ação</th>' +
+                  '</tr></thead><tbody>' +
+                  pag.itens.map(linhaLead).join('') +
+                  '</tbody></table></div>' +
+                  controlesDePaginacao('leads', pag.pagina, pag.totalPaginas) +
+                  '</div>'
+                : cartaoVazio('Nenhum lead com esses filtros',
+                      'Há ' + NUM.format(todos.length) + ' leads ao todo — tente limpar os filtros acima.'));
+
+        ligarBotoesExportar(alvo, { leads: function () { exportarLeadsCSV(filtrados); } });
+
+        alvo.querySelectorAll('[data-leads-tipo]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                leadsFiltroTipo = b.getAttribute('data-leads-tipo');
+                leadsPagina = 1;
+                desenharLeads();
+            });
+        });
+        alvo.querySelectorAll('[data-pagina^="leads:"]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                leadsPagina = Number(b.getAttribute('data-pagina').split(':')[1]);
+                desenharLeads();
+            });
+        });
+    }
+
+    function linhaLead(l) {
+        return '<tr>' +
+            '<td>' + esc(dataHora(l.criado_em)) + '</td>' +
+            '<td>' + esc(l.nome) + (l.ddd_rio ? ' <span class="adm-selo adm-selo-confirmado" style="margin-left:.4rem">DDD Rio</span>' : '') + '</td>' +
+            '<td>' + esc(l.telefone) + '</td>' +
+            '<td>' + esc((l.tipo_documento || '').toUpperCase()) + ' ' + esc(l.documento) + '</td>' +
+            '<td>' + esc(l.pagina_origem || '—') + '</td>' +
+            '<td>' + linkWhats(l.telefone) + '</td>' +
+        '</tr>';
+    }
+
+    function exportarLeadsCSV(lista) {
+        exportarCSV('leads', ['Data', 'Nome', 'Telefone', 'Tipo', 'Documento', 'DDD Rio', 'Página de origem'],
+            lista.map(function (l) {
+                return [dataHora(l.criado_em), l.nome, l.telefone, (l.tipo_documento || '').toUpperCase(),
+                        l.documento, l.ddd_rio ? 'Sim' : 'Não', l.pagina_origem || ''];
+            }));
     }
 
     /* ===================================================================

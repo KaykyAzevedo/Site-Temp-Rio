@@ -1,7 +1,8 @@
 # Painel de administrador — como ligar
 
 O painel fica em `admin.html`. Ele mostra pedidos, histórico por cliente,
-dashboard de vendas mensal, lista de espera e visitas.
+dashboard de vendas mensal, lista de espera, visitas (com monitor geográfico) e
+leads captados pelo pop-up de pré-registro do catálogo.
 
 **Leia a primeira seção antes de qualquer coisa.** Ela explica por que o painel
 começa vazio, e por que "vendas" não é a mesma coisa que "pedidos".
@@ -55,6 +56,8 @@ quanto se perde entre o clique e o negócio fechado — costuma ser o número ma
    | 3º | `admin/supabase-vitrine.sql` | `vitrines` e a seção "Onde comprar" |
    | 4º a 8º | `admin/migracoes/004` a `008` | cadastro de clientes, catálogo, itens de pedido e relatórios |
    | 10º | `admin/migracoes/010_realtime_pedidos.sql` | sino de notificação e "últimos pedidos" ao vivo no dashboard |
+   | 11º | `admin/migracoes/011_leads_pre_registro.sql` | `leads` — contatos do pop-up de pré-registro do catálogo |
+   | 12º | `admin/migracoes/012_completar_visita_rpc.sql` | corrige o preenchimento de tempo de sessão, CEP e pré-registro em `visitas` |
 
    A ordem importa: todos os outros usam a função `eh_admin()`, que nasce no
    primeiro. Rodar fora de ordem dá erro de função inexistente.
@@ -176,6 +179,47 @@ visitantes. Por isso o site não precisa de aviso de cookies por causa disso.
 
 "Sessões" é a aproximação de quantas pessoas navegaram; "páginas vistas" é
 quantas telas foram abertas no total.
+
+### Monitor geográfico
+
+Dentro da própria aba Visitas, um mapa do Rio com uma bolha por região — maior
+bolha, mais sessões. **A fonte é o CEP que o próprio visitante digita** na
+página de pedido para calcular o frete, não IP nem geolocalização do
+navegador. A nota completa do porquê está no topo de
+`admin/migracoes/007_visitas_regiao.sql`; resumindo: IP é dado pessoal e, no
+Brasil, costuma indicar a cidade errada — o CEP que a pessoa digita por
+vontade própria, para saber o frete, é exato e não pede aviso de cookies.
+
+**O custo honesto da escolha:** só entra no mapa quem chegou a consultar o
+CEP. Quem só passou pelo catálogo e saiu conta no total de visitas, mas
+aparece como "Sem CEP informado" nas estatísticas por região — não como um
+ponto no mapa.
+
+Os filtros **24h / 7 dias / 30 dias / Tudo**, acima do mapa, são locais a essa
+seção — não mexem no resto da tela nem no filtro de período do topo. Abaixo do
+mapa: contagem por região e por dispositivo, e uma tabela de sessões recentes
+(página, região, dispositivo, quando — sem nome, sem contato, porque a sessão
+ainda não tem um). Botão **CSV** exporta a tabela como está, já filtrada.
+
+## Leads — o pop-up de pré-registro
+
+Ao entrar no catálogo, o visitante vê um convite pedindo nome, telefone e CPF
+ou CNPJ, com o botão "Continuar navegando" — aparece uma vez por sessão, 3
+segundos depois de a página carregar, e nunca por cima do modal de produto ou
+do carrinho. É captação de contato, diferente da Vitrine (que só aparece
+**depois** de um pedido, como cortesia): aqui a pessoa ainda não comprou nada.
+
+Quem preenche vira uma linha na aba **Leads** do painel — mesmo formato de
+tabela, filtro e exportação da aba Clientes. O selo **DDD Rio** marca quando o
+telefone é da área (21 ou 24): é só uma pista para o vendedor, não uma regra —
+quem realmente decide a área de entrega é o CEP no pedido.
+
+**Envio de SMS de boas-vindas não está ligado.** A coluna `sms_enviado`
+existe no banco para isso, mas mandar SMS a partir do navegador do visitante
+exporia a credencial da Twilio a qualquer pessoa que abrisse o DevTools —
+precisa de uma Supabase Edge Function, que este site (todo estático) ainda não
+tem. O cabeçalho de `admin/migracoes/011_leads_pre_registro.sql` explica o
+caminho para ligar isso, se um dia fizer sentido.
 
 ## Clientes, Kanban, Dashboard de vendas e filtros
 

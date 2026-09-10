@@ -285,6 +285,10 @@
                 }
                 cacheCep[digitos] = dados;
                 aplicarEndereco(dados);
+                // Único sinal de região que o painel usa (ver a nota na
+                // migração 007) — a pessoa já digitou o CEP por vontade
+                // própria, para saber o frete.
+                if (window.TempRioDB) window.TempRioDB.registrarCepConsultado(digitos);
             })
             .catch(function () {
                 clearTimeout(expirou);
