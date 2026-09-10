@@ -75,8 +75,8 @@ const siteConfig = {
     // COMO CONFIGURAR: siga admin/LEIAME-PAINEL.md. Enquanto estiver vazio, o
     // site funciona igual — só não registra pedidos nem visitas.
     supabase: {
-        url: "",
-        anonKey: ""
+        url: "https://nucgjzfzptixvvxakftw.supabase.co",
+        anonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im51Y2dqemZ6cHRpeHZ2eGFrZnR3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg5ODQ2MzUsImV4cCI6MjEwNDU2MDYzNX0.3KiuI8nDxaexAEZ4V15CChtNO6hHmvPklIitdEGIANA"
     },
 
     // Vitrine "Onde comprar Temp Rio": a loja do lojista em destaque no site,
