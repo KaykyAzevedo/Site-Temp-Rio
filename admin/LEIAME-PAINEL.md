@@ -183,6 +183,48 @@ funcionam no plano **Pro** ou acima; no plano Free ficam bloqueados,
 mostrando "Upgrade to Pro". Se algum dia migrar de plano, vale voltar lá e
 apertar esse número.
 
+## Por que CPF/CNPJ, telefone e endereço NÃO são criptografados
+
+Foi cogitado (e descartado) guardar CPF/CNPJ como hash irreversível e
+telefone/endereço como texto cifrado (AES). Três motivos pesaram contra,
+nessa ordem:
+
+**São dados operacionais, não só cadastro.** O CNPJ real é exigido por lei
+para emitir nota fiscal — um hash não volta a ser número, então a loja
+perderia a capacidade de faturar o próprio cliente. O telefone é o que vira o
+link do WhatsApp (`linkWhats()`, em `js/admin.js`) — cifrado, o botão
+"Chamar" não tem para onde ligar. O endereço é para onde o produto é
+entregue. Cifrar esses três campos não protege o negócio: impede o negócio.
+
+**bcrypt quebraria a própria unicidade que o sistema já usa.** `bcrypt` gera
+um hash diferente a cada vez, mesmo para o mesmo CPF (salt aleatório de
+propósito) — o índice único `usuarios.documento` (migração 004), que existe
+para não duplicar cliente, deixaria de funcionar, e as checagens de dígito
+verificador de CPF/CNPJ (migração 013) ficariam impossíveis de rodar sobre um
+hash.
+
+**Não existe onde guardar a chave de verdade.** O site não tem servidor —
+qualquer chave de criptografia reversível (AES) que morasse no JavaScript da
+página estaria visível a qualquer pessoa que abrisse o DevTools. Não seria
+criptografia, seria só ofuscação. Fazer isso de verdade exigiria rodar a
+cifra dentro do banco (o Supabase tem `pgcrypto` e um cofre de segredos,
+o Vault, para isso) — uma peça de infraestrutura nova, não uma função
+isolada, e cada leitura de telefone/endereço (WhatsApp, entrega) passaria a
+depender dela.
+
+**O que já protege esses dados, sem nada disso:**
+
+- **RLS** (ver a tabela acima) — visitante anônimo não lê nada; só quem está
+  logado e cadastrado em `admins` (papel `admin` ou `vendedor`) enxerga CPF,
+  CNPJ, telefone e endereço.
+- **Criptografia em repouso do próprio banco.** O Postgres do Supabase roda
+  sobre infraestrutura que já cifra o disco — isso é automático, da
+  plataforma, e não depende de nada escrito neste projeto.
+
+Se um dia isso precisar mudar — por exigência legal (LGPD) ou por escala —,
+o caminho certo é `pgcrypto` + Vault no banco, não uma biblioteca de
+criptografia rodando no navegador.
+
 ## Lista de espera
 
 Quem tenta fechar pedido fora da área de entrega entra nesta lista. Ela ficava
