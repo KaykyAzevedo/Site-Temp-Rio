@@ -109,6 +109,15 @@
         return d.length === 10 || d.length === 11;
     }
 
+    /* Pragmático, não RFC — mesma regra usada em js/pedido.js e agora também
+     * no banco (public.email_valido(), migração 013): melhor aceitar um
+     * endereço estranho do que barrar um cliente real. Nenhuma lista de
+     * "domínio suspeito" aqui, pelo mesmo motivo explicado na migração — essa
+     * lista envelhece rápido e barra gente de verdade. */
+    function emailValido(valor) {
+        return /^[^\s@]+@[^\s@]+\.[a-zA-Z]{2,}$/.test(String(valor || '').trim());
+    }
+
     window.Validadores = {
         mascararTelefone: mascararTelefone,
         mascararCpf: mascararCpf,
@@ -118,6 +127,7 @@
         documentoValido: documentoValido,
         telefoneValido: telefoneValido,
         telefoneEhDoRio: telefoneEhDoRio,
+        emailValido: emailValido,
         soDigitos: soDigitos
     };
 })();
