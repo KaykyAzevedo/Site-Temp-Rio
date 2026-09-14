@@ -1508,6 +1508,35 @@
                 if (c) abrirModal(formEditarCliente(c));
             });
         });
+
+        // Reaproveita a mesma RPC da aba LGPD ("Excluir dados"): mantém o
+        // pedido (obrigação fiscal de 5 anos), anonimiza nome/telefone/
+        // e-mail/endereço em usuarios, clientes e pedidos, e apaga leads
+        // com o mesmo documento. Sem solicitação de LGPD associada — só
+        // passa o documento, o terceiro parâmetro fica null.
+        alvo.querySelectorAll('[data-excluir-cliente]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                var documento = b.getAttribute('data-documento');
+                if (!documento) {
+                    window.alert('Este cliente não tem CPF/CNPJ cadastrado — não é possível excluir.');
+                    return;
+                }
+                if (!window.confirm(
+                    'Excluir este cliente?\n\n' +
+                    'Remove nome, telefone, e-mail e endereço do cadastro. Pedidos já fechados ' +
+                    'continuam existindo (obrigação fiscal de 5 anos), mas sem contato nem endereço ' +
+                    'ligados a eles.\n\n' +
+                    'Não tem como desfazer.'
+                )) return;
+
+                b.disabled = true;
+                sb.rpc('lgpd_excluir_pessoa', { p_documento: documento }).then(function (r) {
+                    b.disabled = false;
+                    if (r.error) { window.alert('Não foi possível excluir: ' + r.error.message); return; }
+                    carregar();
+                });
+            });
+        });
     }
 
     function linhaCliente(c) {
@@ -1522,6 +1551,9 @@
                     '<i class="fa-solid fa-chevron-down mr-1" data-icone-detalhe></i>Detalhes</button>' +
                 '<button type="button" class="adm-botao-fantasma" data-editar-cliente="' + esc(c.clienteId) + '">' +
                     '<i class="fa-solid fa-pen mr-1"></i>Editar</button>' +
+                '<button type="button" class="adm-botao-fantasma" data-excluir-cliente="' + esc(c.clienteId) + '" ' +
+                    'data-documento="' + esc(c.cnpj || c.cpf || '') + '" style="color:#FCA5A5">' +
+                    '<i class="fa-solid fa-trash mr-1"></i>Excluir</button>' +
                 linkWhats(c.telefone) +
             '</div></td>' +
         '</tr>' +
