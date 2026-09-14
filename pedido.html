@@ -83,6 +83,30 @@
                     <a href="catalogo.html" class="btn-primary inline-flex items-center gap-2 px-7 py-3.5 rounded-xl font-bold text-sm">
                         Ver catálogo <i class="fa-solid fa-arrow-right text-xs"></i>
                     </a>
+
+                    <!-- Pedido rápido: monta o carrinho de uma vez com os
+                         temperos mais vendidos, 1 caixa de cada (ver
+                         rankingVendas em data/produtos.js). -->
+                    <div class="mt-9 pt-7 border-t border-white/10">
+                        <p class="text-xs text-textSecondary uppercase tracking-widest font-bold mb-4">
+                            Ou monte rápido com os mais vendidos
+                        </p>
+                        <div class="flex flex-col sm:flex-row gap-3 justify-center">
+                            <button type="button" id="btn-rapido-30"
+                                class="px-5 py-3 rounded-xl border border-white/12 text-white/80 hover:text-white hover:border-primary-500/40 transition-all text-xs font-bold uppercase tracking-widest">
+                                Top 30 mais vendidos
+                            </button>
+                            <button type="button" id="btn-rapido-40"
+                                class="px-5 py-3 rounded-xl border border-white/12 text-white/80 hover:text-white hover:border-primary-500/40 transition-all text-xs font-bold uppercase tracking-widest">
+                                Top 40 mais vendidos
+                            </button>
+                            <button type="button" id="btn-rapido-50"
+                                class="px-5 py-3 rounded-xl border border-white/12 text-white/80 hover:text-white hover:border-primary-500/40 transition-all text-xs font-bold uppercase tracking-widest">
+                                Top 50 mais vendidos
+                            </button>
+                        </div>
+                        <p class="text-[0.65rem] text-textSecondary mt-3">1 caixa (24 potes) de cada sabor — ajuste as quantidades depois, se quiser.</p>
+                    </div>
                 </div>
 
                 <!-- Conteúdo -->

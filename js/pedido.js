@@ -1076,7 +1076,23 @@
 
         blocoDisplay() +
 
+        avisoSemPagamento() +
+
         (atendeEndereco() ? blocoEnvio() : blocoForaDaArea());
+    }
+
+    // Sempre visível no resumo, esteja o endereço na área ou não — é o
+    // último aviso antes de qualquer botão que finaliza ou envia o pedido.
+    function avisoSemPagamento() {
+        return '' +
+        '<div class="rounded-xl border border-white/10 bg-white/5 p-4 flex items-start gap-3">' +
+            '<i class="fa-solid fa-circle-info text-primary-400 mt-0.5"></i>' +
+            '<p class="text-xs text-textSecondary leading-relaxed">' +
+                '<span class="text-white font-bold">Nenhum pagamento é feito neste site.</span> ' +
+                'Ao enviar, você fala primeiro com um vendedor pelo WhatsApp, que confirma o pedido ' +
+                'e combina o pagamento com você.' +
+            '</p>' +
+        '</div>';
     }
 
     /* Só para cliente do Rio de Janeiro (UF do endereço) e só quando o
@@ -1110,11 +1126,7 @@
 
         '<button type="button" id="btn-copiar" class="w-full py-3 rounded-xl border border-white/12 text-white/70 hover:text-white hover:border-white/25 transition-all text-xs font-bold uppercase tracking-widest">' +
             'Copiar pedido' +
-        '</button>' +
-
-        '<p class="text-[0.65rem] text-textSecondary text-center leading-relaxed">' +
-            'Nenhum pagamento é feito aqui. Um vendedor confirma o pedido com você.' +
-        '</p>';
+        '</button>';
     }
 
     /* Fora da área: não é porta fechada, é triagem. A lista de espera é o
@@ -1211,6 +1223,27 @@
     }
 
     /* ===================================================================
+     * Pedido rápido — monta o carrinho de uma vez com os N temperos mais
+     * vendidos (rankingVendas, ver data/produtos.js e o catálogo), 1 caixa
+     * de cada. Vive só na tela de carrinho vazio (pedido.html): depois que
+     * o cliente já montou algo à mão, o botão não faz mais sentido ali.
+     *
+     * rankingVendas só cobre 49 sabores (o 50º da lista original repetia um
+     * nome já ranqueado — ver conversa que criou o campo). "Top 50" e "Top
+     * 49" dão o mesmo resultado; o rótulo do botão fica no número que o
+     * cliente reconhece.
+     * =================================================================== */
+    function pedidoRapido(n) {
+        var lista = produtos
+            .filter(function (p) { return p.rankingVendas && p.rankingVendas <= n; })
+            .sort(function (a, b) { return a.rankingVendas - b.rankingVendas; });
+
+        lista.forEach(function (p) { Cart.adicionar(p.id, p.nome, Cart.PASSO); });
+
+        CartUI.toast(lista.length + ' sabores adicionados — 1 caixa de cada.');
+    }
+
+    /* ===================================================================
      * Boot
      * =================================================================== */
     function iniciar() {
@@ -1227,6 +1260,11 @@
             if (Cart.vazio()) return;
             Cart.limpar();
             CartUI.toast('Pedido esvaziado.');
+        });
+
+        [30, 40, 50].forEach(function (n) {
+            var b = document.getElementById('btn-rapido-' + n);
+            if (b) b.addEventListener('click', function () { pedidoRapido(n); });
         });
 
         // Máscaras
