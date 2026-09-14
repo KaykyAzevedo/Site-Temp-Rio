@@ -58,13 +58,47 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     // ---------- Catálogo completo (catalogo.html) ----------
+    // Selo do pódio: fita metálica sobre a foto, no padrão "bestseller" de
+    // e-commerce (ícone + Nº, sem emoji — emoji de medalha renderiza como
+    // troféu genérico idêntico nos três lugares em boa parte dos sistemas,
+    // e destoa da marca). Cada posição tem seu próprio degradê — ouro,
+    // prata e bronze de verdade, não a mesma cor três vezes.
+    const SELO_PODIO = {
+        1: { icone: 'fa-crown', rotulo: 'Nº 1 em vendas', grad: 'linear-gradient(135deg,#F7D774,#C99A2E)', texto: '#3A2604' },
+        2: { icone: 'fa-medal', rotulo: 'Nº 2 em vendas', grad: 'linear-gradient(135deg,#E4E9F0,#A7B0BC)', texto: '#20242B' },
+        3: { icone: 'fa-medal', rotulo: 'Nº 3 em vendas', grad: 'linear-gradient(135deg,#E2A26B,#A4622F)', texto: '#2E1607' }
+    };
+
+    // Fita no canto da própria foto — mesmo lugar onde qualquer loja grande
+    // põe "mais vendido", não empurrando o nome do produto lá embaixo.
+    const seloPodio = (prod) => {
+        const s = SELO_PODIO[prod.rankingVendas];
+        if (!s) return '';
+        return `
+                        <div class="absolute top-3 left-3 z-20 flex items-center gap-1.5 pl-2 pr-3 py-1.5 rounded-lg shadow-lg"
+                            style="background:${s.grad};color:${s.texto}">
+                            <i class="fa-solid ${s.icone} text-[0.8rem]"></i>
+                            <span class="text-[0.65rem] font-bold uppercase tracking-wider leading-none">${s.rotulo}</span>
+                        </div>`;
+    };
+
+    // rankingVendas só existe nos 49 primeiros (ver data/produtos.js); quem
+    // não tem o campo fica sem posição, sempre depois dos 49, na ordem em
+    // que já estava no arquivo — sort() é estável, então isso já sai de
+    // graça, sem precisar tratar o "resto" à parte.
+    const ordenarPorVendas = (lista) => lista.slice().sort((a, b) => {
+        const rA = a.rankingVendas || Infinity;
+        const rB = b.rankingVendas || Infinity;
+        return rA - rB;
+    });
+
     const loadCatalog = () => {
         const container = document.getElementById('catalogGrid');
         if (!container) return;
 
         const renderCatalog = (items) => {
             container.innerHTML = items.map(prod => `
-                <div class="${CLASSES_CARD}" data-id="${prod.id}">${imagemProduto(prod, { lazy: true, overlay: OVERLAY_LUPA })}
+                <div class="${CLASSES_CARD}" data-id="${prod.id}">${imagemProduto(prod, { lazy: true, overlay: OVERLAY_LUPA + seloPodio(prod) })}
                     <div class="p-6 pt-4 bg-[#1A1A1A] relative z-10 flex flex-col flex-1 border-t border-white/5">
                         <h4 class="text-lg font-bold text-white uppercase tracking-wide mb-1 leading-tight">${prod.nome}</h4>
                         <p class="text-primary-500 text-xs font-bold tracking-widest uppercase mb-3">100% Natural</p>
@@ -81,14 +115,16 @@ document.addEventListener('DOMContentLoaded', () => {
             if (window.initAnimations) window.initAnimations();
         };
 
-        renderCatalog(produtos);
+        renderCatalog(ordenarPorVendas(produtos));
 
         const searchInput = document.getElementById('searchInput');
+        const avisoOrdenacao = document.getElementById('ordenacao-aviso');
         if (searchInput) {
             const normalize = (str) => str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
             searchInput.addEventListener('input', (e) => {
                 const termo = normalize(e.target.value);
-                renderCatalog(produtos.filter(p => normalize(p.nome).includes(termo)));
+                if (avisoOrdenacao) avisoOrdenacao.hidden = termo.length > 0;
+                renderCatalog(ordenarPorVendas(produtos.filter(p => normalize(p.nome).includes(termo))));
             });
         }
     };
