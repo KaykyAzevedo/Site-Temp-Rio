@@ -30,37 +30,6 @@
     transform: translateY(0);
 }
 
-/* Scroll indicator */
-.scroll-indicator {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    color: rgba(255, 255, 255, 0.35);
-    font-size: 0.65rem;
-    letter-spacing: 0.15em;
-    text-transform: uppercase;
-    animation: scrollBounce 2.5s ease-in-out infinite;
-}
-
-.scroll-indicator-line {
-    width: 1px;
-    height: 48px;
-    background: linear-gradient(to bottom, rgba(242, 140, 82, 0.6), transparent);
-}
-
-@keyframes scrollBounce {
-    0%,
-    100% {
-        transform: translateY(0);
-        opacity: 0.4;
-    }
-    50% {
-        transform: translateY(8px);
-        opacity: 0.8;
-    }
-}
-
 /* Hero stagger animations */
 @keyframes heroFadeUp {
     from {
@@ -104,8 +73,7 @@
 }
 
 .feature-card .fc-icon-bg,
-.feature-card .fc-text,
-.feature-card .fc-link {
+.feature-card .fc-text {
     transition: all 0.4s ease;
 }
 
@@ -116,10 +84,6 @@
 
 .feature-card:hover .fc-text {
     color: #ffffff !important;
-}
-
-.feature-card:hover .fc-link {
-    color: rgba(255, 255, 255, 0.9) !important;
 }
 
 /* Marquee Ticker */

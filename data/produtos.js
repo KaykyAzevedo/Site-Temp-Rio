@@ -1,7 +1,7 @@
 const produtos = [
     {
         id: "alho-em-po",
-        nome: "Alho Em Po",
+        nome: "Alho em Pó",
         imagem: "assets/images/produtos/alho-em-po.png",
         destaque: false
     },
@@ -25,32 +25,32 @@ const produtos = [
     },
     {
         id: "bicarbonato-de-sodio",
-        nome: "Bicarbonato De Sodio",
+        nome: "Bicarbonato de Sódio",
         imagem: "assets/images/produtos/bicarbonato-de-sodio.png",
         destaque: false
     },
 
     {
         id: "caldo-de-bacon",
-        nome: "Caldo De Bacon",
+        nome: "Caldo de Bacon",
         imagem: "assets/images/produtos/caldo-de-bacon.png",
         destaque: false
     },
     {
         id: "caldo-de-carne",
-        nome: "Caldo De Carne",
+        nome: "Caldo de Carne",
         imagem: "assets/images/produtos/caldo-de-carne.png",
         destaque: false
     },
     {
         id: "caldo-de-galinha",
-        nome: "Caldo De Galinha",
+        nome: "Caldo de Galinha",
         imagem: "assets/images/produtos/caldo-de-galinha.png",
         destaque: false
     },
     {
         id: "caldo-de-legumes",
-        nome: "Caldo De Legumes",
+        nome: "Caldo de Legumes",
         imagem: "assets/images/produtos/caldo-de-legumes.png",
         destaque: false
     },
@@ -62,13 +62,13 @@ const produtos = [
     },
     {
         id: "canela-em-pau",
-        nome: "Canela Em Pau",
+        nome: "Canela em Pau",
         imagem: "assets/images/produtos/canela-em-pau.png",
         destaque: false
     },
     {
         id: "canela-em-po",
-        nome: "Canela Em Po",
+        nome: "Canela em Pó",
         imagem: "assets/images/produtos/canela-em-po.png",
         destaque: false
     },
@@ -86,7 +86,7 @@ const produtos = [
     },
     {
         id: "chimichurri-com-pimenta",
-        nome: "Chimichurri Com Pimenta",
+        nome: "Chimichurri com Pimenta",
         imagem: "assets/images/produtos/chimichurri-com-pimenta.png",
         destaque: false
     },
@@ -110,25 +110,25 @@ const produtos = [
     },
     {
         id: "coentro-em-po",
-        nome: "Coentro Em Po",
+        nome: "Coentro em Pó",
         imagem: "assets/images/produtos/coentro-em-po.png",
         destaque: false
     },
     {
         id: "coloral-temperado",
-        nome: "Coloral Temperado",
+        nome: "Colorau Temperado",
         imagem: "assets/images/produtos/coloral-temperado.png",
         destaque: false
     },
     {
         id: "colorau-colorifico",
-        nome: "Colorau Colorifico",
+        nome: "Colorau Colorífico",
         imagem: "assets/images/produtos/colorau-colorifico.png",
         destaque: false
     },
     {
         id: "cominho-em-po",
-        nome: "Cominho Em Po",
+        nome: "Cominho em Pó",
         imagem: "assets/images/produtos/cominho-em-po.png",
         destaque: false
     },
@@ -146,13 +146,13 @@ const produtos = [
     },
     {
         id: "cravo-em-flor",
-        nome: "Cravo Em Flor",
+        nome: "Cravo em Flor",
         imagem: "assets/images/produtos/cravo-em-flor.png",
         destaque: false
     },
     {
         id: "curcuma",
-        nome: "Curcuma",
+        nome: "Cúrcuma",
         imagem: "assets/images/produtos/curcuma.png",
         destaque: true
     },
@@ -171,7 +171,7 @@ const produtos = [
     },
     {
         id: "dry-hub",
-        nome: "Dry Hub",
+        nome: "Dry Rub",
         imagem: "assets/images/produtos/dry-hub.png",
         destaque: false
     },
@@ -189,7 +189,7 @@ const produtos = [
     },
     {
         id: "familia",
-        nome: "Familia",
+        nome: "Família",
         imagem: "assets/images/produtos/familia.png",
         destaque: false
     },
@@ -207,13 +207,13 @@ const produtos = [
     },
     {
         id: "fumaca-em-po",
-        nome: "Fumaca Em Po",
+        nome: "Fumaça em Pó",
         imagem: "assets/images/produtos/fumaca-em-po.png",
         destaque: false
     },
     {
         id: "gengibre-em-po",
-        nome: "Gengibre Em Po",
+        nome: "Gengibre em Pó",
         imagem: "assets/images/produtos/gengibre-em-po.png",
         destaque: false
     },
@@ -225,7 +225,7 @@ const produtos = [
     },
     {
         id: "hibisco-em-flor",
-        nome: "Hibisco Em Flor",
+        nome: "Hibisco em Flor",
         imagem: "assets/images/produtos/hibisco-em-flor.png",
         destaque: false
     },
@@ -237,19 +237,19 @@ const produtos = [
     },
     {
         id: "limao-com-ervas",
-        nome: "Limao Com Ervas",
+        nome: "Limão com Ervas",
         imagem: "assets/images/produtos/limao-com-ervas.png",
         destaque: false
     },
     {
         id: "limao-e-oregano",
-        nome: "Limao E Oregano",
+        nome: "Limão e Orégano",
         imagem: "assets/images/produtos/limao-e-oregano.png",
         destaque: false
     },
     {
         id: "linhaca-dourada",
-        nome: "Linhaca Dourada",
+        nome: "Linhaça Dourada",
         imagem: "assets/images/produtos/linhaca-dourada.png",
         destaque: false
     },
@@ -261,7 +261,7 @@ const produtos = [
     },
     {
         id: "manjericao",
-        nome: "Manjericao",
+        nome: "Manjericão",
         imagem: "assets/images/produtos/manjericao.png",
         destaque: false
     },
@@ -273,13 +273,13 @@ const produtos = [
     },
     {
         id: "mostarda-em-po",
-        nome: "Mostarda Em Po",
+        nome: "Mostarda em Pó",
         imagem: "assets/images/produtos/mostarda-em-po.png",
         destaque: false
     },
     {
         id: "natural",
-        nome: "Natural",
+        nome: "Natural Fit",
         imagem: "assets/images/produtos/natural.png",
         destaque: false
     },
@@ -291,37 +291,37 @@ const produtos = [
     },
     {
         id: "oregano-peruano",
-        nome: "Oregano Peruano",
+        nome: "Orégano Peruano",
         imagem: "assets/images/produtos/oregano-peruano.png",
         destaque: false
     },
     {
         id: "paprica-defumada-picante",
-        nome: "Paprica Defumada Picante",
+        nome: "Páprica Defumada Picante",
         imagem: "assets/images/produtos/paprica-defumada-picante.png",
         destaque: false
     },
     {
         id: "paprica-defumada",
-        nome: "Paprica Defumada",
+        nome: "Páprica Defumada",
         imagem: "assets/images/produtos/paprica-defumada.png",
         destaque: true
     },
     {
         id: "paprica-doce",
-        nome: "Paprica Doce",
+        nome: "Páprica Doce",
         imagem: "assets/images/produtos/paprica-doce.png",
         destaque: false
     },
     {
         id: "paprica-picante",
-        nome: "Paprica Picante",
+        nome: "Páprica Picante",
         imagem: "assets/images/produtos/paprica-picante.png",
         destaque: true
     },
     {
         id: "para-feijao",
-        nome: "Para Feijao",
+        nome: "Para Feijão",
         imagem: "assets/images/produtos/para-feijao.png",
         destaque: false
     },
@@ -339,37 +339,38 @@ const produtos = [
     },
     {
         id: "peixe",
-        nome: "Peixe",
+        nome: "Peixe Fit",
         imagem: "assets/images/produtos/peixe.png",
         destaque: false
     },
     {
         id: "pimenta-calabresa-em-graos",
-        nome: "Pimenta Calabresa Em Graos",
+        nome: "Pimenta Calabresa em Grãos",
         imagem: "assets/images/produtos/pimenta-calabresa-em-graos.png",
         destaque: false
     },
     {
+        // PENDENTE: sem ficha tecnica cadastrada em js/product-modal.js
         id: "pimenta-em-po",
-        nome: "Pimenta Em Po",
+        nome: "Pimenta em Pó",
         imagem: "assets/images/produtos/pimenta-em-po.png",
         destaque: false
     },
     {
         id: "pimenta-preta-em-graos",
-        nome: "Pimenta Preta Em Graos",
+        nome: "Pimenta Preta em Grãos",
         imagem: "assets/images/produtos/pimenta-preta-em-graos.png",
         destaque: false
     },
     {
         id: "pimenta-preta-em-po",
-        nome: "Pimenta Preta Em Po",
+        nome: "Pimenta Preta em Pó",
         imagem: "assets/images/produtos/pimenta-preta-em-po.png",
         destaque: false
     },
     {
         id: "pimenta-rosa-em-graos",
-        nome: "Pimenta Rosa Em Graos",
+        nome: "Pimenta Rosa em Grãos",
         imagem: "assets/images/produtos/pimenta-rosa-em-graos.png",
         destaque: false
     },
@@ -381,49 +382,49 @@ const produtos = [
     },
     {
         id: "sabor-do-nordeste",
-        nome: "Sabor Do Nordeste",
+        nome: "Sabor do Nordeste",
         imagem: "assets/images/produtos/sabor-do-nordeste.png",
         destaque: false
     },
     {
         id: "sal-de-ouro",
-        nome: "Sal De Ouro",
+        nome: "Sal de Ouro",
         imagem: "assets/images/produtos/sal-de-ouro.png",
         destaque: false
     },
     {
         id: "sal-rosa-do-himalaia-fino",
-        nome: "Sal Rosa Do Himalaia Fino",
+        nome: "Sal Rosa do Himalaia Fino",
         imagem: "assets/images/produtos/sal-rosa-do-himalaia-fino.png",
         destaque: false
     },
     {
         id: "sal-rosa-do-himalaia-grosso",
-        nome: "Sal Rosa Do Himalaia Grosso",
+        nome: "Sal Rosa do Himalaia Grosso",
         imagem: "assets/images/produtos/sal-rosa-do-himalaia-grosso.png",
         destaque: false
     },
     {
         id: "salsa-cebola-e-alho",
-        nome: "Salsa Cebola E Alho",
+        nome: "Salsa, Cebola e Alho",
         imagem: "assets/images/produtos/salsa-cebola-e-alho.png",
         destaque: false
     },
     {
         id: "salsa-cebola-e-bacon",
-        nome: "Salsa Cebola E Bacon",
+        nome: "Salsa, Cebola e Bacon",
         imagem: "assets/images/produtos/salsa-cebola-e-bacon.png",
         destaque: false
     },
     {
         id: "sirio",
-        nome: "Sirio",
+        nome: "Sírio",
         imagem: "assets/images/produtos/sirio.png",
         destaque: false
     },
     {
         id: "tartaro",
-        nome: "Tartaro",
+        nome: "Tártaro",
         imagem: "assets/images/produtos/tartaro.png",
         destaque: false
     },

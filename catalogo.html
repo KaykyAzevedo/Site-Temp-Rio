@@ -24,10 +24,28 @@
     <script src="./data/depoimentos.js"></script>
     <script src="./data/faq.js"></script>
 
+    <!-- Carrinho: estado e persistencia (sem DOM). Precisa de config.js e produtos.js. -->
+    <script src="./js/cart.js"></script>
+
+    <!-- Registro de pedidos e visitas no painel. So insere; nunca le. -->
+    <script src="./js/db.js"></script>
+
+    <!-- Validadores de CPF/CNPJ/telefone -- usados pelo pre-registro. -->
+    <script src="./js/validadores.js"></script>
+
+    <!-- Regioes de entrega: CEP -> regiao, taxa e prazo. -->
+    <script src="./data/regioes.js"></script>
+    <script src="./js/entrega.js"></script>
+
+    <!-- Vitrine "Onde comprar": regra de sugestao e leitura publica. -->
+    <script src="./js/vitrine.js"></script>
+
     <!-- Styles -->
     <link rel="stylesheet" href="./css/base.css">
     <link rel="stylesheet" href="./css/components.css">
     <link rel="stylesheet" href="./css/animations.css">
+    <link rel="stylesheet" href="./css/cart.css">
+    <link rel="stylesheet" href="./css/glass.css">
 
     <style>
         /* CSS specific to product modal which was mostly inline previously */
@@ -39,7 +57,10 @@
     </style>
 </head>
 
-<body class="selection:bg-primary-500 selection:text-white">
+<!-- data-tema="vidro": todo o tema de vidro esta sob esse atributo em
+     css/glass.css. Removendo o atributo, o design anterior volta inteiro. -->
+
+<body class="selection:bg-primary-500 selection:text-white" data-tema="vidro">
 
     <main>
         <!-- NAVBAR for internal pages -->
@@ -54,6 +75,15 @@
         </nav>
 
         <section id="catalogo" class="py-24 border-b border-borderSubtle bg-[#0A0A0A] text-white">
+
+            <!-- Luz ambiente: e o que o vidro dos cards refrata. Sem isto o
+                 backdrop-filter borraria preto chapado e o efeito sumiria. -->
+            <div class="vidro-cena" aria-hidden="true">
+                <div class="vidro-orbe vidro-orbe-1"></div>
+                <div class="vidro-orbe vidro-orbe-2"></div>
+                <div class="vidro-orbe vidro-orbe-3"></div>
+            </div>
+
             <div class="max-w-7xl mx-auto px-6">
                 <div class="flex flex-col md:flex-row md:items-end justify-between mb-16 gap-6 fade-in">
                     <div>
@@ -75,6 +105,10 @@
                             class="w-full bg-[#1A1A1A] border border-borderSubtle text-white text-base rounded-full focus:ring-primary-500 focus:border-primary-500 block pl-12 pr-4 py-3.5 transition-all outline-none hover:border-primary-500/50 focus:bg-[#222]">
                     </div>
                 </div>
+
+                <!-- Onde comprar: lojas parceiras em destaque. Some sozinha
+                     quando nao ha nenhuma vitrine aprovada e vigente. -->
+                <section id="vitrine-secao" class="hidden mb-14"></section>
 
                 <!-- Carregado via JS -->
                 <div class="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6" id="catalogGrid">
@@ -140,6 +174,7 @@
                         <li><a href="index.html#sobre" class="hover:text-primary-400 transition-colors">Nossos
                                 Diferenciais</a></li>
                         <li><a href="index.html#faq" class="hover:text-primary-400 transition-colors">Perguntas Frequentes (FAQ)</a></li>
+                        <li><a href="privacidade.html" class="hover:text-primary-400 transition-colors">Política de Privacidade</a></li>
                     </ul>
                 </div>
 
@@ -191,122 +226,15 @@
         <i class="fa-brands fa-whatsapp"></i>
     </a>
 
-    <!-- Modal Container -->
-    <div id="productModal" class="fixed inset-0 z-[100] hidden">
-        <div class="absolute inset-0 modal-overlay transition-opacity duration-300 opacity-0" id="modalBackdrop"></div>
-        
-        <div class="fixed inset-0 z-10 overflow-y-auto">
-            <div class="flex min-h-full items-center justify-center p-4 text-center sm:p-0">
-                <div id="modalContentPanel" class="relative transform overflow-hidden rounded-2xl surface-card text-left shadow-2xl transition-all duration-300 opacity-0 translate-y-8 sm:my-8 sm:w-full sm:max-w-4xl border border-white/10 flex flex-col md:flex-row">
-                    
-                    <!-- Close Button -->
-                    <button id="closeModalBtn" class="absolute top-4 right-4 z-10 w-10 h-10 bg-black/40 hover:bg-primary-500 rounded-full flex items-center justify-center text-white transition-colors border border-white/10 backdrop-blur-md">
-                        <i class="fa-solid fa-xmark text-lg"></i>
-                    </button>
-
-                    <!-- Left: Image -->
-                    <div class="w-full md:w-1/2 bg-[#111111] relative p-8 flex items-center justify-center min-h-[300px]">
-                        <!-- Decorative bg elements -->
-                        <div class="absolute top-0 left-0 w-full h-full bg-gradient-to-b from-black/20 to-black/60 pointer-events-none"></div>
-                        <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 bg-primary-500/10 rounded-full blur-3xl pointer-events-none"></div>
-                        
-                        <img id="modalImage" src="" alt="" class="relative z-10 w-full max-w-[320px] object-contain drop-shadow-2xl scale-110">
-                    </div>
-
-                    <!-- Right: Info -->
-                    <div class="w-full md:w-1/2 p-8 md:p-10 flex flex-col bg-gradient-to-br from-[#1A1A1A] to-[#0A0A0A]">
-                        
-                        <!-- Header -->
-                        <div class="mb-8">
-                            <span class="badge-highlight inline-flex items-center gap-1.5 text-[0.65rem] font-bold py-1 px-3 rounded-full mb-4 uppercase tracking-widest">
-                                <i class="fa-solid fa-leaf"></i> 100% Natural
-                            </span>
-                            <h3 id="modalTitle" class="text-3xl md:text-4xl font-bold text-white uppercase tracking-tight mb-2" style="font-family: 'Barlow Condensed', sans-serif;">
-                                Nome do Produto
-                            </h3>
-                            <div class="w-12 h-1 bg-gradient-to-r from-primary-400 to-primary-600 rounded-full"></div>
-                        </div>
-
-                        <!-- Details (Scrollable if needed) -->
-                        <div class="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-8" style="max-height: 45vh;">
-                            
-                            <!-- Ingredientes -->
-                            <div>
-                                <h4 class="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-                                    <i class="fa-solid fa-list-check text-primary-500"></i> Ingredientes
-                                </h4>
-                                <p id="modalIngredients" class="text-gray-300 font-light text-sm leading-relaxed">
-                                    Carregando...
-                                </p>
-                            </div>
-
-                            <!-- Alérgicos -->
-                            <div>
-                                <h4 class="text-xs font-bold text-gray-500 uppercase tracking-widest mb-3 flex items-center gap-2">
-                                    <i class="fa-solid fa-triangle-exclamation text-primary-500"></i> Alérgicos
-                                </h4>
-                                <p id="modalAllergens" class="text-gray-300 font-light text-sm leading-relaxed p-3 bg-white/5 border border-white/10 rounded-lg">
-                                    Carregando...
-                                </p>
-                            </div>
-
-                            <!-- Tabela Nutricional (Dynamic) -->
-                            <div id="modalNutritionContainer" class="hidden">
-                                <div class="flex items-center justify-between mb-3">
-                                    <h4 class="text-xs font-bold text-gray-500 uppercase tracking-widest flex items-center gap-2">
-                                        <i class="fa-solid fa-chart-pie text-primary-500"></i> Inf. Nutricional
-                                    </h4>
-                                    <span id="modalServingSize" class="text-xs text-gray-400 font-light bg-black/40 px-2 py-1 rounded">Porção 5g</span>
-                                </div>
-                                
-                                <div class="bg-[#111111] border border-white/10 rounded-xl overflow-hidden text-xs">
-                                    <table class="w-full text-left border-collapse">
-                                        <thead>
-                                            <tr class="bg-black/40 text-gray-400">
-                                                <th class="py-2 px-3 font-semibold w-1/2">Quantidade por porção</th>
-                                                <th class="py-2 px-3 font-semibold text-right">%VD(*)</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="modalNutritionBody" class="text-gray-300 font-light divide-y divide-white/5">
-                                            <!-- Preenchido via JS -->
-                                        </tbody>
-                                    </table>
-                                </div>
-                                <p class="text-[0.6rem] text-gray-500 mt-2 font-light italic leading-tight">
-                                    * % Valores Diários de referência com base em uma dieta de 2.000 kcal ou 8.400 kJ. 
-                                    Seus valores diários podem ser maiores ou menores dependendo de suas necessidades energéticas.
-                                </p>
-                            </div>
-
-                            <div id="modalNoNutrition" class="hidden">
-                                <p class="text-xs text-gray-500 italic flex items-center gap-2">
-                                    <i class="fa-solid fa-circle-info"></i> Tabela nutricional não aplicável ou isenta.
-                                </p>
-                            </div>
-
-                        </div>
-
-                        <!-- Footer CTA -->
-                        <div class="mt-8 pt-6 border-t border-white/10">
-                            <a href="https://wa.me/5521996203535" target="_blank" class="w-full btn-primary py-3.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 group config-whatsapp">
-                                <span>Comprar no Atacado</span>
-                                <i class="fa-brands fa-whatsapp text-lg group-hover:scale-110 transition-transform"></i>
-                            </a>
-                        </div>
-                    </div>
-
-                </div>
-            </div>
-        </div>
-    </div>
 
     <!-- Scripts -->
     <script src="./js/main.js"></script>
-    <script src="./js/faq.js"></script>
-    <script src="./js/sliders.js"></script>
-    <script src="./js/counters.js"></script>
     <script src="./js/product-modal.js"></script>
+    <script src="./js/cart-ui.js"></script>
     <script src="./js/content-loader.js"></script>
+
+    <!-- Pop-up de pre-registro: 3s depois de carregar, uma vez por navegador. -->
+    <script src="./js/pre-registro.js"></script>
 </body>
 
 </html>

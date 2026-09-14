@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Painel | Temp Rio</title>
+
+    <!-- Painel interno: fora de buscadores. -->
+    <meta name="robots" content="noindex, nofollow">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Lato:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Mapa da aba Visitas: bolhas por região, a partir do CEP que o próprio
+         visitante digita (ver a nota grande em admin/migracoes/007 sobre por
+         que não é IP nem geolocalização do navegador). Tiles do OpenStreetMap,
+         sem chave de API. -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+
+    <!-- Tailwind para o leiaute. O visual do painel vem de css/admin.css. -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Diferente do resto do site, o painel carrega a biblioteca do Supabase:
+         aqui existe login de verdade, e autenticação não se faz à mão. -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+
+    <script src="./js/config.js"></script>
+    <link rel="stylesheet" href="./css/admin.css">
+</head>
+
+<body class="admin">
+
+    <!-- ================= Configuração ausente ================= -->
+    <div id="tela-config" class="hidden min-h-screen flex items-center justify-center p-6">
+        <div class="adm-card p-8 max-w-lg">
+            <div class="flex items-center gap-3 mb-4">
+                <i class="fa-solid fa-plug-circle-exclamation" style="color:var(--adm-marca)"></i>
+                <h1 class="text-lg font-bold">Painel ainda não conectado</h1>
+            </div>
+            <p class="text-sm mb-4" style="color:var(--adm-tinta-2)">
+                O banco de dados não está configurado, então não há o que mostrar.
+                O site continua funcionando normalmente — ele só não está registrando
+                pedidos nem visitas.
+            </p>
+            <p class="text-sm" style="color:var(--adm-tinta-2)">
+                O passo a passo está em <strong>admin/LEIAME-PAINEL.md</strong>:
+                criar o projeto no Supabase, rodar <strong>admin/supabase.sql</strong>
+                e preencher <strong>siteConfig.supabase</strong> em <strong>js/config.js</strong>.
+            </p>
+        </div>
+    </div>
+
+    <!-- ================= Login ================= -->
+    <div id="tela-login" class="hidden min-h-screen flex items-center justify-center p-6">
+        <form id="form-login" class="adm-card p-8 w-full max-w-sm">
+            <img src="./assets/images/logo.png" alt="Temp Rio" class="h-10 w-auto object-contain mx-auto mb-7">
+            <h1 class="text-base font-bold mb-1">Painel de administrador</h1>
+            <p class="text-xs mb-6" style="color:var(--adm-tinta-3)">Acesso restrito à equipe.</p>
+
+            <label for="login-email" class="block text-xs font-bold uppercase tracking-wider mb-2" style="color:var(--adm-tinta-3)">E-mail</label>
+            <input id="login-email" type="email" autocomplete="username" class="adm-input mb-4" required>
+
+            <label for="login-senha" class="block text-xs font-bold uppercase tracking-wider mb-2" style="color:var(--adm-tinta-3)">Senha</label>
+            <input id="login-senha" type="password" autocomplete="current-password" class="adm-input mb-6" required>
+
+            <button type="submit" id="btn-entrar" class="adm-botao w-full">Entrar</button>
+            <p id="login-erro" class="text-xs mt-4 hidden" style="color:#FCA5A5"></p>
+        </form>
+    </div>
+
+    <!-- ================= Painel ================= -->
+    <div id="tela-painel" class="hidden">
+
+        <header class="border-b sticky top-0 z-40" style="border-color:var(--adm-borda);background-color:rgba(10,10,10,0.92);backdrop-filter:blur(12px)">
+            <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
+                <div class="flex items-center gap-4">
+                    <img src="./assets/images/logo.png" alt="Temp Rio" class="h-7 w-auto object-contain">
+                    <span class="text-xs font-bold uppercase tracking-widest" style="color:var(--adm-tinta-3)">Painel</span>
+                </div>
+                <div class="flex items-center gap-3">
+                    <!-- Sino: badge some sozinho ao abrir Pedidos ou clicar nele.
+                         Sem o Realtime ligado (migração 010), ele simplesmente
+                         nunca soa — não é um erro, é a rede de segurança
+                         funcionando sem a peça opcional. -->
+                    <button type="button" id="btn-sino" class="adm-sino" title="Novos pedidos" aria-label="Novos pedidos">
+                        <i class="fa-solid fa-bell"></i>
+                        <span id="sino-contagem" class="adm-sino-contagem hidden">0</span>
+                    </button>
+                    <span id="quem" class="text-xs hidden sm:inline" style="color:var(--adm-tinta-3)"></span>
+                    <button type="button" id="btn-sair" class="adm-botao-fantasma">Sair</button>
+                </div>
+            </div>
+
+            <div class="max-w-7xl mx-auto px-6 pb-3 flex items-center gap-1 overflow-x-auto">
+                <button type="button" class="adm-aba is-ativa" data-aba="dashboard">Dashboard</button>
+                <button type="button" class="adm-aba" data-aba="pedidos">Pedidos</button>
+                <button type="button" class="adm-aba" data-aba="clientes">Clientes</button>
+                <button type="button" class="adm-aba" data-aba="historico">Histórico</button>
+                <button type="button" class="adm-aba" data-aba="vendas">Dashboard de vendas</button>
+                <button type="button" class="adm-aba" data-aba="espera">Lista de espera</button>
+                <button type="button" class="adm-aba" data-aba="vitrine">Vitrine</button>
+                <button type="button" class="adm-aba" data-aba="regioes">Regiões</button>
+                <button type="button" class="adm-aba" data-aba="visitas">Visitas</button>
+                <button type="button" class="adm-aba" data-aba="leads">Leads</button>
+                <button type="button" class="adm-aba" data-aba="lgpd">LGPD</button>
+            </div>
+        </header>
+
+        <main class="max-w-7xl mx-auto px-6 py-8">
+
+            <!-- Filtros globais. Período sempre existiu; os quatro novos afetam
+                 Pedidos, Clientes e Histórico — as telas que mostram linha a
+                 linha, em vez de agregado já pronto. O Dashboard de vendas usa
+                 funções do banco (vendas_por_produto, visitas_por_regiao)
+                 escopadas só pelo período rápido — um filtro que não filtra
+                 nada ali seria pior que nenhum filtro. -->
+            <div class="adm-card p-4 mb-7">
+                <div class="flex items-center justify-between gap-3 mb-1">
+                    <button type="button" id="btn-filtros" class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider" style="color:var(--adm-tinta-3)">
+                        <i class="fa-solid fa-sliders"></i> Filtros
+                        <i class="fa-solid fa-chevron-down text-[0.6rem]" id="icone-filtros"></i>
+                    </button>
+                    <div class="flex items-center gap-2">
+                        <span id="filtros-resumo" class="text-xs" style="color:var(--adm-tinta-3)"></span>
+                        <button type="button" id="btn-atualizar" class="adm-botao-fantasma">
+                            <i class="fa-solid fa-rotate mr-1"></i> Atualizar
+                        </button>
+                    </div>
+                </div>
+
+                <div id="corpo-filtros" class="hidden mt-4 pt-4" style="border-top:1px solid var(--adm-borda)">
+                    <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div>
+                            <label for="filtro-periodo" class="adm-tile-rotulo block mb-1.5">Período (rápido)</label>
+                            <div class="relative">
+                                <select id="filtro-periodo" class="adm-filtro w-full">
+                                    <option value="3">Últimos 3 meses</option>
+                                    <option value="6">Últimos 6 meses</option>
+                                    <option value="12" selected>Últimos 12 meses</option>
+                                </select>
+                                <i class="fa-solid fa-chevron-down absolute right-3 top-1/2 -translate-y-1/2 text-[0.6rem] pointer-events-none" style="color:var(--adm-tinta-3)"></i>
+                            </div>
+                        </div>
+                        <div>
+                            <label for="filtro-de" class="adm-tile-rotulo block mb-1.5">De</label>
+                            <input type="date" id="filtro-de" class="adm-input" style="padding:.55rem .7rem">
+                        </div>
+                        <div>
+                            <label for="filtro-ate" class="adm-tile-rotulo block mb-1.5">Até</label>
+                            <input type="date" id="filtro-ate" class="adm-input" style="padding:.55rem .7rem">
+                        </div>
+                        <div>
+                            <label for="filtro-busca" class="adm-tile-rotulo block mb-1.5">Buscar cliente</label>
+                            <input type="text" id="filtro-busca" class="adm-input" style="padding:.55rem .7rem"
+                                placeholder="Nome, CNPJ, CPF ou telefone">
+                        </div>
+                        <div>
+                            <label class="adm-tile-rotulo block mb-1.5">Região</label>
+                            <div id="filtro-regiao" class="adm-multiselect"></div>
+                        </div>
+                        <div>
+                            <label class="adm-tile-rotulo block mb-1.5">Tipo de cliente</label>
+                            <div class="flex gap-1">
+                                <button type="button" class="adm-chip is-ativo" data-tipo-cliente="todos">Todos</button>
+                                <button type="button" class="adm-chip" data-tipo-cliente="pj">PJ</button>
+                                <button type="button" class="adm-chip" data-tipo-cliente="pf">PF</button>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="adm-tile-rotulo block mb-1.5">Status do pedido</label>
+                            <div id="filtro-status" class="adm-multiselect"></div>
+                        </div>
+                        <div class="flex items-end">
+                            <button type="button" id="btn-limpar-filtros" class="adm-botao-fantasma">
+                                <i class="fa-solid fa-eraser mr-1"></i> Limpar filtros
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <section id="painel-dashboard"></section>
+            <section id="painel-pedidos" class="hidden"></section>
+            <section id="painel-clientes" class="hidden"></section>
+            <section id="painel-historico" class="hidden"></section>
+            <section id="painel-vendas" class="hidden"></section>
+            <section id="painel-espera" class="hidden"></section>
+            <section id="painel-vitrine" class="hidden"></section>
+            <section id="painel-regioes" class="hidden"></section>
+            <section id="painel-visitas" class="hidden"></section>
+            <section id="painel-leads" class="hidden"></section>
+            <section id="painel-lgpd" class="hidden"></section>
+        </main>
+    </div>
+
+    <!-- Modal de detalhes: cliente ou itens de um pedido. Um só elemento,
+         reaproveitado pelas duas telas — evita duplicar a mecânica de
+         abrir/fechar/travar o scroll. -->
+    <div id="modal-detalhe" class="adm-modal-fundo hidden">
+        <div class="adm-modal-painel">
+            <button type="button" id="btn-fechar-modal" class="adm-modal-fechar" aria-label="Fechar">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+            <div id="modal-detalhe-corpo"></div>
+        </div>
+    </div>
+
+    <div id="dica" class="adm-dica"></div>
+
+    <script src="./js/admin.js"></script>
+</body>
+
+</html>

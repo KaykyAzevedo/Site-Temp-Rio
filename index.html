@@ -24,10 +24,21 @@
     <script src="./data/depoimentos.js"></script>
     <script src="./data/faq.js"></script>
 
+    <!-- Carrinho: estado e persistencia (sem DOM). Precisa de config.js e produtos.js. -->
+    <script src="./js/cart.js"></script>
+
+    <!-- Registro de pedidos e visitas no painel. So insere; nunca le. -->
+    <script src="./js/db.js"></script>
+
+    <!-- Regioes de entrega: CEP -> regiao, taxa e prazo. -->
+    <script src="./data/regioes.js"></script>
+    <script src="./js/entrega.js"></script>
+
     <!-- Styles -->
     <link rel="stylesheet" href="./css/base.css">
     <link rel="stylesheet" href="./css/components.css">
     <link rel="stylesheet" href="./css/animations.css">
+    <link rel="stylesheet" href="./css/cart.css">
 </head>
 
 <body class="selection:bg-primary-500 selection:text-white">
@@ -614,6 +625,7 @@
                         <li><a href="#faq" class="hover:text-primary-400 transition-colors">Perguntas Frequentes (FAQ)</a></li>
                         <li><a href="#como-comprar" class="hover:text-primary-400 transition-colors">Como Comprar</a>
                         </li>
+                        <li><a href="privacidade.html" class="hover:text-primary-400 transition-colors">Política de Privacidade</a></li>
                     </ul>
                 </div>
 
@@ -670,6 +682,7 @@
     <script src="./js/faq.js"></script>
     <script src="./js/sliders.js"></script>
     <script src="./js/counters.js"></script>
+    <script src="./js/cart-ui.js"></script>
     <script src="./js/content-loader.js"></script>
 </body>
 
