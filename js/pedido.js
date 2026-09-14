@@ -346,6 +346,63 @@
         return Cart.totais().valorCentavos + freteCentavos();
     }
 
+    /* ===================================================================
+     * Display expositor (comodato gratuito)
+     *
+     * Os mesmos 3 tamanhos anunciados na home (index.html, seção #displays):
+     * o pedido mínimo de cada um está escrito ali, em texto para o cliente —
+     * aqui só é traduzido pra código, na mesma ordem em que a decisão deve
+     * ser tomada (o maior que bater primeiro, pra "Sob Medida" não perder
+     * pra "140cm" quando os dois batem ao mesmo tempo).
+     *
+     * Só aparece pra cliente do Rio de Janeiro (UF do endereço de entrega):
+     * o comodato depende de entrega e manutenção do próprio expositor, que
+     * hoje só cobrimos dentro do estado.
+     * =================================================================== */
+    var DISPLAYS = [
+        { id: 'sob-medida', rotulo: 'Display Sob Medida', bate: function (cx24, cx48, totalCx) { return totalCx >= 100; } },
+        { id: '140cm', rotulo: 'Display 140cm', bate: function (cx24, cx48) { return cx24 >= 40 && cx48 >= 15; } },
+        { id: '80cm', rotulo: 'Display 80cm', bate: function (cx24) { return cx24 >= 40; } }
+    ];
+
+    // Quantas caixas de cada tamanho (24 e 48 potes) o carrinho inteiro monta,
+    // somando sabor por sabor — é o mesmo cálculo que já monta o pedido
+    // (Cart.montarCaixas), só separado por tamanho em vez de somado num total.
+    function caixasPorTamanho() {
+        var porTamanho = {};
+        Cart.itens().forEach(function (it) {
+            Cart.montarCaixas(it.potes).forEach(function (c) {
+                porTamanho[c.potes] = (porTamanho[c.potes] || 0) + c.caixas;
+            });
+        });
+        return porTamanho;
+    }
+
+    function recomendarDisplay() {
+        var porTamanho = caixasPorTamanho();
+        var cx24 = porTamanho[24] || 0;
+        var cx48 = porTamanho[48] || 0;
+        var totalCx = Cart.totais().caixas;
+        for (var i = 0; i < DISPLAYS.length; i++) {
+            if (DISPLAYS[i].bate(cx24, cx48, totalCx)) return DISPLAYS[i];
+        }
+        return null;
+    }
+
+    // Sobrevive a redesenhos do resumo (o checkbox é recriado a cada render):
+    // o estado mora aqui, fora do DOM, e o render devolve pro elemento novo.
+    var interesseDisplayMarcado = false;
+
+    // Anexa o interesse no display à observação só nesta cópia dos dados,
+    // gerada na hora do envio — nunca no campo que o cliente vê e edita.
+    function comNotaDeDisplay(d) {
+        var rec = recomendarDisplay();
+        if (!rec || !interesseDisplayMarcado || d.uf !== 'RJ') return d;
+        var nota = 'Tem interesse no ' + rec.rotulo + ' em comodato gratuito.';
+        d.observacoes = d.observacoes ? d.observacoes + '\n' + nota : nota;
+        return d;
+    }
+
     function atualizarAvisoEntrega() {
         var box = $('#aviso-entrega');
         var cep = inputDe('cep').value.replace(/\D/g, '');
@@ -490,7 +547,7 @@
     }
 
     function dadosDaEspera() {
-        var d = lerFormulario();
+        var d = comNotaDeDisplay(lerFormulario());
         var t = Cart.totais();
         return {
             enviadoEm: new Date().toISOString(),
@@ -519,7 +576,7 @@
     /* Monta a linha do pedido para o banco. Os nomes das colunas seguem o
      * padrão do Postgres (minúsculas com underscore), não o do formulário. */
     function pedidoParaBanco() {
-        var d = lerFormulario();
+        var d = comNotaDeDisplay(lerFormulario());
         var t = Cart.totais();
         return {
             razao_social: d.razaoSocial,
@@ -785,7 +842,7 @@
             return;
         }
 
-        var envio = montarEnvio(lerFormulario());
+        var envio = montarEnvio(comNotaDeDisplay(lerFormulario()));
         if (!envio) return;
 
         // Registra o pedido no painel. Sem await de propósito: o que importa
@@ -1017,7 +1074,32 @@
                 Cart.formatarBRL(totalComFrete()) + '</span>' +
         '</div>' +
 
+        blocoDisplay() +
+
         (atendeEndereco() ? blocoEnvio() : blocoForaDaArea());
+    }
+
+    /* Só para cliente do Rio de Janeiro (UF do endereço) e só quando o
+     * pedido já bate o mínimo de algum tamanho — ver DISPLAYS acima. Fica
+     * claro que é uma escolha do cliente, não algo que o site decide por
+     * ele: o checkbox começa desmarcado, e só o marcar avisa o vendedor. */
+    function blocoDisplay() {
+        if (inputDe('uf').value !== 'RJ') return '';
+        var rec = recomendarDisplay();
+        if (!rec) return '';
+
+        return '' +
+        '<div class="rounded-xl border border-primary-500/30 bg-primary-500/5 p-4 space-y-2">' +
+            '<p class="flex items-center gap-2 text-sm font-bold text-primary-400">' +
+                '<i class="fa-solid fa-shop"></i> Seu pedido dá direito a um ' + esc(rec.rotulo) + '</p>' +
+            '<p class="text-xs text-textSecondary leading-relaxed">' +
+                'Expositor em comodato gratuito para a sua loja — sem custo, você só devolve se parar ' +
+                'de trabalhar com a Temp Rio. Combinamos entrega e instalação pelo WhatsApp.</p>' +
+            '<label class="flex items-start gap-2 text-xs pt-1 cursor-pointer">' +
+                '<input type="checkbox" id="f-interesseDisplay" class="mt-0.5">' +
+                '<span>Quero o ' + esc(rec.rotulo) + ' — avisar o vendedor junto com o pedido</span>' +
+            '</label>' +
+        '</div>';
     }
 
     function blocoEnvio() {
@@ -1103,13 +1185,23 @@
         $('#pedido-lista').innerHTML = itens.map(CartUI.linhaHTML).join('');
         $('#pedido-resumo').innerHTML = resumoHTML(t);
 
+        // O checkbox é recriado a cada render: devolve o estado que mora em
+        // interesseDisplayMarcado, e volta a escutar a mudança.
+        var caixaDisplay = document.getElementById('f-interesseDisplay');
+        if (caixaDisplay) {
+            caixaDisplay.checked = interesseDisplayMarcado;
+            caixaDisplay.addEventListener('change', function () {
+                interesseDisplayMarcado = this.checked;
+            });
+        }
+
         // Os botões do resumo mudam conforme o endereço atende ou não.
         var enviar_ = $('#btn-enviar');
         if (enviar_) enviar_.addEventListener('click', enviar);
 
         var copiar_ = $('#btn-copiar');
         if (copiar_) copiar_.addEventListener('click', function () {
-            var envio = montarEnvio(lerFormulario());
+            var envio = montarEnvio(comNotaDeDisplay(lerFormulario()));
             if (!envio) return;
             copiar(envio.copia).then(function () { CartUI.toast('Pedido copiado.'); });
         });
