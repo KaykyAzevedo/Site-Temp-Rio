@@ -547,9 +547,19 @@
         if (filtros.status.length) partes.push(filtros.status.length + ' status');
         $('#filtros-resumo').textContent = partes.length ? partes.join(' · ') : '';
 
-        desenharPedidos();
-        desenharClientes();
-        desenharVendas();
+        // Só as três telas que os filtros globais tocam — e só a que está
+        // na tela agora é redesenhada de fato; as outras duas ficam
+        // marcadas e são redesenhadas quando a pessoa clicar nelas (mesma
+        // ideia de desenharAbaSeSuja, para não travar o painel a cada
+        // mudança de filtro).
+        ['pedidos', 'clientes', 'vendas'].forEach(function (a) { abasParaRedesenhar[a] = true; });
+        desenharAbaSeSuja(abaAtual);
+
+        // O card de Receita, no modo "Personalizado", lê filtros.de/ate —
+        // sem isto, mudar o filtro global deixava o número visível
+        // desatualizado até a pessoa clicar de novo no botão Personalizado.
+        // É leve (só dois textContent) — pode continuar sempre em dia.
+        desenharCardReceita();
     }
 
     /* Um pedido passa no filtro quando bate com CADA critério ativo — critérios
@@ -726,27 +736,57 @@
             $('#painel-' + a).classList.toggle('hidden', a !== qual);
         });
 
-        // O mapa nasce (em desenharTudo) enquanto a aba Visitas ainda pode
-        // estar escondida — um container com display:none mede 0x0, e o
-        // Leaflet trava nesse tamanho até alguém mandar recalcular. Aqui é o
-        // momento certo: a aba acabou de ficar visível de verdade.
+        // A aba só é redesenhada de verdade agora, se algo mudou desde a
+        // última vez que ela foi vista (ver desenharAbaSeSuja) — é o que
+        // evita redesenhar as 11 abas inteiras a cada clique em "confirmar
+        // pedido".
+        desenharAbaSeSuja(qual);
+
+        // O mapa nasce em desenharVisitas() — se a aba acabou de aparecer
+        // agora (estava escondida, então media 0x0 e o Leaflet trava nesse
+        // tamanho), pede para recalcular depois que o container já é visível.
         if (qual === 'visitas' && mapaVisitas) {
             setTimeout(function () { mapaVisitas.invalidateSize(); }, 0);
         }
     }
 
+    /* Cada aba só é redesenhada de fato quando é a que está na tela — as
+     * outras dez ficam "sujas" (precisando de redesenho) até a pessoa
+     * clicar nelas. Antes, qualquer ação (confirmar pedido, marcar entregue,
+     * mudar um filtro...) chamava carregar() -> desenharTudo(), que refazia
+     * o HTML de TODAS as abas de uma vez — incluindo o Kanban inteiro, os
+     * gráficos SVG, a tabela de visitas E o mapa Leaflet (que ainda cria uma
+     * camada de tiles nova a cada chamada). Como o Tailwind via CDN
+     * recompila as classes a cada mutação grande do DOM, isso empilhava
+     * segundos de trabalho síncrono a cada clique — travando o painel
+     * inteiro por vários segundos numa ação tão comum quanto "confirmar
+     * venda". Redesenhar só o que está visível resolve isso na raiz, não só
+     * esconde o sintoma. */
+    var abasParaRedesenhar = {};
+    var DESENHAR_ABA = {
+        dashboard: desenharDashboard,
+        pedidos: desenharPedidos,
+        clientes: desenharClientes,
+        historico: desenharHistorico,
+        vendas: desenharVendas,
+        espera: desenharEspera,
+        vitrine: desenharVitrine,
+        regioes: desenharRegioes,
+        visitas: desenharVisitas,
+        leads: desenharLeads,
+        lgpd: desenharLgpd
+    };
+
+    function desenharAbaSeSuja(aba) {
+        if (!abasParaRedesenhar[aba]) return;
+        abasParaRedesenhar[aba] = false;
+        var fn = DESENHAR_ABA[aba];
+        if (fn) fn();
+    }
+
     function desenharTudo() {
-        desenharDashboard();
-        desenharPedidos();
-        desenharClientes();
-        desenharHistorico();
-        desenharVendas();
-        desenharEspera();
-        desenharVitrine();
-        desenharRegioes();
-        desenharVisitas();
-        desenharLeads();
-        desenharLgpd();
+        ABAS.forEach(function (a) { abasParaRedesenhar[a] = true; });
+        desenharAbaSeSuja(abaAtual);
     }
 
     /* ===================================================================
