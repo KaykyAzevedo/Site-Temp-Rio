@@ -262,7 +262,68 @@
                     preRegistro: { nome: dados.nome, telefone: dados.telefone, tipo_documento: dados.tipoDocumento }
                 }).catch(function () { /* o lead já foi salvo; isto é só enriquecimento */ });
             }
+            // O checkbox de consentimento já bloqueou o envio se não estava
+            // marcado (js/pre-registro.js) — isto só registra QUANDO e com
+            // qual versão da política, para existir prova depois. Nunca
+            // desfaz o lead se falhar: a pessoa já autorizou, isso já vale.
+            registrarConsentimento('pre_registro', dados.documento, dados.telefone)
+                .catch(function () { /* consentimento é registro, não é o que garante o direito */ });
             return true;
+        });
+    }
+
+    /* ===================================================================
+     * LGPD — consentimento, direitos do titular (migração 015)
+     * =================================================================== */
+    var VERSAO_POLITICA_ATUAL = 'v1'; // muda quando o texto de /privacidade.html mudar de fato
+
+    function registrarConsentimento(contexto, documento, telefone) {
+        if (!cfg()) return Promise.resolve(false);
+        return inserir('consentimentos', {
+            contexto: contexto,
+            documento: String(documento || '').replace(/\D/g, ''),
+            telefone: telefone || null,
+            versao_politica: VERSAO_POLITICA_ATUAL,
+            user_agent: navigator.userAgent || null
+        }).then(function () { return true; });
+    }
+
+    /* Pedido de acesso, correção ou exclusão — nunca é instantâneo (ver o
+     * porquê na migração 015): isto só registra o pedido. Quem atende é o
+     * admin, pela aba LGPD do painel. */
+    function registrarSolicitacaoLgpd(tipo, documento, telefone, contato, mensagem) {
+        if (!cfg()) return Promise.reject(new Error('supabase nao configurado'));
+        return inserir('solicitacoes_lgpd', {
+            tipo: tipo,
+            documento: String(documento || '').replace(/\D/g, ''),
+            telefone: telefone || null,
+            contato: contato || null,
+            mensagem: mensagem || null
+        });
+    }
+
+    /* Direito de acesso: é o único self-service, porque só lê (ver
+     * migração 015). Confirma identidade com documento + telefone juntos —
+     * mais forte que só um dos dois. */
+    function consultarMeusDados(documento, telefone) {
+        var c = cfg();
+        if (!c) return Promise.reject(new Error('supabase nao configurado'));
+
+        return fetch(c.url.replace(/\/+$/, '') + '/rest/v1/rpc/lgpd_meus_dados', {
+            method: 'POST',
+            headers: {
+                apikey: c.anonKey, Authorization: 'Bearer ' + c.anonKey,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                p_documento: String(documento || '').replace(/\D/g, ''),
+                p_telefone: String(telefone || '').replace(/\D/g, '')
+            })
+        }).then(function (resposta) {
+            if (!resposta.ok) {
+                return resposta.text().then(function (t) { throw new Error('HTTP ' + resposta.status + ' ' + t.slice(0, 200)); });
+            }
+            return resposta.json(); // null quando documento+telefone não batem com ninguém
         });
     }
 
@@ -284,7 +345,9 @@
         registrarVisita: registrarVisita,
         registrarPreRegistro: registrarPreRegistro,
         registrarCepConsultado: registrarCepConsultado,
-        reenviarPedidosPendentes: reenviarPedidosPendentes
+        reenviarPedidosPendentes: reenviarPedidosPendentes,
+        registrarSolicitacaoLgpd: registrarSolicitacaoLgpd,
+        consultarMeusDados: consultarMeusDados
     };
 
     // A visita é contada assim que a página carrega.

@@ -20,6 +20,7 @@ rodar de novo por engano não quebra nada e não duplica dado.
 | 012 | `migracoes/012_completar_visita_rpc.sql` | corrige o "completar visita" (tempo de sessão, CEP, pré-registro), que nunca funcionou — leia o cabeçalho |
 | 013 | `migracoes/013_validacao_seguranca.sql` | valida CPF/CNPJ/telefone/e-mail/CEP e trava tamanho de texto livre, direto no banco — defesa contra escrita fora do site |
 | 014 | `migracoes/014_papel_vendedor.sql` | papel `vendedor` em `admins` — acesso a pedidos e clientes, sem o resto do painel |
+| 015 | `migracoes/015_lgpd.sql` | consentimento, pedidos do titular (acesso/correção/exclusão), retenção e auditoria — ver a seção LGPD em admin/LEIAME-PAINEL.md |
 
 As três primeiras estão em `admin/` e não aqui porque já existiam antes desta
 pasta; renomeá-las quebraria as referências espalhadas pelo código.

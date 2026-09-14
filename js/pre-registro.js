@@ -85,8 +85,9 @@
 
                     '<label class="campo-check">' +
                         '<input type="checkbox" id="pr-consentimento">' +
-                        '<span>Autorizo a Temp Rio a guardar meus dados para contato. ' +
-                            'Não compartilhamos com terceiros.</span>' +
+                        '<span>Li e aceito os <a href="./privacidade.html" target="_blank" rel="noopener"' +
+                            ' class="underline hover:text-primary-400">Termos e a Política de Privacidade</a>. ' +
+                            'Autorizo a Temp Rio a guardar meus dados para contato — não compartilhamos com terceiros.</span>' +
                     '</label>' +
                     '<p class="campo-msg" id="pr-consentimento-erro"></p>' +
 

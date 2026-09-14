@@ -334,6 +334,60 @@ precisa de uma Supabase Edge Function, que este site (todo estático) ainda não
 tem. O cabeçalho de `admin/migracoes/011_leads_pre_registro.sql` explica o
 caminho para ligar isso, se um dia fizer sentido.
 
+## LGPD — consentimento, direitos do titular e retenção
+
+A página `/privacidade.html` é o centro disso: explica o que coletamos, por
+quanto tempo, e tem um formulário para exercer os três direitos que a LGPD
+garante e que fazem sentido aqui (acesso, correção, exclusão). O checkbox do
+pop-up de pré-registro (aba Leads) agora linka para essa página, e cada aceite
+gera uma linha em `consentimentos` — data e versão da política, sem IP (ver o
+porquê no cabeçalho de `admin/migracoes/015_lgpd.sql`).
+
+**Acesso é self-service.** A pessoa digita CPF/CNPJ + telefone (os dois
+juntos, como segunda confirmação) e vê os próprios dados na hora — cadastro,
+endereço e pedidos. Não passa pelo painel, não precisa de você.
+
+**Correção e exclusão passam pela aba LGPD.** Aparecem como pedidos
+pendentes; nada muda sozinho. Para **correção**, edite o cadastro na aba
+Clientes do jeito que já faz hoje e depois clique **Marcar atendida** na aba
+LGPD, só para fechar o registro. Para **exclusão**, o botão **Excluir dados**
+já chama a função do banco que anonimiza tudo de uma vez — pede confirmação,
+porque não tem como desfazer.
+
+**O que "excluir" realmente apaga:** nome, telefone, e-mail, CPF/CNPJ e
+endereço, em `usuarios`/`clientes`; o mesmo tipo de dado nos pedidos já
+fechados dessa pessoa (telefone, e-mail, endereço, nome do responsável); e os
+pré-registros (`leads`) dela por completo. **O que fica:** o pedido em si
+(CNPJ, razão social, valor, itens, status) — é obrigação fiscal de 5 anos, e
+a própria LGPD prevê essa exceção (art. 16) para quando há lei específica
+exigindo a guarda.
+
+**Retenção também é manual, pelos dois botões no topo da aba LGPD** — este
+projeto não tem cron nem Edge Function para rodar isso sozinho:
+
+1. **Marcar inativos**: acha todo cliente sem pedido há 12 meses ou mais e
+   marca a data. Rode de vez em quando (uma vez por mês já cobre bem).
+2. **Anonimizar marcados**: quem foi marcado há 90 dias ou mais e continua
+   sem comprar é anonimizado — mesma limpeza da exclusão manual, só que em
+   lote.
+
+**Auditoria.** A tabela `auditoria` guarda quem (e-mail do admin, ou "self-
+service" quando é a própria pessoa consultando os dados) fez o quê e quando,
+para exclusões, purgas e consultas de acesso — é o rastro que a LGPD pede
+para ações consequentes sobre dado pessoal. **Não é um log de toda leitura do
+painel**: o Postgres não dispara gatilho em `SELECT`, e forçar isso (extensão
+`pgAudit`, ou reescrever toda tela do painel para passar por uma função)
+custaria mais do que vale para as telas de relatório. Se um auditor pedir
+"todo acesso, sempre", esse é o limite honesto do que este projeto entrega
+hoje.
+
+**Se um dia vazar dado de verdade:** a LGPD exige avisar a ANPD (Autoridade
+Nacional de Proteção de Dados) em até 72 horas da confirmação do incidente, e
+avisar as pessoas afetadas. Isso é um processo seu, não algo que o código
+faz sozinho — mas a tabela `auditoria` e os logs do próprio Supabase
+(Authentication → Audit Logs) são o primeiro lugar a olhar para entender o
+que aconteceu e quando.
+
 ## Clientes, Kanban, Dashboard de vendas e filtros
 
 **Clientes.** Uma tabela com todo lojista que já fez pedido — o cadastro se

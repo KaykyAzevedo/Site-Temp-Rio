@@ -354,17 +354,21 @@
     var abaAtual = 'dashboard';
     var dados = { resumo: [], visitas: [], pedidos: [], espera: [],
                   regioes: [], faixas: [], vitrines: [], usuarios: [], clientes: [],
-                  vendasRegiao: [], vendasProduto: [], visitasBrutas: [], leads: [] };
+                  vendasRegiao: [], vendasProduto: [], visitasBrutas: [], leads: [],
+                  solicitacoesLgpd: [] };
 
     var ABAS = ['dashboard', 'pedidos', 'clientes', 'historico', 'vendas',
-                'espera', 'vitrine', 'regioes', 'visitas', 'leads'];
+                'espera', 'vitrine', 'regioes', 'visitas', 'leads', 'lgpd'];
 
     /* Abas fora do alcance de um vendedor (migração 014: RLS só libera
      * pedidos/clientes/usuarios para quem não é admin). Esconder a aba é
      * só UX — a proteção de verdade já está no banco; sem isto, o vendedor
      * só veria essas telas permanentemente vazias, o que confunde mais do
-     * que ajuda. */
-    var ABAS_SO_ADMIN = ['vendas', 'espera', 'vitrine', 'regioes', 'visitas', 'leads'];
+     * que ajuda. LGPD entra na lista por um motivo à parte: é área
+     * juridicamente sensível (excluir/anonimizar dado de cliente), e as
+     * próprias funções RPC da migração 015 já exigem eh_admin() — o
+     * vendedor nem conseguiria agir aqui mesmo se visse a aba. */
+    var ABAS_SO_ADMIN = ['vendas', 'espera', 'vitrine', 'regioes', 'visitas', 'leads', 'lgpd'];
 
     /* Filtros globais: afetam Pedidos, Clientes e Dashboard de vendas — as
      * três telas que mostram linha a linha, em vez de um agregado já pronto
@@ -669,7 +673,8 @@
             sb.from('visitas')
                 .select('pagina, sessao, criado_em, regiao_id, cep, dispositivo, referencia, segundos')
                 .order('criado_em', { ascending: false }).limit(1500),
-            sb.from('leads').select('*').order('criado_em', { ascending: false })
+            sb.from('leads').select('*').order('criado_em', { ascending: false }),
+            sb.from('solicitacoes_lgpd').select('*').order('criado_em', { ascending: false })
         ]).then(function (rs) {
             marcarCarregando(false);
 
@@ -692,6 +697,7 @@
             dados.vendasRegiao = rs[10].data || [];
             dados.visitasBrutas = rs[11].data || [];
             dados.leads = rs[12].data || [];
+            dados.solicitacoesLgpd = rs[13].data || [];
             montarChipsDeFiltro();
             desenharTudo();
         });
@@ -740,6 +746,7 @@
         desenharRegioes();
         desenharVisitas();
         desenharLeads();
+        desenharLgpd();
     }
 
     /* ===================================================================
@@ -2706,6 +2713,169 @@
                 return [dataHora(l.criado_em), l.nome, l.telefone, (l.tipo_documento || '').toUpperCase(),
                         l.documento, l.ddd_rio ? 'Sim' : 'Não', l.pagina_origem || ''];
             }));
+    }
+
+    /* ===================================================================
+     * LGPD — pedidos do titular (acesso é self-service, não passa por
+     * aqui) e retenção (migração 015)
+     *
+     * "Corrigir" nunca acontece sozinho: o admin lê a mensagem, edita o
+     * cadastro na aba Clientes do jeito que já faz hoje, e só então marca
+     * o pedido como atendido aqui. "Excluir" tem um botão que chama a
+     * função do banco direto — é a única ação desta aba que muda dado.
+     * =================================================================== */
+    var lgpdFiltro = 'pendentes'; // pendentes | atendidos | todos
+
+    function lgpdPassaNoFiltro(s) {
+        if (lgpdFiltro === 'pendentes') return !s.atendido;
+        if (lgpdFiltro === 'atendidos') return s.atendido;
+        return true;
+    }
+
+    var LGPD_TIPO_ROTULO = { exclusao: 'Exclusão', correcao: 'Correção' };
+
+    function desenharLgpd() {
+        var alvo = $('#painel-lgpd');
+        var todos = dados.solicitacoesLgpd;
+
+        var pendentes = todos.filter(function (s) { return !s.atendido; }).length;
+
+        var cabecalhoRetencao =
+            '<div class="adm-card p-5 mb-7">' +
+                '<p class="font-bold text-sm mb-1">Retenção de dados</p>' +
+                '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">' +
+                    'Cliente sem pedido há 12 meses é marcado; depois de mais 90 dias sem voltar a comprar, ' +
+                    'os dados de contato e endereço são anonimizados (o pedido em si fica — 5 anos, por lei fiscal). ' +
+                    'Sem servidor agendado neste projeto, os dois passos são botões — rode de tempos em tempos.' +
+                '</p>' +
+                '<div class="flex gap-2 flex-wrap">' +
+                    '<button type="button" class="adm-botao-fantasma" id="btn-lgpd-marcar">' +
+                        '<i class="fa-regular fa-clock mr-1"></i>1. Marcar inativos (12+ meses)</button>' +
+                    '<button type="button" class="adm-botao-fantasma" id="btn-lgpd-purgar">' +
+                        '<i class="fa-solid fa-broom mr-1"></i>2. Anonimizar marcados (90+ dias)</button>' +
+                '</div>' +
+                '<p id="lgpd-retencao-resultado" class="text-xs mt-3" style="color:var(--adm-tinta-3)"></p>' +
+            '</div>';
+
+        if (!todos.length) {
+            alvo.innerHTML = cabecalhoRetencao + cartaoVazio('Nenhum pedido de titular ainda',
+                'Pedidos de correção ou exclusão de dados, feitos pelo formulário em /privacidade.html, aparecem aqui. ' +
+                'Pedido de acesso não aparece — é self-service, a pessoa vê os próprios dados na hora.');
+            ligarBotoesRetencao(alvo);
+            return;
+        }
+
+        var filtrados = todos.filter(lgpdPassaNoFiltro);
+
+        alvo.innerHTML = cabecalhoRetencao +
+            '<div class="flex items-center justify-between flex-wrap gap-3 mb-5">' +
+                '<div class="flex gap-1">' +
+                    ['pendentes', 'atendidos', 'todos'].map(function (v) {
+                        var rotulo = v === 'pendentes' ? 'Pendentes (' + pendentes + ')' : v.charAt(0).toUpperCase() + v.slice(1);
+                        return '<button type="button" class="adm-chip' + (lgpdFiltro === v ? ' is-ativo' : '') +
+                            '" data-lgpd-filtro="' + v + '">' + rotulo + '</button>';
+                    }).join('') +
+                '</div>' +
+            '</div>' +
+            (filtrados.length
+                ? '<div class="adm-card p-5"><div class="overflow-x-auto"><table class="adm-tabela"><thead><tr>' +
+                      '<th>Quando</th><th>Tipo</th><th>Documento</th><th>Telefone</th><th>Mensagem</th><th>Ação</th>' +
+                  '</tr></thead><tbody>' +
+                  filtrados.map(linhaLgpd).join('') +
+                  '</tbody></table></div></div>'
+                : cartaoVazio('Nenhum pedido com esse filtro', 'Troque o filtro acima para ver os demais.'));
+
+        ligarBotoesRetencao(alvo);
+
+        alvo.querySelectorAll('[data-lgpd-filtro]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                lgpdFiltro = b.getAttribute('data-lgpd-filtro');
+                desenharLgpd();
+            });
+        });
+
+        alvo.querySelectorAll('[data-lgpd-atender]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                var id = b.getAttribute('data-lgpd-atender');
+                sb.from('solicitacoes_lgpd')
+                    .update({ atendido: true, atendido_em: new Date().toISOString(), atendido_por: usuario ? usuario.email : null })
+                    .eq('id', id)
+                    .then(function (r) {
+                        if (r.error) { window.alert('Não foi possível marcar: ' + r.error.message); return; }
+                        carregar();
+                    });
+            });
+        });
+
+        alvo.querySelectorAll('[data-lgpd-excluir]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                var id = b.getAttribute('data-lgpd-excluir');
+                var documento = b.getAttribute('data-lgpd-documento');
+                if (!window.confirm(
+                    'Confirmar exclusão dos dados de ' + documento + '?\n\n' +
+                    'Isso apaga o cadastro, telefone e endereço. Pedidos já fechados continuam ' +
+                    'existindo (obrigação fiscal de 5 anos), mas sem contato nem endereço ligados a eles.\n\n' +
+                    'Não tem como desfazer.'
+                )) return;
+
+                b.disabled = true;
+                sb.rpc('lgpd_excluir_pessoa', { p_documento: documento, p_solicitacao_id: id })
+                    .then(function (r) {
+                        b.disabled = false;
+                        if (r.error) { window.alert('Não foi possível excluir: ' + r.error.message); return; }
+                        carregar();
+                    });
+            });
+        });
+    }
+
+    function linhaLgpd(s) {
+        return '<tr>' +
+            '<td>' + esc(dataHora(s.criado_em)) + '</td>' +
+            '<td>' + esc(LGPD_TIPO_ROTULO[s.tipo] || s.tipo) + '</td>' +
+            '<td>' + esc(s.documento) + '</td>' +
+            '<td>' + esc(s.telefone || '—') + (s.contato ? ' · ' + esc(s.contato) : '') + '</td>' +
+            '<td class="max-w-xs truncate" title="' + esc(s.mensagem || '') + '">' + esc(s.mensagem || '—') + '</td>' +
+            '<td><div class="flex items-center gap-1 flex-wrap">' +
+                (s.atendido
+                    ? '<span class="adm-selo adm-selo-confirmado">Atendido</span>'
+                    : '<button type="button" class="adm-botao-fantasma" data-lgpd-atender="' + esc(s.id) + '">Marcar atendida</button>' +
+                      (s.tipo === 'exclusao'
+                          ? '<button type="button" class="adm-botao-fantasma" data-lgpd-excluir="' + esc(s.id) +
+                            '" data-lgpd-documento="' + esc(s.documento) + '">' +
+                            '<i class="fa-solid fa-user-slash mr-1"></i>Excluir dados</button>'
+                          : '')) +
+            '</div></td>' +
+        '</tr>';
+    }
+
+    function ligarBotoesRetencao(alvo) {
+        var resultado = alvo.querySelector('#lgpd-retencao-resultado');
+
+        var botaoMarcar = alvo.querySelector('#btn-lgpd-marcar');
+        if (botaoMarcar) botaoMarcar.addEventListener('click', function () {
+            botaoMarcar.disabled = true;
+            sb.rpc('lgpd_marcar_inativos').then(function (r) {
+                botaoMarcar.disabled = false;
+                if (r.error) { window.alert('Não foi possível marcar: ' + r.error.message); return; }
+                resultado.textContent = (r.data || 0) + ' cliente(s) marcado(s) como inativo — entram na carência de 90 dias.';
+            });
+        });
+
+        var botaoPurgar = alvo.querySelector('#btn-lgpd-purgar');
+        if (botaoPurgar) botaoPurgar.addEventListener('click', function () {
+            if (!window.confirm(
+                'Isso anonimiza (apaga contato e endereço, mantém o pedido fiscal) todo cliente marcado ' +
+                'há 90 dias ou mais. Não tem como desfazer. Continuar?'
+            )) return;
+            botaoPurgar.disabled = true;
+            sb.rpc('lgpd_purgar_marcados').then(function (r) {
+                botaoPurgar.disabled = false;
+                if (r.error) { window.alert('Não foi possível anonimizar: ' + r.error.message); return; }
+                resultado.textContent = (r.data || 0) + ' cliente(s) anonimizado(s) por retenção vencida.';
+                if (r.data > 0) carregar();
+            });
+        });
     }
 
     /* ===================================================================
