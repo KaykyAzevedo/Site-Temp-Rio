@@ -62,15 +62,4 @@ document.addEventListener('DOMContentLoaded', () => {
     // Run once on load for static elements
     window.initAnimations();
 
-    // Video Configuration
-    const heroVideo = document.querySelector('#hero-video');
-    if (heroVideo) {
-        heroVideo.addEventListener('loadedmetadata', () => {
-            if (heroVideo.duration > 8) {
-                heroVideo.playbackRate = heroVideo.duration / 8;
-            }
-        });
-        heroVideo.loop = true;
-        heroVideo.playbackRate = 0.75;
-    }
 });

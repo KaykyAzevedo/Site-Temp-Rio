@@ -1,0 +1,851 @@
+/* ============================================================
+   HERO
+   Texto numa coluna limpa a esquerda; o tempero num painel
+   proprio a direita, sem texto por cima. O --accent acompanha
+   o po do tempero em destaque.
+   Tudo escopado em #hero-section para nao vazar no resto do site.
+   ============================================================ */
+
+@property --accent {
+    syntax: "<color>";
+    inherits: true;
+    initial-value: #D95B2A;
+}
+
+@property --accent-soft {
+    syntax: "<color>";
+    inherits: true;
+    initial-value: #F5A45F;
+}
+
+#hero-section {
+    --accent: #D95B2A;
+    --accent-soft: #F5A45F;
+    --h-ink: #0A0806;
+    --h-line: rgba(255, 255, 255, 0.09);
+    --h-text: #F7F2EC;
+    --h-dim: rgba(247, 242, 236, 0.66);
+    --h-faint: rgba(247, 242, 236, 0.42);
+
+    transition: --accent 900ms ease, --accent-soft 900ms ease;
+
+    position: relative;
+    background: var(--h-ink);
+    color: var(--h-text);
+    overflow: hidden;
+    isolation: isolate;
+}
+
+/* brilho ambiente discreto atras do texto, na cor do tempero */
+#hero-section::before {
+    content: '';
+    position: absolute;
+    z-index: 0;
+    pointer-events: none;
+    left: -10%;
+    top: 20%;
+    width: 52%;
+    height: 70%;
+    background: radial-gradient(ellipse at 30% 50%, color-mix(in srgb, var(--accent) 13%, transparent) 0%, transparent 62%);
+}
+
+#hero-section .hero-inner {
+    position: relative;
+    z-index: 1;
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 22px clamp(18px, 4vw, 48px) 40px;
+    display: flex;
+    flex-direction: column;
+    gap: clamp(22px, 4vh, 44px);
+}
+
+/* ---------- navegacao ---------- */
+#hero-section .hero-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--h-line);
+}
+
+#hero-section .hero-logo {
+    width: clamp(140px, 14vw, 196px);
+    height: auto;
+    display: block;
+    filter: drop-shadow(0 0 22px rgba(242, 140, 82, 0.5));
+    animation: heroLogoBloom 1s cubic-bezier(.2, .85, .25, 1) both;
+}
+
+@keyframes heroLogoBloom {
+    0% {
+        opacity: 0;
+        transform: scale(.88) translateY(-6px);
+        filter: drop-shadow(0 0 0 rgba(242, 140, 82, 0)) blur(6px);
+    }
+
+    60% {
+        filter: drop-shadow(0 0 42px rgba(242, 140, 82, 0.85)) blur(0);
+    }
+
+    100% {
+        opacity: 1;
+        transform: none;
+        filter: drop-shadow(0 0 22px rgba(242, 140, 82, 0.5)) blur(0);
+    }
+}
+
+#hero-section .hero-links {
+    display: flex;
+    align-items: center;
+    gap: clamp(16px, 2.6vw, 34px);
+    animation: heroRise .8s ease both .2s;
+}
+
+#hero-section .hero-links a {
+    font-size: 0.9rem;
+    font-weight: 400;
+    color: var(--h-dim);
+    text-decoration: none;
+    transition: color .25s;
+}
+
+#hero-section .hero-links a:hover {
+    color: var(--h-text);
+}
+
+#hero-section .hero-nav-cta {
+    font-size: 0.86rem;
+    font-weight: 700;
+    color: #F28C52;
+    border: 1px solid rgba(242, 140, 82, 0.45);
+    border-radius: 10px;
+    padding: 11px 18px;
+    transition: background .25s, color .25s;
+}
+
+#hero-section .hero-nav-cta:hover {
+    background: #F28C52;
+    color: #0A0806;
+}
+
+/* ---------- divisao ---------- */
+#hero-section .hero-split {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+    gap: clamp(24px, 3.2vw, 46px);
+    align-items: center;
+    min-width: 0;
+}
+
+#hero-section .hero-copy {
+    max-width: 620px;
+    min-width: 0;
+    padding-block: 12px;
+}
+
+#hero-section .hero-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--accent-soft);
+    margin-bottom: 22px;
+    animation: heroRise .8s ease both .3s;
+}
+
+#hero-section .hero-eyebrow::before {
+    content: '';
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 10px var(--accent);
+}
+
+#hero-section .hero-hl {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 900;
+    font-style: italic;
+    text-transform: uppercase;
+    line-height: 0.9;
+    letter-spacing: -0.012em;
+    /* o teto cabe a maior variacao da linha do meio ("Um mundo irresistivel") */
+    font-size: clamp(2.2rem, 5.2vw, 4.3rem);
+    margin: 0 0 24px;
+}
+
+/* O padding da folga para o overflow:hidden nao cortar nem as descidas dos
+   glifos (Q, p, g) nem a inclinacao do italico no fim da linha. A margem
+   negativa devolve tudo ao fluxo: a largura util continua sendo a da coluna. */
+#hero-section .hero-mask {
+    display: block;
+    overflow: hidden;
+    padding: 0.12em 0.26em 0.2em 0;
+    margin: 0 -0.26em -0.2em 0;
+}
+
+#hero-section .hero-mask>span {
+    display: block;
+    animation: heroLineUp .95s cubic-bezier(.16, .85, .24, 1) both;
+}
+
+#hero-section .hero-m1>span {
+    animation-delay: .42s;
+}
+
+#hero-section .hero-m2>span {
+    animation-delay: .54s;
+}
+
+#hero-section .hero-m3>span {
+    animation-delay: .66s;
+}
+
+@keyframes heroLineUp {
+    from {
+        transform: translateY(135%);
+    }
+
+    to {
+        transform: translateY(0);
+    }
+}
+
+#hero-section .hero-acc {
+    display: inline-block;
+    background: linear-gradient(94deg, var(--accent-soft) 0%, var(--accent) 60%, color-mix(in srgb, var(--accent) 65%, #000) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+    /* brilho curto o bastante para caber na folga do mask */
+    filter: drop-shadow(0 2px 9px color-mix(in srgb, var(--accent) 45%, transparent));
+}
+
+/* a palavra troca em elevador junto com o tempero em destaque */
+@keyframes heroWordOut {
+    to {
+        transform: translateY(-120%);
+        opacity: 0;
+    }
+}
+
+@keyframes heroWordIn {
+    from {
+        transform: translateY(120%);
+        opacity: 0;
+    }
+
+    to {
+        transform: none;
+        opacity: 1;
+    }
+}
+
+#hero-section .hero-lead {
+    font-size: clamp(0.98rem, 1.1vw, 1.08rem);
+    font-weight: 300;
+    line-height: 1.68;
+    color: var(--h-dim);
+    max-width: 32rem;
+    margin: 0 0 30px;
+    animation: heroRise .9s ease both .82s;
+}
+
+#hero-section .hero-lead b {
+    color: var(--h-text);
+    font-weight: 700;
+}
+
+#hero-section .hero-ctas {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 14px 26px;
+    margin-bottom: 34px;
+    animation: heroRise .9s ease both .94s;
+}
+
+#hero-section .hero-btn {
+    position: relative;
+    overflow: hidden;
+    display: inline-flex;
+    align-items: center;
+    gap: 14px;
+    padding: 17px 26px;
+    border-radius: 12px;
+    background: linear-gradient(180deg, #F28C52 0%, #D96E30 100%);
+    color: #fff;
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 0.95rem;
+    box-shadow: 0 12px 34px -10px rgba(242, 140, 82, 0.7);
+    transition: transform .25s ease, box-shadow .25s ease;
+}
+
+#hero-section .hero-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 16px 40px -10px rgba(242, 140, 82, 0.85);
+}
+
+#hero-section .hero-btn::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -120%;
+    width: 55%;
+    height: 100%;
+    background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+    transform: skewX(-18deg);
+    animation: heroSweep 4.6s ease-in-out 2.4s infinite;
+}
+
+@keyframes heroSweep {
+    0% {
+        left: -120%;
+    }
+
+    22% {
+        left: 150%;
+    }
+
+    100% {
+        left: 150%;
+    }
+}
+
+#hero-section .hero-link-more {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 700;
+    font-size: 0.92rem;
+    color: var(--h-text);
+    text-decoration: none;
+    padding-bottom: 6px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.22);
+    transition: border-color .25s;
+}
+
+#hero-section .hero-link-more:hover {
+    border-color: var(--accent-soft);
+}
+
+#hero-section .hero-link-more .arr {
+    transition: transform .25s;
+}
+
+#hero-section .hero-link-more:hover .arr {
+    transform: translateX(4px);
+}
+
+#hero-section .hero-stats {
+    display: flex;
+    align-items: center;
+    gap: clamp(18px, 2.6vw, 34px);
+    animation: heroRise .9s ease both 1.1s;
+}
+
+#hero-section .hero-stat b {
+    display: block;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 800;
+    font-size: clamp(1.8rem, 2.6vw, 2.3rem);
+    line-height: 1;
+    color: var(--h-text);
+    font-variant-numeric: tabular-nums;
+    margin-bottom: 6px;
+}
+
+#hero-section .hero-stat span {
+    font-size: 0.62rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--h-faint);
+}
+
+#hero-section .hero-vr {
+    width: 1px;
+    height: 38px;
+    background: rgba(255, 255, 255, 0.12);
+}
+
+/* ---------- painel do produto ---------- */
+#hero-section .hero-panel {
+    position: relative;
+    /* min-width:0 impede que o aspect-ratio + min-height forcem uma largura
+       maior que a coluna do grid, o que cortava o selo na borda direita */
+    min-width: 0;
+    aspect-ratio: 1.24 / 1;
+    min-height: 340px;
+    max-height: 660px;
+    border-radius: 22px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: #0D0A08;
+    box-shadow: 0 40px 90px -40px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(0, 0, 0, 0.6);
+    animation: heroPanelIn 1.1s cubic-bezier(.16, .85, .24, 1) both .5s;
+    isolation: isolate;
+    container-type: inline-size;
+}
+
+@keyframes heroPanelIn {
+    from {
+        opacity: 0;
+        transform: translateX(34px) scale(.97);
+    }
+
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+#hero-section .hero-stage {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+}
+
+#hero-section .hero-shot {
+    position: absolute;
+    inset: -3%;
+    background-size: cover;
+    background-position: 50% 44%;
+    opacity: 0;
+    transition: opacity 1100ms ease;
+    will-change: opacity, transform;
+}
+
+#hero-section .hero-shot.active {
+    opacity: 1;
+    animation: heroKenburns 9s ease-out both;
+}
+
+@keyframes heroKenburns {
+    from {
+        transform: scale(1.1);
+    }
+
+    to {
+        transform: scale(1.0);
+    }
+}
+
+#hero-section .hero-halo {
+    position: absolute;
+    z-index: 1;
+    pointer-events: none;
+    top: 45%;
+    left: 50%;
+    width: 88%;
+    aspect-ratio: 1;
+    transform: translate(-50%, -50%);
+    background: radial-gradient(circle, color-mix(in srgb, var(--accent) 30%, transparent) 0%, transparent 60%);
+    animation: heroHaloPulse 7s ease-in-out infinite;
+}
+
+@keyframes heroHaloPulse {
+
+    0%,
+    100% {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: .7;
+    }
+
+    50% {
+        transform: translate(-50%, -50%) scale(1.08);
+        opacity: .95;
+    }
+}
+
+#hero-section .hero-ring {
+    position: absolute;
+    z-index: 2;
+    pointer-events: none;
+    top: 45%;
+    left: 50%;
+    width: 54%;
+    aspect-ratio: 1;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    border: 1px solid color-mix(in srgb, var(--accent-soft) 40%, transparent);
+    animation: heroRingBreath 5s ease-in-out infinite;
+}
+
+@keyframes heroRingBreath {
+
+    0%,
+    100% {
+        transform: translate(-50%, -50%) scale(1);
+        opacity: .55;
+    }
+
+    50% {
+        transform: translate(-50%, -50%) scale(1.05);
+        opacity: .9;
+    }
+}
+
+/* so o rodape do painel escurece, para o nome e as miniaturas */
+#hero-section .hero-panel-scrim {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+    background: linear-gradient(180deg, rgba(10, 8, 6, 0.35) 0%, transparent 18%, transparent 44%, rgba(10, 8, 6, 0.72) 74%, rgba(10, 8, 6, 0.95) 100%);
+}
+
+#hero-section .hero-dust {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    pointer-events: none;
+}
+
+#hero-section .hero-grain {
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    pointer-events: none;
+    opacity: 0.13;
+    background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyBAMAAADsEZWCAAAAGFBMVEUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMc/wvAAAACHRSTlMAMwA0MwA0M0dOuTIAAAB5SURBVDjLjY/BCcAwDMN899/54x5Q0EtIwD6O48C2wX7GjMhMZGZk5u8/MzJmZGRmZGRmZGRmZGRmZGT+jLzMiMxEZkZmRmZGRmZGRmZGZkZmRmZGRmZGRmZGZkZmRkZmRkZmRmZGRmZGRmZGRmZGRmZGRmZGRmZG5gN0V8o5Bw2QjwAAAABJRU5ErkJggg==");
+    background-size: 44px;
+}
+
+/* selo circular girando */
+#hero-section .hero-seal {
+    position: absolute;
+    z-index: 5;
+    top: 20px;
+    right: 20px;
+    width: clamp(84px, 9vw, 112px);
+    aspect-ratio: 1;
+    display: grid;
+    place-items: center;
+    animation: heroRise .8s ease both 1.2s;
+}
+
+#hero-section .hero-seal svg {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    animation: heroSpin 22s linear infinite;
+}
+
+#hero-section .hero-seal svg text {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 700;
+    font-size: 11.2px;
+    letter-spacing: 0.22em;
+    fill: rgba(247, 242, 236, 0.7);
+}
+
+@keyframes heroSpin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+#hero-section .hero-seal .core {
+    width: 56%;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background: rgba(10, 8, 6, 0.65);
+    backdrop-filter: blur(6px);
+    border: 1px solid color-mix(in srgb, var(--accent-soft) 45%, transparent);
+    display: grid;
+    place-items: center;
+    text-align: center;
+}
+
+#hero-section .hero-seal .core b {
+    display: block;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 800;
+    font-style: italic;
+    font-size: clamp(1rem, 1.5vw, 1.3rem);
+    line-height: 1;
+    color: var(--accent-soft);
+}
+
+#hero-section .hero-seal .core small {
+    display: block;
+    font-size: 0.44rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--h-dim);
+    margin-top: 2px;
+}
+
+/* rodape do painel: miniaturas a esquerda, nome no canto inferior direito */
+#hero-section .hero-foot {
+    position: absolute;
+    z-index: 5;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 0 18px 18px;
+}
+
+#hero-section .hero-feat {
+    order: 2;
+    flex: none;
+    text-align: right;
+    pointer-events: none;
+}
+
+#hero-section .hero-feat small {
+    display: block;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--h-faint);
+    margin-bottom: 6px;
+}
+
+#hero-section .hero-feat .hero-mask {
+    display: block;
+    overflow: hidden;
+    padding: 0.08em 0.2em 0.14em 0;
+    margin: 0 -0.2em -0.14em 0;
+}
+
+#hero-section .hero-feat-name {
+    display: block;
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 800;
+    font-style: italic;
+    text-transform: uppercase;
+    font-size: clamp(1.6rem, 2.6vw, 2.3rem);
+    line-height: 1;
+    letter-spacing: -0.01em;
+    color: var(--h-text);
+    text-shadow: 0 2px 20px rgba(0, 0, 0, 0.6);
+}
+
+#hero-section .hero-feat-meta {
+    font-size: 0.7rem;
+    color: var(--accent-soft);
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    margin-top: 5px;
+}
+
+@keyframes heroNameOut {
+    to {
+        transform: translateY(-135%);
+        opacity: 0;
+    }
+}
+
+@keyframes heroNameIn {
+    from {
+        transform: translateY(135%);
+        opacity: 0;
+    }
+
+    to {
+        transform: none;
+        opacity: 1;
+    }
+}
+
+/* miniaturas: pequenas por padrao, crescem so no hover, a partir da base */
+#hero-section .hero-thumbs {
+    order: 1;
+    display: flex;
+    align-items: flex-end;
+    gap: 7px;
+    flex: none;
+}
+
+#hero-section .hero-thumb {
+    position: relative;
+    padding: 0;
+    cursor: pointer;
+    /* acompanha a largura do painel para caber ao lado do nome */
+    width: clamp(34px, 7.8cqw, 44px);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 9px;
+    background: rgba(10, 8, 6, 0.55);
+    backdrop-filter: blur(8px);
+    overflow: hidden;
+    transform-origin: bottom center;
+    transition: border-color .3s, transform .28s cubic-bezier(.2, .8, .3, 1), background .3s;
+}
+
+#hero-section .hero-thumb:hover,
+#hero-section .hero-thumb:focus-visible {
+    transform: scale(1.34);
+    z-index: 3;
+    border-color: rgba(255, 255, 255, 0.45);
+}
+
+#hero-section .hero-thumb.active {
+    border-color: var(--accent);
+    background: rgba(10, 8, 6, 0.75);
+}
+
+/* o enquadramento de cada foto vem do JS (thumbPos), calculado a partir da
+   posicao do pote em cada imagem, para todos ficarem centrados no quadrado */
+#hero-section .hero-thumb .pic {
+    display: block;
+    width: 100%;
+    aspect-ratio: 1;
+    background-size: 175%;
+    filter: saturate(.7) brightness(.72);
+    transition: filter .3s;
+}
+
+#hero-section .hero-thumb.active .pic,
+#hero-section .hero-thumb:hover .pic {
+    filter: none;
+}
+
+#hero-section .hero-thumb .prog {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 2px;
+    width: 100%;
+    opacity: 0;
+}
+
+#hero-section .hero-thumb.active .prog {
+    opacity: 1;
+}
+
+#hero-section .hero-thumb.active .prog::after {
+    content: '';
+    display: block;
+    height: 100%;
+    width: 100%;
+    background: var(--accent);
+    transform-origin: left;
+    transform: scaleX(0);
+    animation: heroProg var(--dwell, 5200ms) linear forwards;
+}
+
+@keyframes heroProg {
+    to {
+        transform: scaleX(1);
+    }
+}
+
+@keyframes heroRise {
+    from {
+        opacity: 0;
+        transform: translateY(18px);
+    }
+
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+/* ============================================================
+   RESPONSIVO
+   ============================================================ */
+@media (max-width: 1024px) {
+    #hero-section .hero-split {
+        grid-template-columns: 1fr;
+        gap: 30px;
+    }
+
+    #hero-section .hero-copy {
+        max-width: 600px;
+    }
+
+    /* empilhado, o tempero vem primeiro: o produto aparece sem precisar rolar */
+    #hero-section .hero-panel {
+        order: -1;
+        aspect-ratio: 1.25/1;
+        min-height: 320px;
+        max-height: none;
+    }
+
+    #hero-section .hero-links a:not(.hero-nav-cta) {
+        display: none;
+    }
+}
+
+@media (max-width: 640px) {
+    #hero-section .hero-inner {
+        padding-bottom: 28px;
+    }
+
+    #hero-section .hero-panel {
+        aspect-ratio: 1/1.05;
+        border-radius: 16px;
+    }
+
+    #hero-section .hero-seal {
+        top: 14px;
+        right: 14px;
+        width: 78px;
+    }
+
+    #hero-section .hero-ctas {
+        gap: 14px;
+    }
+
+    #hero-section .hero-btn {
+        width: 100%;
+        justify-content: center;
+    }
+}
+
+/* Painel estreito (telefone): nao cabe miniaturas e nome lado a lado, entao o
+   nome volta para cima das miniaturas. Vem depois das media queries de
+   proposito, para vencer no cascade. */
+@container (max-width: 480px) {
+    #hero-section .hero-foot {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 14px;
+        padding: 0 14px 14px;
+    }
+
+    #hero-section .hero-feat {
+        order: 1;
+        align-self: flex-end;
+    }
+
+    #hero-section .hero-thumbs {
+        order: 2;
+        gap: 6px;
+    }
+
+    #hero-section .hero-thumb {
+        width: clamp(36px, 10cqw, 44px);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+
+    #hero-section *,
+    #hero-section *::after,
+    #hero-section *::before {
+        animation-duration: .001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .001ms !important;
+    }
+
+    #hero-section .hero-shot.active {
+        animation: none;
+        transform: none;
+    }
+}
