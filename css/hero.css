@@ -464,34 +464,6 @@
     }
 }
 
-#hero-section .hero-ring {
-    position: absolute;
-    z-index: 2;
-    pointer-events: none;
-    top: 45%;
-    left: 50%;
-    width: 54%;
-    aspect-ratio: 1;
-    transform: translate(-50%, -50%);
-    border-radius: 50%;
-    border: 1px solid color-mix(in srgb, var(--accent-soft) 40%, transparent);
-    animation: heroRingBreath 5s ease-in-out infinite;
-}
-
-@keyframes heroRingBreath {
-
-    0%,
-    100% {
-        transform: translate(-50%, -50%) scale(1);
-        opacity: .55;
-    }
-
-    50% {
-        transform: translate(-50%, -50%) scale(1.05);
-        opacity: .9;
-    }
-}
-
 /* so o rodape do painel escurece, para o nome e as miniaturas */
 #hero-section .hero-panel-scrim {
     position: absolute;
@@ -808,24 +780,31 @@
     }
 }
 
-/* Painel estreito (telefone): nao cabe miniaturas e nome lado a lado, entao o
-   nome volta para cima das miniaturas. Vem depois das media queries de
-   proposito, para vencer no cascade. */
+/* Painel estreito (telefone): nao cabe miniaturas e nome lado a lado no
+   rodape, entao o nome sai do rodape e vai para o canto superior esquerdo
+   do painel; as miniaturas ficam no canto inferior direito. Vem depois das
+   media queries de proposito, para vencer no cascade. */
 @container (max-width: 480px) {
+    /* position:static tira o rodape da jogada como containing block, para
+       o nome e as miniaturas se posicionarem direto em relacao ao painel */
     #hero-section .hero-foot {
-        flex-direction: column;
-        align-items: stretch;
-        gap: 14px;
-        padding: 0 14px 14px;
+        position: static;
+        padding: 0;
     }
 
     #hero-section .hero-feat {
-        order: 1;
-        align-self: flex-end;
+        position: absolute;
+        z-index: 5;
+        top: 20px;
+        left: 20px;
+        text-align: left;
     }
 
     #hero-section .hero-thumbs {
-        order: 2;
+        position: absolute;
+        z-index: 5;
+        right: 18px;
+        bottom: 18px;
         gap: 6px;
     }
 
