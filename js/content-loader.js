@@ -35,9 +35,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // A home adiciona direto o lote minimo de potes; o ajuste fino acontece na
     // gaveta. O seletor completo mora no modal, que a home nao carrega de
     // proposito: 86% do product-modal.js e ficha tecnica.
+    // Preco nao aparece antes do carrinho: so dentro da gaveta.
     var LOTE_MINIMO = Math.min.apply(null, siteConfig.pedido.caixas.map(function (c) { return c.potes; }));
-    var precoLoteMinimo = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
-        .format(LOTE_MINIMO * siteConfig.pedido.precoPorPoteCentavos / 100);
 
     // ---------- Destaques (home) ----------
     const loadDestaques = () => {
@@ -50,7 +49,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <h4 class="text-xl font-bold text-white uppercase tracking-wider">${prod.nome}</h4>
                         <div class="w-8 h-1 bg-primary-500 mx-auto rounded-full mt-3 mb-4 opacity-0 group-hover:opacity-100 group-hover:w-16 transition-all duration-500"></div>
                         <button type="button" class="cart-quick-add mt-auto w-full py-2.5 rounded-xl border border-primary-500/40 text-primary-400 text-xs font-bold uppercase tracking-widest hover:bg-primary-500 hover:text-white transition-all" data-id="${prod.id}" data-nome="${prod.nome}">
-                            ${LOTE_MINIMO} potes &middot; ${precoLoteMinimo}
+                            Adicionar &middot; ${LOTE_MINIMO} potes
                         </button>
                     </div>
                 </div>
