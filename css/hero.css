@@ -741,9 +741,7 @@
         max-width: 600px;
     }
 
-    /* empilhado, o tempero vem primeiro: o produto aparece sem precisar rolar */
     #hero-section .hero-panel {
-        order: -1;
         aspect-ratio: 1.25/1;
         min-height: 320px;
         max-height: none;

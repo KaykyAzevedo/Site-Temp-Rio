@@ -342,7 +342,7 @@
                 '<i class="fa-solid fa-box"></i> Adicionar ao pedido' +
             '</p>' +
             '<p class="text-xs text-textSecondary font-light">' +
-                Cart.formatarBRL(Cart.config.precoPorPoteCentavos) + ' por pote &middot; de ' + PASSO + ' em ' + PASSO + ' potes' +
+                'De ' + PASSO + ' em ' + PASSO + ' potes' +
             '</p>' +
 
             '<div class="flex items-center justify-center gap-3">' +
@@ -363,7 +363,7 @@
             '</p>' +
 
             '<button type="button" data-picker="adicionar" class="btn-primary w-full py-3 rounded-xl font-bold text-sm">' +
-                'Adicionar &mdash; <span data-picker="valor">' + Cart.formatarBRL(Cart.precoDePotes(pickerPotes)) + '</span>' +
+                'Adicionar ao pedido' +
             '</button>' +
 
             (jaTem
@@ -385,9 +385,7 @@
 
     function atualizarPicker() {
         var potes = potesDoPicker();
-        var valor = document.querySelector('[data-picker="valor"]');
         var caixas = document.querySelector('[data-picker="caixas"]');
-        if (valor) valor.textContent = Cart.formatarBRL(Cart.precoDePotes(potes));
         if (caixas) caixas.innerHTML = '<i class="fa-solid fa-box-open mr-1 opacity-70"></i>' + Cart.descreverCaixas(potes);
     }
 
