@@ -38,7 +38,7 @@
     <link rel="stylesheet" href="./css/base.css">
     <link rel="stylesheet" href="./css/components.css">
     <link rel="stylesheet" href="./css/animations.css">
-    <link rel="stylesheet" href="./css/hero.css">
+    <link rel="stylesheet" href="./css/destaques.css">
     <link rel="stylesheet" href="./css/cart.css">
 </head>
 
@@ -46,86 +46,94 @@
 
     <main>
         <!-- 1. HERO SECTION -->
-        <section id="hero-section">
-            <div class="hero-inner">
+        <section id="hero-section" class="relative min-h-screen">
+            <div class="relative min-h-screen w-full flex flex-col overflow-hidden hero-noise">
 
-                <!-- Navegacao -->
-                <nav class="hero-nav">
-                    <img class="hero-logo" src="./assets/images/logo.png" alt="Temp Rio" width="900" height="226">
-                    <div class="hero-links">
-                        <a href="catalogo.html">Nossos temperos</a>
-                        <a href="#displays">Expositores</a>
-                        <a href="#sobre-empresa">A Temp Rio</a>
-                        <a class="hero-nav-cta" href="https://wa.me/5521996203535" target="_blank" rel="noopener">
-                            Fale com a gente <span aria-hidden="true">↗</span>
-                        </a>
-                    </div>
+                <!-- Background Video -->
+                <video id="hero-video" autoplay loop muted playsinline
+                    class="absolute inset-0 w-full h-full object-cover saturate-[1.4] scale-105 z-0"
+                    style="transform-origin:center;">
+                    <source src="./assets/images/hero-video.mp4" type="video/mp4">
+                </video>
+
+                <!-- Layered overlays for cinematic depth -->
+                <div class="absolute inset-0 z-1"
+                    style="background: linear-gradient(180deg, rgba(13,13,13,0.72) 0%, rgba(13,13,13,0.28) 40%, rgba(13,13,13,0.55) 75%, rgba(13,13,13,0.92) 100%);">
+                </div>
+                <div class="absolute inset-0 z-1"
+                    style="background: radial-gradient(ellipse 80% 60% at 50% 55%, transparent 30%, rgba(13,13,13,0.6) 100%);">
+                </div>
+
+                <!-- Glow orbs -->
+                <div class="absolute z-1 pointer-events-none"
+                    style="top:50%;left:50%;transform:translate(-50%, -50%);width:600px;height:600px;background:radial-gradient(circle, rgba(242,140,82,0.12) 0%, transparent 60%);filter:blur(50px);">
+                </div>
+
+                <!-- NAVBAR inline inside hero -->
+                <nav class="relative z-20 w-full flex items-center justify-end px-6 md:px-12 pt-6 pb-2 hero-anim hero-anim-1">
+                    <a href="https://wa.me/5521996203535" target="_blank"
+                        class="hidden md:inline-flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-white/70 hover:text-primary-400 transition-colors border border-white/10 hover:border-primary-500/40 px-5 py-2.5 rounded-full backdrop-blur-sm">
+                        <i class="fa-brands fa-whatsapp text-green-400"></i> Fale agora
+                    </a>
                 </nav>
 
-                <div class="hero-split">
+                <!-- Main hero content -->
+                <div id="hero-text-content"
+                    class="relative z-20 flex flex-col flex-1 items-center justify-center px-6 md:px-12 w-full max-w-4xl mx-auto text-center will-change-transform will-change-opacity">
 
-                    <!-- Texto -->
-                    <div class="hero-copy">
-                        <div class="hero-eyebrow">Temperos naturais · Venda no atacado</div>
+                    <!-- Logo -->
+                    <img src="./assets/images/logo.png" alt="Temp Rio" class="w-full max-w-[75%] md:max-w-lg lg:max-w-xl mx-auto mb-4 drop-shadow-[0_0_40px_rgba(242,140,82,0.8)] hero-anim hero-anim-2">
 
-                        <h1 class="hero-hl">
-                            <span class="hero-mask hero-m1"><span>Pequenos potes.</span></span>
-                            <span class="hero-mask hero-m2"><span>Um mundo <span class="hero-acc" id="hero-word">intenso</span></span></span>
-                            <span class="hero-mask hero-m3"><span>de sabor.</span></span>
-                        </h1>
-
-                        <p class="hero-lead">
-                            O sabor que transforma a sua prateleira. Abasteça sua loja com
-                            <b>70+ temperos</b> de ingredientes selecionados, 100% naturais e zero glutamato.
-                        </p>
-
-                        <div class="hero-ctas">
-                            <a class="hero-btn" href="pedido.html">
-                                Abastecer minha loja <span aria-hidden="true">↗</span>
-                            </a>
-                            <a class="hero-link-more" href="catalogo.html">
-                                Explorar sabores <span class="arr" aria-hidden="true">→</span>
-                            </a>
-                        </div>
-
-                        <div class="hero-stats">
-                            <div class="hero-stat"><b id="hero-c1">70+</b><span>Produtos no catálogo</span></div>
-                            <div class="hero-vr"></div>
-                            <div class="hero-stat"><b id="hero-c2">500+</b><span>Clientes atendidos</span></div>
-                        </div>
+                    <!-- Badge -->
+                    <div class="hero-pill hero-anim hero-anim-2 mb-2 mx-auto">
+                        <i class="fa-solid fa-seedling"></i>
+                        <span>100% Natural &nbsp;·&nbsp; Zero Glutamato</span>
                     </div>
 
-                    <!-- Painel do tempero em destaque (montado por js/hero.js) -->
-                    <div class="hero-panel">
-                        <div class="hero-stage"></div>
-                        <div class="hero-halo"></div>
-                        <div class="hero-panel-scrim"></div>
-                        <canvas class="hero-dust" id="hero-dust"></canvas>
-                        <div class="hero-grain"></div>
+                    <!-- Headline -->
+                    <h1 class="hero-headline hero-anim hero-anim-3 mb-4" style="font-size: clamp(2.25rem, 5.5vw, 5rem); line-height: 1.05;">
+                        <span class="line-white">O sabor que</span>
+                        <span class="line-orange">transforma</span>
+                        <span class="line-sub">sua prateleira.</span>
+                    </h1>
 
-                        <div class="hero-seal" aria-label="100% natural, zero glutamato">
-                            <svg viewBox="0 0 100 100" aria-hidden="true">
-                                <defs>
-                                    <path id="heroSealPath" d="M50,50 m-38,0 a38,38 0 1,1 76,0 a38,38 0 1,1 -76,0" />
-                                </defs>
-                                <text><textPath href="#heroSealPath">100% NATURAL · ZERO GLUTAMATO · 100% NATURAL · </textPath></text>
-                            </svg>
-                            <div class="core">
-                                <div><b>100%</b><small>Natural</small></div>
-                            </div>
-                        </div>
+                    <!-- Body text -->
+                    <p class="hero-lead hero-anim hero-anim-4 mx-auto mb-7">
+                        Ingredientes selecionados e misturas na medida certa: produto saudável,
+                        acessível e de alta rotatividade para abastecer a sua loja.
+                    </p>
 
-                        <div class="hero-foot">
-                            <div class="hero-feat">
-                                <small>Conheça um dos favoritos</small>
-                                <span class="hero-mask"><span class="hero-feat-name" id="hero-fname">Chimichurri</span></span>
-                                <div class="hero-feat-meta" id="hero-fmeta">2º mais vendido · pote 50g</div>
-                            </div>
-                            <div class="hero-thumbs" id="hero-thumbs"></div>
-                        </div>
+                    <!-- CTAs -->
+                    <div class="hero-anim hero-anim-4 flex flex-col sm:flex-row justify-center gap-3 mb-6 w-full">
+                        <a href="pedido.html"
+                            class="btn-primary px-6 py-3 rounded-xl font-bold text-base flex items-center justify-center gap-3">
+                            <i class="fa-solid fa-cart-shopping text-xl"></i> Faça seu pedido
+                        </a>
+                        <a href="catalogo.html"
+                            class="px-6 py-3 rounded-xl font-semibold text-base flex items-center justify-center gap-2 border border-white/12 text-white/70 hover:text-white hover:border-white/25 transition-all backdrop-blur-sm">
+                            Ver Catálogo <i class="fa-solid fa-arrow-right text-sm"></i>
+                        </a>
                     </div>
 
+                    <!-- Stats bar -->
+                    <div class="hero-anim hero-anim-5 flex items-center justify-center gap-8 md:gap-14 w-full">
+                        <div class="hero-stat">
+                            <span class="hero-stat-num">70+</span>
+                            <span class="hero-stat-label">Produtos</span>
+                        </div>
+                        <div class="stat-divider"></div>
+                        <div class="hero-stat">
+                            <span class="hero-stat-num">500+</span>
+                            <span class="hero-stat-label">Clientes</span>
+                        </div>
+                    </div>
                 </div>
+
+                <!-- Indicador de scroll -->
+                <a href="#sobre" class="hero-scroll-cue hero-anim hero-anim-5" aria-label="Ver o restante do site">
+                    <span>Role para ver</span>
+                    <i class="fa-solid fa-chevron-down"></i>
+                </a>
             </div>
         </section>
 
@@ -332,23 +340,76 @@
         </section>
 
         <!-- 4. PRODUTOS -->
-        <section id="produtos" class="py-24 border-y border-borderSubtle">
+        <section id="produtos" class="py-16 border-y border-borderSubtle">
             <div class="max-w-7xl mx-auto px-6">
-                <div class="flex flex-col md:flex-row md:items-end justify-between mb-16 gap-6 fade-in">
-                    <div>
-                        <h2 class="text-3xl md:text-5xl font-bold tracking-tight mb-4">Nossos Destaques</h2>
-                        <p class="text-textSecondary font-light text-lg max-w-xl">Os queridinhos da casa. Ingredientes selecionados especialmente para dar aquele toque de chef na sua cozinha.</p>
-                        <p class="text-primary-500 font-bold uppercase tracking-widest text-sm mt-4">EXPERIMENTE E SURPREENDA-SE!</p>
-                    </div>
-                    <a href="catalogo.html"
-                        class="text-primary-400 hover:text-primary-500 font-semibold flex items-center gap-2 group transition-colors">
-                        Ver catálogo completo <i
-                            class="fa-solid fa-arrow-right transform group-hover:translate-x-1 transition-transform"></i>
-                    </a>
-                </div>
+                <!-- Hero interativa, copiada como estava, agora em destaque aqui
+                     (montada por js/destaques.js) -->
+                <div id="destaques-hero">
+                    <div class="dest-split">
 
-                <!-- Produtos listados dinamicamente pelo JS -->
-                <div id="destaques-container" class="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                        <!-- Texto -->
+                        <div class="dest-copy">
+                            <div class="dest-eyebrow">Temperos naturais · Venda no atacado</div>
+
+                            <h1 class="dest-hl">
+                                <span class="dest-mask dest-m1"><span>Pequenos potes.</span></span>
+                                <span class="dest-mask dest-m2"><span>Um mundo <span class="dest-acc" id="dest-word">cítrico</span></span></span>
+                                <span class="dest-mask dest-m3"><span>de sabor.</span></span>
+                            </h1>
+
+                            <p class="dest-lead">
+                                O sabor que transforma a sua prateleira. Abasteça sua loja com
+                                <b>70+ temperos</b> de ingredientes selecionados, 100% naturais e zero glutamato.
+                            </p>
+
+                            <div class="dest-ctas">
+                                <a class="dest-btn" href="pedido.html">
+                                    Abastecer minha loja <span aria-hidden="true">↗</span>
+                                </a>
+                                <a class="dest-link-more" href="catalogo.html">
+                                    Explorar sabores <span class="arr" aria-hidden="true">→</span>
+                                </a>
+                            </div>
+
+                            <div class="dest-stats">
+                                <div class="dest-stat"><b id="dest-c1">70+</b><span>Produtos no catálogo</span></div>
+                                <div class="dest-vr"></div>
+                                <div class="dest-stat"><b id="dest-c2">500+</b><span>Clientes atendidos</span></div>
+                            </div>
+                        </div>
+
+                        <!-- Painel do tempero em destaque, do maior para o menor ranking
+                             de vendas -->
+                        <div class="dest-panel" id="dest-panel">
+                            <div class="dest-stage"></div>
+                            <div class="dest-halo"></div>
+                            <div class="dest-scrim"></div>
+                            <canvas class="dest-dust" id="dest-dust"></canvas>
+                            <div class="dest-grain"></div>
+
+                            <div class="dest-seal" aria-label="100% natural, zero glutamato">
+                                <svg viewBox="0 0 100 100" aria-hidden="true">
+                                    <defs>
+                                        <path id="destSealPath" d="M50,50 m-38,0 a38,38 0 1,1 76,0 a38,38 0 1,1 -76,0" />
+                                    </defs>
+                                    <text><textPath href="#destSealPath">100% NATURAL · ZERO GLUTAMATO · 100% NATURAL · </textPath></text>
+                                </svg>
+                                <div class="core">
+                                    <div><b>100%</b><small>Natural</small></div>
+                                </div>
+                            </div>
+
+                            <div class="dest-foot">
+                                <div class="dest-feat">
+                                    <small>Conheça um dos favoritos</small>
+                                    <span class="dest-mask"><span class="dest-feat-name" id="dest-fname">Lemon Pepper</span></span>
+                                    <div class="dest-feat-meta" id="dest-fmeta">1º mais vendido · pote 70g</div>
+                                </div>
+                                <div class="dest-thumbs" id="dest-thumbs"></div>
+                            </div>
+                        </div>
+
+                    </div>
                 </div>
             </div>
         </section>
@@ -672,7 +733,7 @@
 
     <!-- Scripts -->
     <script src="./js/main.js"></script>
-    <script src="./js/hero.js"></script>
+    <script src="./js/destaques.js"></script>
     <script src="./js/faq.js"></script>
     <script src="./js/sliders.js"></script>
     <script src="./js/counters.js"></script>

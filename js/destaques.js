@@ -1,44 +1,48 @@
 /* ============================================================
-   HERO — rotacao dos temperos em destaque.
-   A cada troca: a foto do painel, a cor da secao (--accent), o
-   adjetivo da headline e o nome do produto mudam juntos.
-   Ranking e nome vem do mesmo criterio de data/produtos.js.
+   NOSSOS DESTAQUES — a hero interativa, copiada como estava, agora
+   dentro da secao "Nossos Destaques". A cada troca: a foto do
+   painel, a cor da secao (--d-accent), o adjetivo da headline e o
+   nome do produto mudam juntos.
+   Produtos: os que tem destaque:true em data/produtos.js, do maior
+   para o menor ranking de vendas (rankingVendas crescente).
    ============================================================ */
 (function () {
     'use strict';
 
     var PRODUCTS = [
-        { img: 'chimichurri',        nome: 'Chimichurri',  rank: 2,  peso: '50g', palavra: 'intenso',      accent: '#D95B2A', soft: '#F7A768', thumbPos: '47% 71%' },
-        { img: 'lemon-pepper',       nome: 'Lemon Pepper', rank: 1,  peso: '70g', palavra: 'cítrico',      accent: '#D9A81C', soft: '#F5DC6A', thumbPos: '51% 74%' },
-        { img: 'paprica-doce',       nome: 'Páprica Doce', rank: 5,  peso: '60g', palavra: 'adocicado',    accent: '#C4402A', soft: '#F08765', thumbPos: '45% 46%' },
-        { img: 'ervas-finas',        nome: 'Ervas Finas',  rank: 16, peso: '15g', palavra: 'aromático',    accent: '#7C9A4E', soft: '#BBD489', thumbPos: '45% 55%' },
-        { img: 'pega-marido',        nome: 'Pega Marido',  rank: 11, peso: '50g', palavra: 'irresistível', accent: '#DE8A18', soft: '#F8C46A', thumbPos: '52% 75%' },
-        { img: 'colorau-colorifico', nome: 'Colorau',      rank: 9,  peso: '70g', palavra: 'vibrante',     accent: '#D24E1C', soft: '#F59A62', thumbPos: '49% 79%' }
+        { img: 'lemon-pepper',       nome: 'Lemon Pepper',     rank: 1,  peso: '70g', palavra: 'cítrico',   accent: '#D9A81C', soft: '#F5DC6A', thumbPos: '51% 74%' },
+        { img: 'chimichurri',        nome: 'Chimichurri',      rank: 2,  peso: '50g', palavra: 'intenso',   accent: '#D95B2A', soft: '#F7A768', thumbPos: '47% 71%' },
+        { img: 'paprica-picante',    nome: 'Páprica Picante',  rank: 6,  peso: '60g', palavra: 'picante',   accent: '#B8402A', soft: '#EE9878', thumbPos: '48% 47%' },
+        { img: 'paprica-defumada',   nome: 'Páprica Defumada', rank: 7,  peso: '60g', palavra: 'defumado',  accent: '#A8461F', soft: '#E89A6E', thumbPos: '49% 72%' },
+        { img: 'edu',                nome: 'Edu',               rank: 13, peso: '60g', palavra: 'especial',  accent: '#C99A3A', soft: '#EAC97E', thumbPos: '50% 52%' },
+        { img: 'curcuma',            nome: 'Cúrcuma',           rank: 20, peso: '40g', palavra: 'dourado',   accent: '#E0901A', soft: '#F7C066', thumbPos: '47% 67%' },
+        { img: 'curry',              nome: 'Curry',             rank: 23, peso: '50g', palavra: 'exótico',   accent: '#B8A22E', soft: '#DDCB77', thumbPos: '46% 83%' },
+        { img: 'alho-frito',         nome: 'Alho Frito',        rank: 27, peso: '40g', palavra: 'crocante',  accent: '#C07A28', soft: '#E8B36E', thumbPos: '50% 80%' }
     ];
 
     var BASE = './assets/images/hero/';
     var THUMB_BASE = './assets/images/hero/thumbs/';   /* versoes de 220px, ~6KB cada */
     var DWELL = 5200;
 
-    var section = document.getElementById('hero-section');
+    var section = document.getElementById('destaques-hero');
     if (!section) return;
 
-    var stage = section.querySelector('.hero-stage');
-    var hlword = section.querySelector('#hero-word');
-    var fname = section.querySelector('#hero-fname');
-    var fmeta = section.querySelector('#hero-fmeta');
-    var thumbsWrap = section.querySelector('#hero-thumbs');
-    var panel = section.querySelector('.hero-panel');
-    if (!stage || !hlword || !fname || !fmeta || !thumbsWrap || !panel) return;
+    var panel = section.querySelector('.dest-panel');
+    var stage = section.querySelector('.dest-stage');
+    var hlword = section.querySelector('#dest-word');
+    var fname = section.querySelector('#dest-fname');
+    var fmeta = section.querySelector('#dest-fmeta');
+    var thumbsWrap = section.querySelector('#dest-thumbs');
+    if (!panel || !stage || !hlword || !fname || !fmeta || !thumbsWrap) return;
 
     var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     /* ---------- camadas das fotos ----------
        So a primeira carrega junto com a pagina; as outras entram depois do
-       load, para a hero nao custar 600KB no primeiro acesso. */
+       load, para a secao nao custar quilos de imagem no primeiro acesso. */
     var shots = PRODUCTS.map(function (p, i) {
         var d = document.createElement('div');
-        d.className = 'hero-shot' + (i === 0 ? ' active' : '');
+        d.className = 'dest-shot' + (i === 0 ? ' active' : '');
         if (i === 0) d.style.backgroundImage = "url('" + BASE + p.img + ".jpg')";
         stage.appendChild(d);
         return d;
@@ -57,7 +61,7 @@
     /* ---------- miniaturas ---------- */
     var thumbs = PRODUCTS.map(function (p, i) {
         var b = document.createElement('button');
-        b.className = 'hero-thumb' + (i === 0 ? ' active' : '');
+        b.className = 'dest-thumb' + (i === 0 ? ' active' : '');
         b.type = 'button';
         b.style.setProperty('--dwell', DWELL + 'ms');
         b.title = p.nome;
@@ -77,8 +81,8 @@
         idx = n;
         var p = PRODUCTS[n];
 
-        section.style.setProperty('--accent', p.accent);
-        section.style.setProperty('--accent-soft', p.soft);
+        section.style.setProperty('--d-accent', p.accent);
+        section.style.setProperty('--d-accent-soft', p.soft);
 
         shots.forEach(function (s, i) {
             if (i === n && !s.style.backgroundImage) {
@@ -107,23 +111,23 @@
 
     function swapWord(word) {
         if (reduced) { hlword.textContent = word; return; }
-        hlword.style.animation = 'heroWordOut .3s cubic-bezier(.5,0,.75,0) forwards';
+        hlword.style.animation = 'destWordOut .3s cubic-bezier(.5,0,.75,0) forwards';
         setTimeout(function () {
             hlword.textContent = word;
             hlword.style.animation = 'none'; void hlword.offsetWidth;
-            hlword.style.animation = 'heroWordIn .55s cubic-bezier(.16,.85,.24,1) forwards';
+            hlword.style.animation = 'destWordIn .55s cubic-bezier(.16,.85,.24,1) forwards';
         }, 300);
     }
 
     function swapName(p) {
         var meta = p.rank + 'º mais vendido · pote ' + p.peso;
         if (reduced) { fname.textContent = p.nome; fmeta.textContent = meta; return; }
-        fname.style.animation = 'heroNameOut .28s cubic-bezier(.5,0,.75,0) forwards';
+        fname.style.animation = 'destNameOut .28s cubic-bezier(.5,0,.75,0) forwards';
         setTimeout(function () {
             fname.textContent = p.nome;
             fmeta.textContent = meta;
             fname.style.animation = 'none'; void fname.offsetWidth;
-            fname.style.animation = 'heroNameIn .55s cubic-bezier(.16,.85,.24,1) forwards';
+            fname.style.animation = 'destNameIn .55s cubic-bezier(.16,.85,.24,1) forwards';
         }, 280);
     }
 
@@ -139,7 +143,7 @@
     thumbsWrap.addEventListener('mouseleave', schedule);
 
     /* ---------- po de tempero no ar ---------- */
-    var cv = section.querySelector('#hero-dust');
+    var cv = section.querySelector('#dest-dust');
     var ctx = cv ? cv.getContext('2d') : null;
     var W = 0, H = 0, rgb = [247, 167, 104], parts = [];
 
@@ -227,8 +231,8 @@
     resize();
     window.addEventListener('resize', resize);
 
-    var c1 = section.querySelector('#hero-c1');
-    var c2 = section.querySelector('#hero-c2');
+    var c1 = section.querySelector('#dest-c1');
+    var c2 = section.querySelector('#dest-c2');
 
     if (!reduced) {
         if (ctx) requestAnimationFrame(frame);

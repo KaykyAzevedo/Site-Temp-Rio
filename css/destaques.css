@@ -1,43 +1,40 @@
 /* ============================================================
-   HERO
-   Texto numa coluna limpa a esquerda; o tempero num painel
-   proprio a direita, sem texto por cima. O --accent acompanha
-   o po do tempero em destaque.
-   Tudo escopado em #hero-section para nao vazar no resto do site.
+   NOSSOS DESTAQUES — a hero interativa, copiada como estava,
+   realocada para dentro da secao "Nossos Destaques" (texto em
+   coluna + painel do tempero em rotacao, do maior para o menor
+   ranking de vendas). So a navegacao do topo (logo + menu) ficou
+   de fora, por ser exclusiva do topo da pagina.
+   Tudo escopado em #destaques-hero para nao vazar no resto do site.
    ============================================================ */
 
-@property --accent {
+@property --d-accent {
     syntax: "<color>";
     inherits: true;
     initial-value: #D95B2A;
 }
 
-@property --accent-soft {
+@property --d-accent-soft {
     syntax: "<color>";
     inherits: true;
     initial-value: #F5A45F;
 }
 
-#hero-section {
-    --accent: #D95B2A;
-    --accent-soft: #F5A45F;
-    --h-ink: #0A0806;
-    --h-line: rgba(255, 255, 255, 0.09);
-    --h-text: #F7F2EC;
-    --h-dim: rgba(247, 242, 236, 0.66);
-    --h-faint: rgba(247, 242, 236, 0.42);
+#destaques-hero {
+    --d-accent: #D95B2A;
+    --d-accent-soft: #F5A45F;
+    --d-text: #F7F2EC;
+    --d-dim: rgba(247, 242, 236, 0.66);
+    --d-faint: rgba(247, 242, 236, 0.42);
 
-    transition: --accent 900ms ease, --accent-soft 900ms ease;
+    transition: --d-accent 900ms ease, --d-accent-soft 900ms ease;
 
     position: relative;
-    background: var(--h-ink);
-    color: var(--h-text);
-    overflow: hidden;
+    color: var(--d-text);
     isolation: isolate;
 }
 
 /* brilho ambiente discreto atras do texto, na cor do tempero */
-#hero-section::before {
+#destaques-hero::before {
     content: '';
     position: absolute;
     z-index: 0;
@@ -46,92 +43,13 @@
     top: 20%;
     width: 52%;
     height: 70%;
-    background: radial-gradient(ellipse at 30% 50%, color-mix(in srgb, var(--accent) 13%, transparent) 0%, transparent 62%);
-}
-
-#hero-section .hero-inner {
-    position: relative;
-    z-index: 1;
-    max-width: 1280px;
-    margin: 0 auto;
-    padding: 22px clamp(18px, 4vw, 48px) 40px;
-    display: flex;
-    flex-direction: column;
-    gap: clamp(22px, 4vh, 44px);
-}
-
-/* ---------- navegacao ---------- */
-#hero-section .hero-nav {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 20px;
-    padding-bottom: 18px;
-    border-bottom: 1px solid var(--h-line);
-}
-
-#hero-section .hero-logo {
-    width: clamp(140px, 14vw, 196px);
-    height: auto;
-    display: block;
-    filter: drop-shadow(0 0 22px rgba(242, 140, 82, 0.5));
-    animation: heroLogoBloom 1s cubic-bezier(.2, .85, .25, 1) both;
-}
-
-@keyframes heroLogoBloom {
-    0% {
-        opacity: 0;
-        transform: scale(.88) translateY(-6px);
-        filter: drop-shadow(0 0 0 rgba(242, 140, 82, 0)) blur(6px);
-    }
-
-    60% {
-        filter: drop-shadow(0 0 42px rgba(242, 140, 82, 0.85)) blur(0);
-    }
-
-    100% {
-        opacity: 1;
-        transform: none;
-        filter: drop-shadow(0 0 22px rgba(242, 140, 82, 0.5)) blur(0);
-    }
-}
-
-#hero-section .hero-links {
-    display: flex;
-    align-items: center;
-    gap: clamp(16px, 2.6vw, 34px);
-    animation: heroRise .8s ease both .2s;
-}
-
-#hero-section .hero-links a {
-    font-size: 0.9rem;
-    font-weight: 400;
-    color: var(--h-dim);
-    text-decoration: none;
-    transition: color .25s;
-}
-
-#hero-section .hero-links a:hover {
-    color: var(--h-text);
-}
-
-#hero-section .hero-nav-cta {
-    font-size: 0.86rem;
-    font-weight: 700;
-    color: #F28C52;
-    border: 1px solid rgba(242, 140, 82, 0.45);
-    border-radius: 10px;
-    padding: 11px 18px;
-    transition: background .25s, color .25s;
-}
-
-#hero-section .hero-nav-cta:hover {
-    background: #F28C52;
-    color: #0A0806;
+    background: radial-gradient(ellipse at 30% 50%, color-mix(in srgb, var(--d-accent) 13%, transparent) 0%, transparent 62%);
 }
 
 /* ---------- divisao ---------- */
-#hero-section .hero-split {
+#destaques-hero .dest-split {
+    position: relative;
+    z-index: 1;
     display: grid;
     grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
     gap: clamp(24px, 3.2vw, 46px);
@@ -139,13 +57,13 @@
     min-width: 0;
 }
 
-#hero-section .hero-copy {
+#destaques-hero .dest-copy {
     max-width: 620px;
     min-width: 0;
     padding-block: 12px;
 }
 
-#hero-section .hero-eyebrow {
+#destaques-hero .dest-eyebrow {
     display: inline-flex;
     align-items: center;
     gap: 10px;
@@ -153,60 +71,60 @@
     font-weight: 700;
     letter-spacing: 0.2em;
     text-transform: uppercase;
-    color: var(--accent-soft);
-    margin-bottom: 22px;
-    animation: heroRise .8s ease both .3s;
+    color: var(--d-accent-soft);
+    margin-bottom: 16px;
 }
 
-#hero-section .hero-eyebrow::before {
+#destaques-hero .dest-eyebrow::before {
     content: '';
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: var(--accent);
-    box-shadow: 0 0 10px var(--accent);
+    background: var(--d-accent);
+    box-shadow: 0 0 10px var(--d-accent);
 }
 
-#hero-section .hero-hl {
+#destaques-hero .dest-hl {
     font-family: 'Barlow Condensed', sans-serif;
     font-weight: 900;
     font-style: italic;
     text-transform: uppercase;
     line-height: 0.9;
     letter-spacing: -0.012em;
-    /* o teto cabe a maior variacao da linha do meio ("Um mundo irresistivel") */
-    font-size: clamp(2.2rem, 5.2vw, 4.3rem);
-    margin: 0 0 24px;
+    /* o teto cabe a maior variacao da linha do meio ("Um mundo irresistivel");
+       um pouco menor que a hero do topo para a secao ficar mais compacta */
+    font-size: clamp(2rem, 4.4vw, 3.6rem);
+    margin: 0 0 18px;
 }
 
 /* O padding da folga para o overflow:hidden nao cortar nem as descidas dos
    glifos (Q, p, g) nem a inclinacao do italico no fim da linha. A margem
    negativa devolve tudo ao fluxo: a largura util continua sendo a da coluna. */
-#hero-section .hero-mask {
+#destaques-hero .dest-mask {
     display: block;
     overflow: hidden;
     padding: 0.12em 0.26em 0.2em 0;
     margin: 0 -0.26em -0.2em 0;
 }
 
-#hero-section .hero-mask>span {
+#destaques-hero .dest-mask>span {
     display: block;
-    animation: heroLineUp .95s cubic-bezier(.16, .85, .24, 1) both;
+    animation: destLineUp .95s cubic-bezier(.16, .85, .24, 1) both;
 }
 
-#hero-section .hero-m1>span {
-    animation-delay: .42s;
+#destaques-hero .dest-m1>span {
+    animation-delay: .1s;
 }
 
-#hero-section .hero-m2>span {
-    animation-delay: .54s;
+#destaques-hero .dest-m2>span {
+    animation-delay: .2s;
 }
 
-#hero-section .hero-m3>span {
-    animation-delay: .66s;
+#destaques-hero .dest-m3>span {
+    animation-delay: .3s;
 }
 
-@keyframes heroLineUp {
+@keyframes destLineUp {
     from {
         transform: translateY(135%);
     }
@@ -216,26 +134,26 @@
     }
 }
 
-#hero-section .hero-acc {
+#destaques-hero .dest-acc {
     display: inline-block;
-    background: linear-gradient(94deg, var(--accent-soft) 0%, var(--accent) 60%, color-mix(in srgb, var(--accent) 65%, #000) 100%);
+    background: linear-gradient(94deg, var(--d-accent-soft) 0%, var(--d-accent) 60%, color-mix(in srgb, var(--d-accent) 65%, #000) 100%);
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
     color: transparent;
     /* brilho curto o bastante para caber na folga do mask */
-    filter: drop-shadow(0 2px 9px color-mix(in srgb, var(--accent) 45%, transparent));
+    filter: drop-shadow(0 2px 9px color-mix(in srgb, var(--d-accent) 45%, transparent));
 }
 
 /* a palavra troca em elevador junto com o tempero em destaque */
-@keyframes heroWordOut {
+@keyframes destWordOut {
     to {
         transform: translateY(-120%);
         opacity: 0;
     }
 }
 
-@keyframes heroWordIn {
+@keyframes destWordIn {
     from {
         transform: translateY(120%);
         opacity: 0;
@@ -247,31 +165,29 @@
     }
 }
 
-#hero-section .hero-lead {
+#destaques-hero .dest-lead {
     font-size: clamp(0.98rem, 1.1vw, 1.08rem);
     font-weight: 300;
     line-height: 1.68;
-    color: var(--h-dim);
+    color: var(--d-dim);
     max-width: 32rem;
-    margin: 0 0 30px;
-    animation: heroRise .9s ease both .82s;
+    margin: 0 0 22px;
 }
 
-#hero-section .hero-lead b {
-    color: var(--h-text);
+#destaques-hero .dest-lead b {
+    color: var(--d-text);
     font-weight: 700;
 }
 
-#hero-section .hero-ctas {
+#destaques-hero .dest-ctas {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 14px 26px;
-    margin-bottom: 34px;
-    animation: heroRise .9s ease both .94s;
+    margin-bottom: 26px;
 }
 
-#hero-section .hero-btn {
+#destaques-hero .dest-btn {
     position: relative;
     overflow: hidden;
     display: inline-flex;
@@ -288,12 +204,12 @@
     transition: transform .25s ease, box-shadow .25s ease;
 }
 
-#hero-section .hero-btn:hover {
+#destaques-hero .dest-btn:hover {
     transform: translateY(-2px);
     box-shadow: 0 16px 40px -10px rgba(242, 140, 82, 0.85);
 }
 
-#hero-section .hero-btn::after {
+#destaques-hero .dest-btn::after {
     content: '';
     position: absolute;
     top: 0;
@@ -302,10 +218,10 @@
     height: 100%;
     background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.3), transparent);
     transform: skewX(-18deg);
-    animation: heroSweep 4.6s ease-in-out 2.4s infinite;
+    animation: destSweep 4.6s ease-in-out 2.4s infinite;
 }
 
-@keyframes heroSweep {
+@keyframes destSweep {
     0% {
         left: -120%;
     }
@@ -319,100 +235,88 @@
     }
 }
 
-#hero-section .hero-link-more {
+#destaques-hero .dest-link-more {
     display: inline-flex;
     align-items: center;
     gap: 8px;
     font-weight: 700;
     font-size: 0.92rem;
-    color: var(--h-text);
+    color: var(--d-text);
     text-decoration: none;
     padding-bottom: 6px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.22);
     transition: border-color .25s;
 }
 
-#hero-section .hero-link-more:hover {
-    border-color: var(--accent-soft);
+#destaques-hero .dest-link-more:hover {
+    border-color: var(--d-accent-soft);
 }
 
-#hero-section .hero-link-more .arr {
+#destaques-hero .dest-link-more .arr {
     transition: transform .25s;
 }
 
-#hero-section .hero-link-more:hover .arr {
+#destaques-hero .dest-link-more:hover .arr {
     transform: translateX(4px);
 }
 
-#hero-section .hero-stats {
+#destaques-hero .dest-stats {
     display: flex;
     align-items: center;
     gap: clamp(18px, 2.6vw, 34px);
-    animation: heroRise .9s ease both 1.1s;
 }
 
-#hero-section .hero-stat b {
+#destaques-hero .dest-stat b {
     display: block;
     font-family: 'Barlow Condensed', sans-serif;
     font-weight: 800;
     font-size: clamp(1.8rem, 2.6vw, 2.3rem);
     line-height: 1;
-    color: var(--h-text);
+    color: var(--d-text);
     font-variant-numeric: tabular-nums;
     margin-bottom: 6px;
 }
 
-#hero-section .hero-stat span {
+#destaques-hero .dest-stat span {
     font-size: 0.62rem;
     letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: var(--h-faint);
+    color: var(--d-faint);
 }
 
-#hero-section .hero-vr {
+#destaques-hero .dest-vr {
     width: 1px;
     height: 38px;
     background: rgba(255, 255, 255, 0.12);
 }
 
 /* ---------- painel do produto ---------- */
-#hero-section .hero-panel {
+#destaques-hero .dest-panel {
     position: relative;
     /* min-width:0 impede que o aspect-ratio + min-height forcem uma largura
-       maior que a coluna do grid, o que cortava o selo na borda direita */
+       maior que a coluna do grid, o que cortava o selo na borda direita.
+       Aspect-ratio mais largo (vs. 1.24/1 da hero original) deixa a secao
+       mais compacta, sem o painel dominar a tela em relacao ao texto. */
     min-width: 0;
-    aspect-ratio: 1.24 / 1;
-    min-height: 340px;
-    max-height: 660px;
+    aspect-ratio: 1.7 / 1;
+    min-height: 280px;
+    max-height: 420px;
     border-radius: 22px;
     overflow: hidden;
     border: 1px solid rgba(255, 255, 255, 0.1);
     background: #0D0A08;
     box-shadow: 0 40px 90px -40px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(0, 0, 0, 0.6);
-    animation: heroPanelIn 1.1s cubic-bezier(.16, .85, .24, 1) both .5s;
     isolation: isolate;
     container-type: inline-size;
 }
 
-@keyframes heroPanelIn {
-    from {
-        opacity: 0;
-        transform: translateX(34px) scale(.97);
-    }
-
-    to {
-        opacity: 1;
-        transform: none;
-    }
-}
-
-#hero-section .hero-stage {
+#destaques-hero .dest-stage {
     position: absolute;
     inset: 0;
     z-index: 0;
 }
 
-#hero-section .hero-shot {
+#destaques-hero .dest-shot {
     position: absolute;
     inset: -3%;
     background-size: cover;
@@ -422,12 +326,12 @@
     will-change: opacity, transform;
 }
 
-#hero-section .hero-shot.active {
+#destaques-hero .dest-shot.active {
     opacity: 1;
-    animation: heroKenburns 9s ease-out both;
+    animation: destKenburns 9s ease-out both;
 }
 
-@keyframes heroKenburns {
+@keyframes destKenburns {
     from {
         transform: scale(1.1);
     }
@@ -437,7 +341,7 @@
     }
 }
 
-#hero-section .hero-halo {
+#destaques-hero .dest-halo {
     position: absolute;
     z-index: 1;
     pointer-events: none;
@@ -446,11 +350,11 @@
     width: 88%;
     aspect-ratio: 1;
     transform: translate(-50%, -50%);
-    background: radial-gradient(circle, color-mix(in srgb, var(--accent) 30%, transparent) 0%, transparent 60%);
-    animation: heroHaloPulse 7s ease-in-out infinite;
+    background: radial-gradient(circle, color-mix(in srgb, var(--d-accent) 30%, transparent) 0%, transparent 60%);
+    animation: destHaloPulse 7s ease-in-out infinite;
 }
 
-@keyframes heroHaloPulse {
+@keyframes destHaloPulse {
 
     0%,
     100% {
@@ -465,7 +369,7 @@
 }
 
 /* so o rodape do painel escurece, para o nome e as miniaturas */
-#hero-section .hero-panel-scrim {
+#destaques-hero .dest-scrim {
     position: absolute;
     inset: 0;
     z-index: 2;
@@ -473,14 +377,14 @@
     background: linear-gradient(180deg, rgba(10, 8, 6, 0.35) 0%, transparent 18%, transparent 44%, rgba(10, 8, 6, 0.72) 74%, rgba(10, 8, 6, 0.95) 100%);
 }
 
-#hero-section .hero-dust {
+#destaques-hero .dest-dust {
     position: absolute;
     inset: 0;
     z-index: 3;
     pointer-events: none;
 }
 
-#hero-section .hero-grain {
+#destaques-hero .dest-grain {
     position: absolute;
     inset: 0;
     z-index: 4;
@@ -491,7 +395,7 @@
 }
 
 /* selo circular girando */
-#hero-section .hero-seal {
+#destaques-hero .dest-seal {
     position: absolute;
     z-index: 5;
     top: 20px;
@@ -500,18 +404,17 @@
     aspect-ratio: 1;
     display: grid;
     place-items: center;
-    animation: heroRise .8s ease both 1.2s;
 }
 
-#hero-section .hero-seal svg {
+#destaques-hero .dest-seal svg {
     position: absolute;
     inset: 0;
     width: 100%;
     height: 100%;
-    animation: heroSpin 22s linear infinite;
+    animation: destSpin 22s linear infinite;
 }
 
-#hero-section .hero-seal svg text {
+#destaques-hero .dest-seal svg text {
     font-family: 'Barlow Condensed', sans-serif;
     font-weight: 700;
     font-size: 11.2px;
@@ -519,45 +422,45 @@
     fill: rgba(247, 242, 236, 0.7);
 }
 
-@keyframes heroSpin {
+@keyframes destSpin {
     to {
         transform: rotate(360deg);
     }
 }
 
-#hero-section .hero-seal .core {
+#destaques-hero .dest-seal .core {
     width: 56%;
     aspect-ratio: 1;
     border-radius: 50%;
     background: rgba(10, 8, 6, 0.65);
     backdrop-filter: blur(6px);
-    border: 1px solid color-mix(in srgb, var(--accent-soft) 45%, transparent);
+    border: 1px solid color-mix(in srgb, var(--d-accent-soft) 45%, transparent);
     display: grid;
     place-items: center;
     text-align: center;
 }
 
-#hero-section .hero-seal .core b {
+#destaques-hero .dest-seal .core b {
     display: block;
     font-family: 'Barlow Condensed', sans-serif;
     font-weight: 800;
     font-style: italic;
     font-size: clamp(1rem, 1.5vw, 1.3rem);
     line-height: 1;
-    color: var(--accent-soft);
+    color: var(--d-accent-soft);
 }
 
-#hero-section .hero-seal .core small {
+#destaques-hero .dest-seal .core small {
     display: block;
     font-size: 0.44rem;
     letter-spacing: 0.16em;
     text-transform: uppercase;
-    color: var(--h-dim);
+    color: var(--d-dim);
     margin-top: 2px;
 }
 
 /* rodape do painel: miniaturas a esquerda, nome no canto inferior direito */
-#hero-section .hero-foot {
+#destaques-hero .dest-foot {
     position: absolute;
     z-index: 5;
     left: 0;
@@ -570,31 +473,31 @@
     padding: 0 18px 18px;
 }
 
-#hero-section .hero-feat {
+#destaques-hero .dest-feat {
     order: 2;
     flex: none;
     text-align: right;
     pointer-events: none;
 }
 
-#hero-section .hero-feat small {
+#destaques-hero .dest-feat small {
     display: block;
     font-size: 0.62rem;
     font-weight: 700;
     letter-spacing: 0.18em;
     text-transform: uppercase;
-    color: var(--h-faint);
+    color: var(--d-faint);
     margin-bottom: 6px;
 }
 
-#hero-section .hero-feat .hero-mask {
+#destaques-hero .dest-feat .dest-mask {
     display: block;
     overflow: hidden;
     padding: 0.08em 0.2em 0.14em 0;
     margin: 0 -0.2em -0.14em 0;
 }
 
-#hero-section .hero-feat-name {
+#destaques-hero .dest-feat-name {
     display: block;
     font-family: 'Barlow Condensed', sans-serif;
     font-weight: 800;
@@ -603,26 +506,26 @@
     font-size: clamp(1.6rem, 2.6vw, 2.3rem);
     line-height: 1;
     letter-spacing: -0.01em;
-    color: var(--h-text);
+    color: var(--d-text);
     text-shadow: 0 2px 20px rgba(0, 0, 0, 0.6);
 }
 
-#hero-section .hero-feat-meta {
+#destaques-hero .dest-feat-meta {
     font-size: 0.7rem;
-    color: var(--accent-soft);
+    color: var(--d-accent-soft);
     font-weight: 700;
     letter-spacing: 0.08em;
     margin-top: 5px;
 }
 
-@keyframes heroNameOut {
+@keyframes destNameOut {
     to {
         transform: translateY(-135%);
         opacity: 0;
     }
 }
 
-@keyframes heroNameIn {
+@keyframes destNameIn {
     from {
         transform: translateY(135%);
         opacity: 0;
@@ -635,7 +538,7 @@
 }
 
 /* miniaturas: pequenas por padrao, crescem so no hover, a partir da base */
-#hero-section .hero-thumbs {
+#destaques-hero .dest-thumbs {
     order: 1;
     display: flex;
     align-items: flex-end;
@@ -643,7 +546,7 @@
     flex: none;
 }
 
-#hero-section .hero-thumb {
+#destaques-hero .dest-thumb {
     position: relative;
     padding: 0;
     cursor: pointer;
@@ -658,21 +561,21 @@
     transition: border-color .3s, transform .28s cubic-bezier(.2, .8, .3, 1), background .3s;
 }
 
-#hero-section .hero-thumb:hover,
-#hero-section .hero-thumb:focus-visible {
+#destaques-hero .dest-thumb:hover,
+#destaques-hero .dest-thumb:focus-visible {
     transform: scale(1.34);
     z-index: 3;
     border-color: rgba(255, 255, 255, 0.45);
 }
 
-#hero-section .hero-thumb.active {
-    border-color: var(--accent);
+#destaques-hero .dest-thumb.active {
+    border-color: var(--d-accent);
     background: rgba(10, 8, 6, 0.75);
 }
 
 /* o enquadramento de cada foto vem do JS (thumbPos), calculado a partir da
    posicao do pote em cada imagem, para todos ficarem centrados no quadrado */
-#hero-section .hero-thumb .pic {
+#destaques-hero .dest-thumb .pic {
     display: block;
     width: 100%;
     aspect-ratio: 1;
@@ -681,12 +584,12 @@
     transition: filter .3s;
 }
 
-#hero-section .hero-thumb.active .pic,
-#hero-section .hero-thumb:hover .pic {
+#destaques-hero .dest-thumb.active .pic,
+#destaques-hero .dest-thumb:hover .pic {
     filter: none;
 }
 
-#hero-section .hero-thumb .prog {
+#destaques-hero .dest-thumb .prog {
     position: absolute;
     left: 0;
     bottom: 0;
@@ -695,36 +598,24 @@
     opacity: 0;
 }
 
-#hero-section .hero-thumb.active .prog {
+#destaques-hero .dest-thumb.active .prog {
     opacity: 1;
 }
 
-#hero-section .hero-thumb.active .prog::after {
+#destaques-hero .dest-thumb.active .prog::after {
     content: '';
     display: block;
     height: 100%;
     width: 100%;
-    background: var(--accent);
+    background: var(--d-accent);
     transform-origin: left;
     transform: scaleX(0);
-    animation: heroProg var(--dwell, 5200ms) linear forwards;
+    animation: destProg var(--dwell, 5200ms) linear forwards;
 }
 
-@keyframes heroProg {
+@keyframes destProg {
     to {
         transform: scaleX(1);
-    }
-}
-
-@keyframes heroRise {
-    from {
-        opacity: 0;
-        transform: translateY(18px);
-    }
-
-    to {
-        opacity: 1;
-        transform: none;
     }
 }
 
@@ -732,47 +623,39 @@
    RESPONSIVO
    ============================================================ */
 @media (max-width: 1024px) {
-    #hero-section .hero-split {
+    #destaques-hero .dest-split {
         grid-template-columns: 1fr;
         gap: 30px;
     }
 
-    #hero-section .hero-copy {
+    #destaques-hero .dest-copy {
         max-width: 600px;
     }
 
-    #hero-section .hero-panel {
+    #destaques-hero .dest-panel {
         aspect-ratio: 1.25/1;
         min-height: 320px;
         max-height: none;
     }
-
-    #hero-section .hero-links a:not(.hero-nav-cta) {
-        display: none;
-    }
 }
 
 @media (max-width: 640px) {
-    #hero-section .hero-inner {
-        padding-bottom: 28px;
-    }
-
-    #hero-section .hero-panel {
+    #destaques-hero .dest-panel {
         aspect-ratio: 1/1.05;
         border-radius: 16px;
     }
 
-    #hero-section .hero-seal {
+    #destaques-hero .dest-seal {
         top: 14px;
         right: 14px;
         width: 78px;
     }
 
-    #hero-section .hero-ctas {
+    #destaques-hero .dest-ctas {
         gap: 14px;
     }
 
-    #hero-section .hero-btn {
+    #destaques-hero .dest-btn {
         width: 100%;
         justify-content: center;
     }
@@ -783,14 +666,12 @@
    do painel; as miniaturas ficam no canto inferior direito. Vem depois das
    media queries de proposito, para vencer no cascade. */
 @container (max-width: 480px) {
-    /* position:static tira o rodape da jogada como containing block, para
-       o nome e as miniaturas se posicionarem direto em relacao ao painel */
-    #hero-section .hero-foot {
+    #destaques-hero .dest-foot {
         position: static;
         padding: 0;
     }
 
-    #hero-section .hero-feat {
+    #destaques-hero .dest-feat {
         position: absolute;
         z-index: 5;
         top: 20px;
@@ -798,7 +679,15 @@
         text-align: left;
     }
 
-    #hero-section .hero-thumbs {
+    /* Nessa largura o selo cairia bem onde os botoes flutuantes fixos
+       (WhatsApp e carrinho) ficam durante a rolagem no celular, colidindo
+       com eles. O "100% Natural" ja aparece na hero do topo, entao some
+       aqui em vez de brigar de posicao com um elemento fixo na tela. */
+    #destaques-hero .dest-seal {
+        display: none;
+    }
+
+    #destaques-hero .dest-thumbs {
         position: absolute;
         z-index: 5;
         right: 18px;
@@ -806,22 +695,22 @@
         gap: 6px;
     }
 
-    #hero-section .hero-thumb {
+    #destaques-hero .dest-thumb {
         width: clamp(36px, 10cqw, 44px);
     }
 }
 
 @media (prefers-reduced-motion: reduce) {
 
-    #hero-section *,
-    #hero-section *::after,
-    #hero-section *::before {
+    #destaques-hero *,
+    #destaques-hero *::after,
+    #destaques-hero *::before {
         animation-duration: .001ms !important;
         animation-iteration-count: 1 !important;
         transition-duration: .001ms !important;
     }
 
-    #hero-section .hero-shot.active {
+    #destaques-hero .dest-shot.active {
         animation: none;
         transform: none;
     }

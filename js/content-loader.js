@@ -32,30 +32,6 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div class="absolute inset-0 bg-gradient-to-t from-[#1A1A1A] via-[#1A1A1A]/20 to-transparent opacity-90"></div>${overlay}
                     </div>`;
 
-    // A home adiciona direto o lote minimo de potes; o ajuste fino acontece na
-    // gaveta. O seletor completo mora no modal, que a home nao carrega de
-    // proposito: 86% do product-modal.js e ficha tecnica.
-    // Preco nao aparece antes do carrinho: so dentro da gaveta.
-    var LOTE_MINIMO = Math.min.apply(null, siteConfig.pedido.caixas.map(function (c) { return c.potes; }));
-
-    // ---------- Destaques (home) ----------
-    const loadDestaques = () => {
-        const container = document.getElementById('destaques-container');
-        if (!container) return;
-
-        container.innerHTML = produtos.filter(p => p.destaque).slice(0, 4).map((prod, index) => `
-                <div class="${CLASSES_CARD}" data-id="${prod.id}" style="transition-delay: ${50 * index}ms;">${imagemProduto(prod)}
-                    <div class="p-6 pt-2 text-center bg-[#1A1A1A] relative z-10 flex flex-col justify-center items-center flex-1">
-                        <h4 class="text-xl font-bold text-white uppercase tracking-wider">${prod.nome}</h4>
-                        <div class="w-8 h-1 bg-primary-500 mx-auto rounded-full mt-3 mb-4 opacity-0 group-hover:opacity-100 group-hover:w-16 transition-all duration-500"></div>
-                        <button type="button" class="cart-quick-add mt-auto w-full py-2.5 rounded-xl border border-primary-500/40 text-primary-400 text-xs font-bold uppercase tracking-widest hover:bg-primary-500 hover:text-white transition-all" data-id="${prod.id}" data-nome="${prod.nome}">
-                            Adicionar &middot; ${LOTE_MINIMO} potes
-                        </button>
-                    </div>
-                </div>
-        `).join('');
-    };
-
     // ---------- Catálogo completo (catalogo.html) ----------
     // Selo do pódio: fita metálica sobre a foto, no padrão "bestseller" de
     // e-commerce (ícone + Nº, sem emoji — emoji de medalha renderiza como
@@ -189,7 +165,6 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     updateLinks();
-    loadDestaques();
     loadCatalog();
     loadParceiros();
     loadDepoimentos();

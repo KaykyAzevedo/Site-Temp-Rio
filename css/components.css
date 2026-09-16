@@ -37,6 +37,93 @@
     transition: transform 0.3s ease;
 }
 
+/* ===================== HERO IMPROVEMENTS ===================== */
+/* Noise texture overlay - Optimized for Performance */
+.hero-noise::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    /* Static PNG noise is 100x faster than SVG feTurbulence */
+    background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyBAMAAADsEZWCAAAAGFBMVEUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMc/wvAAAACHRSTlMAMwA0MwA0M0dOuTIAAAB5SURBVDjLjY/BCcAwDMN899/54x5Q0EtIwD6O48C2wX7GjMhMZGZk5u8/MzJmZGRmZGRmZGRmZGRmZGT+jLzMiMxEZkZmRmZGRmZGRmZGZkZmRmZGRmZGRmZGZkZmRkZmRkZmRmZGRmZGRmZGRmZGRmZGRmZGRmZG5gN0V8o5Bw2QjwAAAABJRU5ErkJggg==");
+    background-size: 50px;
+    pointer-events: none;
+    z-index: 2;
+    opacity: 0.15; /* Replaces heavy mix-blend-mode: overlay */
+    transform: translateZ(0); /* Force GPU Layer */
+}
+
+/* Big headline */
+.hero-headline {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 900;
+    font-style: italic;
+    line-height: 0.9;
+    text-transform: uppercase;
+    letter-spacing: -0.01em;
+}
+
+.hero-headline .line-white {
+    color: #FFFFFF;
+    text-shadow: 0 0 80px rgba(255, 255, 255, 0.08);
+    display: block;
+}
+
+.hero-headline .line-orange {
+    background: linear-gradient(90deg, #FFC080 0%, #F28C52 40%, #D96E30 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    display: block;
+}
+
+/* Pill badge */
+.hero-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(242, 140, 82, 0.12);
+    border: 1px solid rgba(242, 140, 82, 0.3);
+    color: #F5A474;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 6px 14px;
+    border-radius: 999px;
+    backdrop-filter: blur(8px);
+}
+
+/* Stat counters */
+.hero-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+
+.hero-stat-num {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 800;
+    font-size: 2rem;
+    line-height: 1;
+    color: #F28C52;
+}
+
+.hero-stat-label {
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.45);
+}
+
+/* Divider dot */
+.stat-divider {
+    width: 1px;
+    height: 32px;
+    background: rgba(255, 255, 255, 0.1);
+}
+
 /* Feature Card */
 .feature-card {
     position: relative;
@@ -95,3 +182,62 @@
     opacity: 0.7;
 }
 
+/* Fecho da headline - mesma voz da marca, so que menor */
+.hero-headline .line-sub {
+    display: block;
+    color: rgba(255, 255, 255, 0.78);
+    font-size: 0.58em;
+    letter-spacing: 0.01em;
+    text-shadow: 0 0 60px rgba(255, 255, 255, 0.06);
+}
+
+/* Texto de apoio da hero */
+.hero-lead {
+    max-width: 34rem;
+    font-size: clamp(1rem, 1.15vw, 1.15rem);
+    font-weight: 300;
+    line-height: 1.6;
+    color: rgba(255, 255, 255, 0.78);
+}
+
+/* Indicador de scroll no rodape da hero */
+.hero-scroll-cue {
+    /* Item do fluxo da coluna da hero, nao sobreposto: o conteudo
+       centralizado acima nunca colide com ele, em nenhuma altura de tela. */
+    align-self: center;
+    margin-top: auto;
+    margin-bottom: 20px;
+    padding-top: 10px;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    text-decoration: none;
+    transition: color 0.3s ease;
+}
+
+.hero-scroll-cue:hover {
+    color: #F28C52;
+}
+
+.hero-scroll-cue i {
+    font-size: 0.8rem;
+    animation: scrollNudge 2.2s ease-in-out infinite;
+}
+
+/* Abaixo disso a hero nao tem folga para o indicador sem vazar para a
+   secao seguinte, entao ele some. */
+@media (max-height: 740px) {
+    .hero-scroll-cue { display: none; }
+}
+
+/* No mobile o botao flutuante do WhatsApp disputa espaco com o indicador */
+@media (max-width: 767px) {
+    .hero-scroll-cue { display: none; }
+}
