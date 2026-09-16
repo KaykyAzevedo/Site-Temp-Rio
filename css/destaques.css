@@ -298,9 +298,9 @@
        Aspect-ratio mais largo (vs. 1.24/1 da hero original) deixa a secao
        mais compacta, sem o painel dominar a tela em relacao ao texto. */
     min-width: 0;
-    aspect-ratio: 1.7 / 1;
-    min-height: 280px;
-    max-height: 420px;
+    aspect-ratio: 1.5 / 1;
+    min-height: 300px;
+    max-height: 480px;
     border-radius: 22px;
     overflow: hidden;
     border: 1px solid rgba(255, 255, 255, 0.1);
@@ -475,7 +475,12 @@
 
 #destaques-hero .dest-feat {
     order: 2;
-    flex: none;
+    /* flex:none impedia o encolhimento: com nomes/rotulos longos e o painel
+       mais estreito, o texto estourava a largura do painel e o
+       overflow:hidden do painel cortava a palavra ao meio. min-width:0
+       permite encolher e quebrar linha normalmente. */
+    flex: 1 1 auto;
+    min-width: 0;
     text-align: right;
     pointer-events: none;
 }
@@ -504,10 +509,17 @@
     font-style: italic;
     text-transform: uppercase;
     font-size: clamp(1.6rem, 2.6vw, 2.3rem);
-    line-height: 1;
+    line-height: 1.05;
     letter-spacing: -0.01em;
     color: var(--d-text);
     text-shadow: 0 2px 20px rgba(0, 0, 0, 0.6);
+    /* garante que o nome nunca seja cortado: se a palavra nao couber nem
+       sozinha numa linha (miniaturas tomando a largura do painel), ela
+       quebra em vez de vazar para fora e ser cortada pelo overflow:hidden
+       do painel */
+    overflow-wrap: break-word;
+    word-break: break-word;
+    hyphens: auto;
 }
 
 #destaques-hero .dest-feat-meta {
