@@ -459,29 +459,17 @@
     margin-top: 2px;
 }
 
-/* rodape do painel: miniaturas a esquerda, nome no canto inferior direito */
-#destaques-hero .dest-foot {
+/* nome do favorito no canto superior esquerdo do painel: com a largura
+   quase toda livre (so reserva o espaco do selo, a direita), o nome cabe
+   numa linha so mesmo para os mais compridos ("Papica Defumada"), sem
+   disputar espaco com as miniaturas la embaixo. */
+#destaques-hero .dest-feat {
     position: absolute;
     z-index: 5;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 18px;
-    padding: 0 18px 18px;
-}
-
-#destaques-hero .dest-feat {
-    order: 2;
-    /* flex:none impedia o encolhimento: com nomes/rotulos longos e o painel
-       mais estreito, o texto estourava a largura do painel e o
-       overflow:hidden do painel cortava a palavra ao meio. min-width:0
-       permite encolher e quebrar linha normalmente. */
-    flex: 1 1 auto;
-    min-width: 0;
-    text-align: right;
+    top: 20px;
+    left: 20px;
+    right: 150px;
+    text-align: left;
     pointer-events: none;
 }
 
@@ -549,13 +537,17 @@
     }
 }
 
-/* miniaturas: pequenas por padrao, crescem so no hover, a partir da base */
+/* miniaturas: pequenas por padrao, crescem so no hover, a partir da base.
+   Ocupam o rodape sozinhas agora que o nome mudou para o canto superior
+   esquerdo. */
 #destaques-hero .dest-thumbs {
-    order: 1;
+    position: absolute;
+    z-index: 5;
+    left: 18px;
+    bottom: 18px;
     display: flex;
     align-items: flex-end;
     gap: 7px;
-    flex: none;
 }
 
 #destaques-hero .dest-thumb {
@@ -663,6 +655,11 @@
         width: 78px;
     }
 
+    /* selo menor aqui: o nome precisa reservar menos espaco a direita */
+    #destaques-hero .dest-feat {
+        right: 108px;
+    }
+
     #destaques-hero .dest-ctas {
         gap: 14px;
     }
@@ -673,24 +670,9 @@
     }
 }
 
-/* Painel estreito (telefone): nao cabe miniaturas e nome lado a lado no
-   rodape, entao o nome sai do rodape e vai para o canto superior esquerdo
-   do painel; as miniaturas ficam no canto inferior direito. Vem depois das
-   media queries de proposito, para vencer no cascade. */
+/* Painel estreito (telefone). Vem depois das outras media queries de
+   proposito, para vencer no cascade. */
 @container (max-width: 480px) {
-    #destaques-hero .dest-foot {
-        position: static;
-        padding: 0;
-    }
-
-    #destaques-hero .dest-feat {
-        position: absolute;
-        z-index: 5;
-        top: 20px;
-        left: 20px;
-        text-align: left;
-    }
-
     /* Nessa largura o selo cairia bem onde os botoes flutuantes fixos
        (WhatsApp e carrinho) ficam durante a rolagem no celular, colidindo
        com eles. O "100% Natural" ja aparece na hero do topo, entao some
@@ -699,12 +681,9 @@
         display: none;
     }
 
-    #destaques-hero .dest-thumbs {
-        position: absolute;
-        z-index: 5;
-        right: 18px;
-        bottom: 18px;
-        gap: 6px;
+    /* sem o selo, o nome pode usar a largura toda */
+    #destaques-hero .dest-feat {
+        right: 20px;
     }
 
     #destaques-hero .dest-thumb {
