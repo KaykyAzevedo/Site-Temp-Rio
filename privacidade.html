@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="scroll-smooth">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Política de Privacidade | Temp Rio</title>
+    <meta name="robots" content="noindex, follow">
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,400;0,700;0,800;0,900;1,800&family=Lato:wght@300;400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <script src="./js/config.js"></script>
+    <script src="./js/db.js"></script>
+    <script src="./js/validadores.js"></script>
+
+    <link rel="stylesheet" href="./css/base.css">
+    <link rel="stylesheet" href="./css/components.css">
+    <link rel="stylesheet" href="./css/animations.css">
+    <link rel="stylesheet" href="./css/cart.css">
+
+    <style>
+        .lgpd-tab {
+            padding: .55rem 1rem; border-radius: .6rem; font-size: .8rem; font-weight: 700;
+            color: var(--textSecondary, #BFBFBF); background: rgba(255,255,255,.04);
+            border: 1px solid rgba(255,255,255,.08); cursor: pointer; transition: all .2s ease;
+        }
+        .lgpd-tab:hover { color: #fff; border-color: rgba(242,140,82,.4); }
+        .lgpd-tab.is-ativo { color: #fff; background: rgba(242,140,82,.14); border-color: #F28C52; }
+    </style>
+</head>
+
+<body class="selection:bg-primary-500 selection:text-white">
+
+    <main>
+        <nav class="w-full flex items-center justify-between px-6 md:px-12 py-6 bg-[#0A0A0A] border-b border-borderSubtle relative z-20">
+            <a href="index.html">
+                <img src="./assets/images/logo.png" alt="Temp Rio" class="h-8 md:h-12 w-auto object-contain">
+            </a>
+            <a href="https://wa.me/5521996203535" target="_blank"
+                class="hidden md:inline-flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-white/70 hover:text-primary-400 transition-colors border border-white/10 hover:border-primary-500/40 px-5 py-2.5 rounded-full backdrop-blur-sm">
+                <i class="fa-brands fa-whatsapp text-green-400"></i> Fale agora
+            </a>
+        </nav>
+
+        <section class="py-20 md:py-24 bg-[#0A0A0A] text-white">
+            <div class="max-w-3xl mx-auto px-6">
+
+                <a href="index.html" class="text-primary-400 hover:text-primary-500 font-semibold flex items-center gap-2 group transition-colors mb-8 text-sm">
+                    <i class="fa-solid fa-arrow-left transform group-hover:-translate-x-1 transition-transform"></i> Voltar para o início
+                </a>
+
+                <p class="text-[0.65rem] font-bold uppercase tracking-widest text-primary-400 mb-3">LGPD — Lei nº 13.709/2018</p>
+                <h1 class="text-3xl md:text-5xl font-bold tracking-tight mb-4" style="font-family:'Barlow Condensed',sans-serif;">
+                    Política de Privacidade</h1>
+                <p class="text-textSecondary font-light mb-2">Versão v1 — em vigor desde 14/09/2026.</p>
+                <p class="text-textSecondary font-light leading-relaxed mb-14">
+                    A Temp Rio Indústria e Comércio ("nós") é quem decide o que fazer com os dados pessoais
+                    coletados neste site — é o que a lei chama de <strong class="text-white">controlador</strong>.
+                    Este documento explica, sem juridiquês, o que coletamos, por quê, por quanto tempo guardamos
+                    e o que você pode nos pedir a qualquer momento.
+                </p>
+
+                <!-- ============ 1. O que coletamos ============ -->
+                <h2 class="text-2xl font-bold mb-5 mt-12" style="font-family:'Barlow Condensed',sans-serif;">
+                    1. Quais dados coletamos, e por quê</h2>
+                <div class="space-y-4 mb-10">
+                    <div class="cart-line p-5">
+                        <p class="font-bold text-white text-sm mb-1">Pop-up "Antes de continuar" (catálogo)</p>
+                        <p class="text-sm text-textSecondary font-light leading-relaxed">
+                            Nome, telefone e CPF ou CNPJ — só se você preencher e marcar o consentimento. Serve
+                            para avisar de novidades e condições especiais. Nunca é obrigatório para navegar ou
+                            comprar.</p>
+                    </div>
+                    <div class="cart-line p-5">
+                        <p class="font-bold text-white text-sm mb-1">Página de pedido</p>
+                        <p class="text-sm text-textSecondary font-light leading-relaxed">
+                            Razão social, CNPJ, inscrição estadual, responsável, telefone, e-mail e endereço de
+                            entrega. Serve para fechar o pedido, calcular o frete e emitir a nota fiscal — sem
+                            esses dados o pedido não existe.</p>
+                    </div>
+                    <div class="cart-line p-5">
+                        <p class="font-bold text-white text-sm mb-1">Lista de espera</p>
+                        <p class="text-sm text-textSecondary font-light leading-relaxed">
+                            Os mesmos dados do pedido, quando você tenta comprar numa região que ainda não
+                            entregamos. Serve para sabermos onde abrir entrega primeiro.</p>
+                    </div>
+                    <div class="cart-line p-5">
+                        <p class="font-bold text-white text-sm mb-1">Visitas ao site</p>
+                        <p class="text-sm text-textSecondary font-light leading-relaxed">
+                            Página vista, um identificador de sessão aleatório (só dura enquanto a aba estiver
+                            aberta) e o tipo de dispositivo. <strong class="text-white">Não coletamos IP nem
+                            usamos cookie de rastreamento</strong> — é por isso que este site não pede aviso de
+                            cookies. A região no mapa do nosso painel vem do CEP que você mesmo digita para saber
+                            o frete, nunca de geolocalização.</p>
+                    </div>
+                </div>
+
+                <!-- ============ 2. Por quanto tempo ============ -->
+                <h2 class="text-2xl font-bold mb-5 mt-12" style="font-family:'Barlow Condensed',sans-serif;">
+                    2. Por quanto tempo guardamos</h2>
+                <ul class="space-y-3 text-sm text-textSecondary font-light leading-relaxed mb-10 list-disc pl-5">
+                    <li><strong class="text-white">Cliente ativo</strong> (comprou nos últimos 12 meses): sem
+                        prazo — você pode voltar a comprar sem preencher tudo de novo.</li>
+                    <li><strong class="text-white">Cliente inativo</strong> (sem pedido há mais de 12 meses):
+                        entra em contagem; depois de mais 90 dias sem novo pedido, seus dados de contato e
+                        endereço são anonimizados.</li>
+                    <li><strong class="text-white">Pedidos já fechados</strong>: o registro fiscal (CNPJ, razão
+                        social, valor, itens) fica guardado por <strong class="text-white">5 anos</strong> —
+                        é exigência da legislação tributária brasileira, que continua valendo mesmo se você
+                        pedir a exclusão dos seus dados (a LGPD prevê essa excepcionalidade no art. 16).</li>
+                    <li><strong class="text-white">Pop-up de pré-registro</strong>: até você pedir a exclusão,
+                        ou até 90 dias após virar "inativo" pela regra acima.</li>
+                </ul>
+
+                <!-- ============ 3. Seus direitos ============ -->
+                <h2 class="text-2xl font-bold mb-5 mt-12" style="font-family:'Barlow Condensed',sans-serif;">
+                    3. Seus direitos</h2>
+                <p class="text-sm text-textSecondary font-light leading-relaxed mb-6">
+                    A LGPD garante, entre outros: <strong class="text-white">acesso</strong> (ver o que temos
+                    sobre você), <strong class="text-white">correção</strong> (atualizar dado errado ou
+                    desatualizado), <strong class="text-white">exclusão</strong> ("direito ao esquecimento",
+                    com a ressalva fiscal explicada acima) e <strong class="text-white">informação</strong>
+                    sobre com quem compartilhamos seus dados — resposta curta: com ninguém, não vendemos nem
+                    repassamos dado de cliente a terceiros.
+                </p>
+                <p class="text-sm text-textSecondary font-light leading-relaxed mb-12">
+                    Use o formulário abaixo para exercer qualquer um deles. Como o site não tem login de
+                    cliente, confirmamos que é você mesmo pedindo documento <em>e</em> telefone juntos — os dois
+                    precisam bater com o que está no nosso cadastro.
+                </p>
+
+                <!-- ============ Formulário — exercer direitos ============ -->
+                <div class="cart-line p-6 md:p-8 mb-14" id="lgpd-form-secao">
+                    <p class="text-[0.65rem] font-bold uppercase tracking-widest text-primary-400 mb-3">Exercer seus direitos</p>
+                    <h3 class="text-xl font-bold text-white mb-5" style="font-family:'Barlow Condensed',sans-serif;">
+                        O que você quer fazer?</h3>
+
+                    <div class="flex flex-wrap gap-2 mb-6" role="tablist">
+                        <button type="button" class="lgpd-tab is-ativo" data-lgpd-tipo="acesso">Ver meus dados</button>
+                        <button type="button" class="lgpd-tab" data-lgpd-tipo="correcao">Corrigir meus dados</button>
+                        <button type="button" class="lgpd-tab" data-lgpd-tipo="exclusao">Excluir minha conta</button>
+                    </div>
+
+                    <form id="form-lgpd" novalidate class="space-y-4">
+                        <div class="grid sm:grid-cols-2 gap-4">
+                            <div class="campo" data-campo="documento">
+                                <label for="lgpd-documento" class="block text-xs font-bold uppercase tracking-widest text-textSecondary mb-2">CPF ou CNPJ *</label>
+                                <input id="lgpd-documento" type="text" inputmode="numeric" class="campo-input" placeholder="000.000.000-00" maxlength="18">
+                                <p class="campo-msg"></p>
+                            </div>
+                            <div class="campo" data-campo="telefone">
+                                <label for="lgpd-telefone" class="block text-xs font-bold uppercase tracking-widest text-textSecondary mb-2">Telefone cadastrado *</label>
+                                <input id="lgpd-telefone" type="tel" inputmode="numeric" class="campo-input" placeholder="(21) 99999-9999" maxlength="15">
+                                <p class="campo-msg"></p>
+                            </div>
+                        </div>
+
+                        <div class="campo hidden" data-campo="contato" id="lgpd-campo-contato">
+                            <label for="lgpd-contato" class="block text-xs font-bold uppercase tracking-widest text-textSecondary mb-2">Melhor contato para resposta</label>
+                            <input id="lgpd-contato" type="text" class="campo-input" placeholder="e-mail ou outro telefone, se preferir">
+                            <p class="campo-msg"></p>
+                        </div>
+
+                        <div class="campo hidden" data-campo="mensagem" id="lgpd-campo-mensagem">
+                            <label for="lgpd-mensagem" class="block text-xs font-bold uppercase tracking-widest text-textSecondary mb-2" id="lgpd-mensagem-label">O que precisa corrigir?</label>
+                            <textarea id="lgpd-mensagem" rows="3" class="campo-input" placeholder="Ex.: meu endereço mudou para..."></textarea>
+                            <p class="campo-msg"></p>
+                        </div>
+
+                        <p class="text-xs text-textSecondary font-light" id="lgpd-aviso-exclusao" hidden>
+                            <i class="fa-solid fa-triangle-exclamation text-primary-400 mr-1"></i>
+                            Isto apaga seu cadastro, telefone e endereço dos nossos sistemas. Pedidos já fechados
+                            continuam existindo por 5 anos (exigência fiscal), mas sem seu contato ou endereço
+                            ligados a eles.
+                        </p>
+
+                        <button type="submit" id="lgpd-enviar" class="btn-primary py-3 px-6 rounded-xl font-bold text-sm">
+                            Consultar meus dados</button>
+                    </form>
+
+                    <div id="lgpd-resultado" class="mt-6"></div>
+                </div>
+
+                <!-- ============ 4. Contato ============ -->
+                <h2 class="text-2xl font-bold mb-5 mt-12" style="font-family:'Barlow Condensed',sans-serif;">
+                    4. Como falar com a gente sobre seus dados</h2>
+                <p class="text-sm text-textSecondary font-light leading-relaxed mb-4">
+                    Além do formulário acima, você pode escrever direto para
+                    <a href="mailto:ouvidoriatemprio@gmail.com" class="text-primary-400 hover:underline">ouvidoriatemprio@gmail.com</a>
+                    ou chamar no <a href="https://wa.me/5521996203535" target="_blank" class="text-primary-400 hover:underline">WhatsApp</a>.
+                    Respondemos pelo mesmo canal, o mais rápido possível.
+                </p>
+                <p class="text-sm text-textSecondary font-light leading-relaxed mb-14">
+                    Se em algum momento houver um incidente de segurança que exponha dados pessoais, avisamos a
+                    Autoridade Nacional de Proteção de Dados (ANPD) em até 72 horas da confirmação, como a LGPD
+                    exige, e avisamos as pessoas afetadas diretamente pelo contato que temos.
+                </p>
+
+                <p class="text-xs text-textSecondary font-light">
+                    Esta política pode ser atualizada; a versão e a data no topo desta página sempre mostram a
+                    mais recente. Mudanças relevantes são avisadas por aqui.
+                </p>
+            </div>
+        </section>
+    </main>
+
+    <footer class="bg-[#050505] border-t border-borderSubtle pt-20 pb-10">
+        <div class="max-w-7xl mx-auto px-6">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-12 mb-16">
+                <div class="md:col-span-1">
+                    <a href="index.html" class="block mb-2 -my-8 md:-my-16">
+                        <img src="./assets/images/logo.png" alt="Temp Rio Logo"
+                            class="h-[180px] md:h-[300px] w-auto object-contain mix-blend-lighten origin-left relative -left-4">
+                    </a>
+                    <p class="text-sm text-textSecondary font-light leading-relaxed">
+                        Compromisso absoluto com ingredientes mais limpos e puros. O sabor que transforma a sua cozinha!
+                    </p>
+                </div>
+                <div>
+                    <h5 class="text-white font-semibold mb-6">Institucional</h5>
+                    <ul class="space-y-4 text-sm text-textSecondary">
+                        <li><a href="index.html#sobre-empresa" class="hover:text-primary-400 transition-colors">Sobre a Empresa</a></li>
+                        <li><a href="index.html#faq" class="hover:text-primary-400 transition-colors">Perguntas Frequentes (FAQ)</a></li>
+                        <li><a href="privacidade.html" class="hover:text-primary-400 transition-colors">Política de Privacidade</a></li>
+                    </ul>
+                </div>
+                <div>
+                    <h5 class="text-white font-semibold mb-6">Siga a Temp Rio</h5>
+                    <ul class="space-y-4 text-sm text-textSecondary">
+                        <li><a href="https://instagram.com/temp_riorj" target="_blank" class="hover:text-primary-400 transition-colors config-instagram"><i class="fa-brands fa-instagram"></i> Instagram (@temp_riorj)</a></li>
+                    </ul>
+                </div>
+                <div>
+                    <h5 class="text-white font-semibold mb-6">Contato Direto</h5>
+                    <ul class="space-y-4 text-sm text-textSecondary font-light">
+                        <li class="flex items-start gap-3 config-email"><i class="fa-regular fa-envelope mt-1"></i> ouvidoriatemprio@gmail.com</li>
+                        <li class="flex items-start gap-3 config-telefone"><i class="fa-brands fa-whatsapp mt-1"></i> (21) 99620-3535</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="border-t border-borderSubtle pt-8 flex flex-col md:flex-row items-center justify-between gap-4">
+                <p class="text-xs text-textSecondary">&copy; 2026 Temp Rio Indústria e Comércio. Todos os direitos reservados.</p>
+            </div>
+        </div>
+    </footer>
+
+    <a href="https://wa.me/5521996203535" target="_blank" class="whatsapp-float">
+        <i class="fa-brands fa-whatsapp"></i>
+    </a>
+
+    <script src="./js/main.js"></script>
+    <script src="./js/privacidade.js"></script>
+</body>
+
+</html>

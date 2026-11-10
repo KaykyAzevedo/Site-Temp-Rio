@@ -1,3 +1,5 @@
+-- 020_solidcon_historico.sql: JA APLICADA em producao como 017 de A. Renomeacao documental: NAO REAPLICAR.
+-- Corpo original preservado; numeros antigos abaixo sao historicos.
 -- 017: historico e eventos do espelho. Nao altera script, ERP ou catalogo.
 -- Independente das 013-016 do outro repo; todos os objetos novos usam solidcon_.
 begin;

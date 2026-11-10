@@ -3,7 +3,9 @@
 param(
     [string]$Config = 'C:\TempRio\solidcon\config.json',
     [string]$ArquivoEntrada,
-    [string]$ArquivoEntradaSemSaldo
+    [string]$ArquivoEntradaSemSaldo,
+    [ValidateRange(1,400)][int]$BackfillDias,
+    [string]$ArquivoVendas
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -23,6 +25,12 @@ $Fase = 'configuracao'
 $Mensagem = 'Falha de configuracao.'
 $SupabasePronto = $false
 $Real = $false
+$CodigoSaida = 1
+$VendasFalhou = $false
+$EstoqueOk = $false
+$jsonComSaldo = $null
+$jsonSemSaldo = $null
+$ZonaSP = [TimeZoneInfo]::FindSystemTimeZoneById('E. South America Standard Time')
 
 function Salvar-Json($Valor, [string]$Caminho) {
     # Troca atomica: o ultimo OK nunca fica pela metade.
@@ -147,7 +155,7 @@ function Entrar-Supabase {
 }
 
 function Chamar-Rpc([string]$Nome, $Dados) {
-    if ($Nome -notin @('solidcon_receber_produtos', 'solidcon_registrar_falha')) { throw 'RPC invalida' }
+    if ($Nome -notin @('solidcon_receber_produtos', 'solidcon_registrar_falha', 'solidcon_receber_vendas')) { throw 'RPC invalida' }
     $corpo = ConvertTo-Json -InputObject $Dados -Depth 20 -Compress
     $opcoes = @{
         Uri = ($SupabaseBase + '/rest/v1/rpc/' + $Nome); Method = 'Post'
@@ -158,11 +166,256 @@ function Chamar-Rpc([string]$Nome, $Dados) {
     return Invoke-RestMethod @opcoes
 }
 
+function Campo($Objeto, [string]$Nome) {
+    $p = $Objeto.PSObject.Properties[$Nome]
+    if ($null -ne $p) { return $p.Value }
+    return $null
+}
+
+function Centavos-Venda($Valor) {
+    $n = Numero-Decimal $Valor
+    if ($n -lt 0) { throw 'valor negativo' }
+    $c = [decimal]::Round(($n * 100), 0, [MidpointRounding]::AwayFromZero)
+    if ($c -gt [long]::MaxValue) { throw 'valor excede bigint' }
+    return [long]$c
+}
+
+function Dia-Venda($Linha) {
+    $dia = Campo $Linha 'dia'
+    if ($null -ne $dia) {
+        if ($dia -isnot [string] -or $dia -notmatch '^\d{4}-\d{2}-\d{2}$') { throw 'dia invalido' }
+        return [DateTime]::ParseExact($dia, 'yyyy-MM-dd', $Invariant).ToString('yyyy-MM-dd')
+    }
+    $dt = Campo $Linha 'dtCupom'
+    if ($dt -isnot [string] -or $dt -notmatch '^\d{4}-\d{2}-\d{2}(T|$)') { throw 'data cupom invalida' }
+    if ($dt -match '(Z|[+-]\d{2}:\d{2})$') {
+        return [TimeZoneInfo]::ConvertTime([DateTimeOffset]::Parse($dt, $Invariant), $ZonaSP).ToString('yyyy-MM-dd')
+    }
+    return [DateTime]::Parse($dt, $Invariant).ToString('yyyy-MM-dd')
+}
+
+function Familia-Venda([string]$Ean, [string]$Formato) {
+    if ($Formato -ceq 'pote' -and $Ean.Length -eq 13) { return $Ean.Substring(0,12) }
+    if ($Formato -cin @('cx24','cx48') -and $Ean.Length -eq 14) { return $Ean.Substring(1,12) }
+    return $null
+}
+
+function Adicionar-CatalogoVendas($Mapa, [string]$Chave, $Info) {
+    if (-not $Mapa.ContainsKey($Chave)) {
+        $Mapa[$Chave] = @{
+            nome=$Info.nome; categoria=$Info.categoria; formato=$Info.formato
+            fator=$Info.fator; familia=$Info.familia; familiaAmbigua=$false
+        }
+    } else {
+        $atual = $Mapa[$Chave]
+        if ($null -eq $atual) { return } # Ambiguidade nao e resolvida pela ultima linha.
+        if ($atual.nome -cne $Info.nome -or $atual.categoria -cne $Info.categoria) {
+            $Mapa[$Chave] = $null
+        } elseif (-not $atual.familiaAmbigua) {
+            if ($null -eq $atual.familia) { $atual.familia = $Info.familia }
+            elseif ($null -ne $Info.familia -and $atual.familia -cne $Info.familia) {
+                $atual.familia = $null; $atual.familiaAmbigua = $true
+            }
+        }
+    }
+}
+
+function Criar-CatalogoVendas([string]$JsonCom, [string]$JsonSem) {
+    if (-not $JsonCom -or -not $JsonSem -or -not $JsonCom.TrimStart().StartsWith('[') -or
+        -not $JsonSem.TrimStart().StartsWith('[') -or $JsonCom.Length -gt 32MB -or $JsonSem.Length -gt 32MB) {
+        throw 'catalogo incompleto'
+    }
+    $linhas = @(
+        ConvertFrom-Json -InputObject $JsonCom | ForEach-Object { $_ }
+        ConvertFrom-Json -InputObject $JsonSem | ForEach-Object { $_ }
+    )
+    foreach ($l in $linhas) {
+        if ((Inteiro-Positivo $l.id_loja) -ne 4) { throw 'filial de catalogo invalida' }
+    }
+    $mapas = @{ ean=@{}; codigo=@{} }
+    $catPote = 'TEMPERO - MAT' + [char]0x00C9 + 'RIA PRIMA EM PROCESSO'
+    $catPoteApi = 'TEMPERO - MAT' + [char]0xFFFD + 'RIA PRIMA EM PROCESSO'
+    foreach ($l in $linhas) {
+        if ($l.produto -isnot [string] -or [string]::IsNullOrWhiteSpace($l.produto) -or $l.produto.Length -gt 1000 -or
+            $l.classificacao01 -isnot [string] -or [string]::IsNullOrWhiteSpace($l.classificacao01) -or $l.classificacao01.Length -gt 200) { continue }
+        $ean = Ean-Texto $l.codigo_ean
+        $codigo = (Inteiro-Positivo $l.id_produto).ToString($Invariant)
+        $formato = 'outro'; $fator = $null
+        if ($l.classificacao01 -ceq $catPote -or $l.classificacao01 -ceq $catPoteApi) { $formato='pote'; $fator=1 }
+        elseif ($l.classificacao01 -ceq 'TEMPERO - CAIXA 24 UN') { $formato='cx24'; $fator=24 }
+        elseif ($l.classificacao01 -ceq 'TEMPERO - CAIXA 48 UN') { $formato='cx48'; $fator=48 }
+        $info = @{
+            nome=$l.produto; categoria=$l.classificacao01; formato=$formato; fator=$fator
+            familia=(Familia-Venda $ean $formato)
+        }
+        Adicionar-CatalogoVendas $mapas.ean $ean $info
+        Adicionar-CatalogoVendas $mapas.codigo $codigo $info
+    }
+    return $mapas
+}
+
+function Ler-VendasErp([string]$Dia) {
+    # Unica rota de vendas autorizada. Data gerada internamente; nao e URL livre.
+    if ($Dia -notmatch '^\d{4}-\d{2}-\d{2}$') { throw 'dia invalido' }
+    $url = $api.GetLeftPart([UriPartial]::Authority) + '/api/Vendas/resumo-produtos-data?idFilial=4&data=' + $Dia
+    $pedido = [Net.HttpWebRequest]::Create($url)
+    $pedido.Method = 'GET'; $pedido.Proxy = $null; $pedido.AllowAutoRedirect = $false
+    $pedido.Timeout = 60000; $pedido.ReadWriteTimeout = 60000; $pedido.Accept = 'application/json'
+    $resposta = $pedido.GetResponse()
+    try {
+        if ([int]$resposta.StatusCode -ne 200) { throw 'status vendas inesperado' }
+        $leitor = New-Object IO.StreamReader($resposta.GetResponseStream(), [Text.Encoding]::UTF8, $true)
+        try { return $leitor.ReadToEnd() } finally { $leitor.Dispose() }
+    } finally { $resposta.Dispose() }
+}
+
+function Normalizar-Vendas($Linhas, [string]$Dia, $Catalogo) {
+    $agrupados = @{}; $semCatalogo = @{}
+    foreach ($l in $Linhas) {
+        if ((Dia-Venda $l) -cne $Dia) { throw 'resposta de outro dia' }
+        $offline = $null -ne $l.PSObject.Properties['ean']
+        if ($offline) {
+            $ean = Ean-Texto (Campo $l 'ean')
+            $qtd = Numero-Decimal (Campo $l 'qtd')
+            $valor = Centavos-Venda (Campo $l 'valor')
+            $bruto = Centavos-Venda (Campo $l 'valor_bruto')
+            $desconto = Centavos-Venda (Campo $l 'desconto')
+        } else {
+            $ean = Ean-Texto (Campo $l 'idProduto')
+            $qtd = Numero-Decimal (Campo $l 'qtItem')
+            $valor = Centavos-Venda (Campo $l 'vlCupom')
+            $bruto = Centavos-Venda (Campo $l 'vlCupomSemDescontoAcrescimo')
+            $desconto = Centavos-Venda (Campo $l 'vlDescontoPromocaoCombinada')
+        }
+        if ($qtd -lt 0) { throw 'quantidade negativa' }
+        $info = $null
+        if ($Catalogo.ean.ContainsKey($ean)) { $info = $Catalogo.ean[$ean] }
+        elseif ($Catalogo.codigo.ContainsKey($ean)) { $info = $Catalogo.codigo[$ean] }
+        elseif (-not $offline) {
+            $cd = Campo $l 'cdProduto'
+            if ($null -ne $cd -and -not [string]::IsNullOrWhiteSpace([string]$cd)) {
+                $chaveCd = Ean-Texto $cd
+                if ($Catalogo.codigo.ContainsKey($chaveCd)) { $info = $Catalogo.codigo[$chaveCd] }
+            }
+        }
+        $nome=$null; $categoria=$null; $formato='outro'; $fator=$null; $familia=$null
+        if ($null -ne $info) {
+            $nome=$info.nome; $categoria=$info.categoria; $formato=$info.formato
+            $fator=$info.fator; $familia=$info.familia
+        } else { $semCatalogo[$ean]=$true }
+        if (-not $agrupados.ContainsKey($ean)) {
+            $agrupados[$ean] = [ordered]@{
+                ean=$ean; nome=$nome; categoria=$categoria; formato=$formato
+                potes_por_unidade=$fator; familia=$familia; qtd=[decimal]0
+                valor_centavos=[long]0; valor_bruto_centavos=[long]0; desconto_centavos=[long]0
+            }
+        }
+        $item = $agrupados[$ean]
+        if ($item.formato -cne $formato -or $item.familia -cne $familia -or $item.nome -cne $nome) { throw 'enriquecimento ambiguo' }
+        $item.qtd = [decimal]$item.qtd + $qtd
+        foreach ($par in @(@('valor_centavos',$valor),@('valor_bruto_centavos',$bruto),@('desconto_centavos',$desconto))) {
+            $soma = [decimal]$item[$par[0]] + [decimal]$par[1]
+            if ($soma -gt [long]::MaxValue) { throw 'total do item excede bigint' }
+            $item[$par[0]] = [long]$soma
+        }
+    }
+    $itens = @($agrupados.Values | Sort-Object { $_.ean })
+    if ($itens.Count -gt 2000) { throw 'mais de 2000 EANs' }
+    [decimal]$total=0; [decimal]$potes=0
+    foreach ($item in $itens) {
+        $total += [decimal]$item.valor_centavos
+        if ($null -ne $item.potes_por_unidade) { $potes += $item.qtd * $item.potes_por_unidade }
+    }
+    if ($total -gt [long]::MaxValue) { throw 'total diario excede bigint' }
+    return [pscustomobject]@{ itens=$itens; valor_total_centavos=[long]$total; potes=$potes; sem_catalogo=$semCatalogo.Count }
+}
+
+function Sincronizar-Vendas($Catalogo) {
+    $script:VendasFalhou = $false
+    $porDia = @{}
+    $hoje = [TimeZoneInfo]::ConvertTime([DateTimeOffset]::UtcNow, $ZonaSP).Date
+    $dias = if ($BackfillDias -gt 0) {
+        @((($BackfillDias-1)..0) | ForEach-Object { $hoje.AddDays(-$_).ToString('yyyy-MM-dd') })
+    } else { @($hoje.ToString('yyyy-MM-dd'),$hoje.AddDays(-1).ToString('yyyy-MM-dd')) }
+    # O pipeline do if desembrulha a lista de um unico dia em String; forca array.
+    [string[]]$dias = @($dias)
+    if ($ArquivoVendas) {
+        try {
+            $jsonArquivo = Get-Content -LiteralPath $ArquivoVendas -Raw -Encoding UTF8
+            if (-not $jsonArquivo.TrimStart().StartsWith('[') -or $jsonArquivo.Length -gt 64MB) { throw 'arquivo vendas invalido' }
+            foreach ($l in @(ConvertFrom-Json -InputObject $jsonArquivo | ForEach-Object { $_ })) {
+                $diaLinha = Dia-Venda $l
+                if (-not $porDia.ContainsKey($diaLinha)) { $porDia[$diaLinha] = New-Object Collections.ArrayList }
+                [void]$porDia[$diaLinha].Add($l)
+            }
+        } catch {
+            $script:VendasFalhou=$true; Log 'ERRO vendas arquivo offline invalido.'; return
+        }
+    } elseif ($ArquivoEntrada -or $ArquivoEntradaSemSaldo) {
+        $script:VendasFalhou=$true; Log 'ERRO vendas informe -ArquivoVendas para manter o teste totalmente offline.'; return
+    }
+    [decimal]$totalPeriodo=0; [decimal]$potesPeriodo=0; $linhasPeriodo=0; $diasComLinhas=0; $falhas=0
+    for ($d=0; $d -lt $dias.Count; $d++) {
+        $dia=$dias[$d]; $etapa='leitura'
+        try {
+            if ($ArquivoVendas) {
+                $linhas=@()
+                if ($porDia.ContainsKey($dia)) { $linhas=@($porDia[$dia] | ForEach-Object { $_ }) }
+            } else {
+                $jsonDia = Ler-VendasErp $dia
+                if (-not $jsonDia.TrimStart().StartsWith('[') -or $jsonDia.Length -gt 32MB) { throw 'resposta vendas invalida' }
+                $linhas=@(ConvertFrom-Json -InputObject $jsonDia | ForEach-Object { $_ })
+            }
+            $coleta=[DateTimeOffset]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", $Invariant)
+            $execucao=[guid]::NewGuid().ToString('D')
+            $etapa='normalizacao'
+            $normal = Normalizar-Vendas $linhas $dia $Catalogo
+            $envelope=[ordered]@{
+                dia=$dia; coletado_em=$coleta; execucao_id=$execucao
+                linhas=$normal.itens.Count; valor_total_centavos=$normal.valor_total_centavos
+                potes=$normal.potes; sem_catalogo=$normal.sem_catalogo; itens=$normal.itens
+            }
+            if ($Real) {
+                $etapa='rpc'
+                if (-not $script:Token) { $script:Token=Entrar-Supabase }
+                $r = Chamar-Rpc 'solidcon_receber_vendas' @{
+                    p_dia=$dia; p_itens=$normal.itens; p_coletado_em=$coleta; p_execucao_id=$execucao
+                }
+                if ($r.status -cne 'ok' -or $r.dia -cne $dia -or $r.execucao_id -cne $execucao -or
+                    $r.linhas -ne $normal.itens.Count -or $r.valor_total_centavos -ne $normal.valor_total_centavos -or
+                    [DateTimeOffset]::Parse($r.coletado_em,$Invariant) -ne [DateTimeOffset]::Parse($coleta,$Invariant)) {
+                    throw 'vendas nao confirmadas'
+                }
+            } else {
+                $etapa='saida'
+                $nomeArquivo=if ($BackfillDias -gt 0) { 'vendas-'+$dia+'.json' } elseif ($d -eq 0) { 'vendas-hoje.json' } else { 'vendas-ontem.json' }
+                Salvar-Json $envelope (Join-Path $Pasta $nomeArquivo)
+            }
+            $totalPeriodo += $normal.valor_total_centavos; $potesPeriodo += $normal.potes
+            $linhasPeriodo += $normal.itens.Count
+            if ($normal.itens.Count -gt 0) { $diasComLinhas++ }
+            Log ('OK vendas dia={0} linhas={1} centavos={2} potes={3} sem_catalogo={4}' -f
+                $dia,$normal.itens.Count,$normal.valor_total_centavos,$normal.potes,$normal.sem_catalogo)
+        } catch {
+            $script:VendasFalhou=$true; $falhas++
+            if ($etapa -ceq 'rpc') { $script:Token=$null }
+            Log ('ERRO vendas dia={0} fase={1}; estoque preservado.' -f $dia,$etapa)
+        }
+        if ($BackfillDias -gt 0 -and -not $ArquivoVendas -and $d -lt $dias.Count-1) { Start-Sleep -Milliseconds 700 }
+    }
+    if (-not $Real) {
+        Salvar-Json ([ordered]@{
+            dias_solicitados=$dias.Count; dias_com_linhas=$diasComLinhas; falhas=$falhas
+            linhas=$linhasPeriodo; valor_total_centavos=$totalPeriodo; potes=$potesPeriodo
+        }) (Join-Path $Pasta 'vendas-resumo.json')
+    }
+}
+
 try {
     $Cfg = Get-Content -LiteralPath $Config -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($Cfg.modo -cnotin @('teste', 'real')) { throw 'modo invalido' }
     $Real = $Cfg.modo -ceq 'real'
-    if ($Real -and ($ArquivoEntrada -or $ArquivoEntradaSemSaldo)) { throw 'arquivos locais so podem ser usados em teste' }
+    if ($Real -and ($ArquivoEntrada -or $ArquivoEntradaSemSaldo -or $ArquivoVendas)) { throw 'arquivos locais so podem ser usados em teste' }
     if ([bool]$ArquivoEntrada -ne [bool]$ArquivoEntradaSemSaldo) { throw 'informar os dois arquivos ou nenhum' }
     if ((Inteiro-Positivo $Cfg.filialEsperada) -ne 4) { throw 'filial deve ser 4' }
     if ($Cfg.categorias -isnot [array] -or $Cfg.categorias.Count -ne 2) { throw 'categorias invalidas' }
@@ -209,6 +462,15 @@ try {
         $SupabaseBase = $supabase.GetLeftPart([UriPartial]::Authority)
         $SupabasePronto = $true
     }
+    if ($BackfillDias -gt 0) {
+        # So vendas: ler catalogo para enriquecer, sem RPC nem estado de estoque.
+        try {
+            $jsonComSaldo = Ler-RespostaErp $true $ArquivoEntrada
+            $jsonSemSaldo = Ler-RespostaErp $false $ArquivoEntradaSemSaldo
+        } catch { Log 'AVISO vendas catalogo indisponivel no backfill; itens sem metadados.' }
+        $EstoqueOk = $true
+    } else {
+    try {
     $Fase = 'leitura'
     $Mensagem = 'Falha lendo as duas respostas ERP (arquivos/GETs locais, timeout 60s cada).'
     $jsonComSaldo = Ler-RespostaErp $true $ArquivoEntrada
@@ -361,8 +623,8 @@ try {
     }) $estadoPath
     Log ('OK modo={0} {1} EANs={2} execucao={3} coletado_em={4}' -f
         $Cfg.modo, $contagens, $resumo.eans, $ExecucaoId, $ColetadoEm)
-    exit 0
-} catch {
+    $EstoqueOk = $true
+    } catch {
     # Somente mensagens fixas; nunca $_, corpo HTTP, configuracao, senha ou token.
     $falha = 'ERRO fase=' + $Fase + ': ' + $Mensagem
     try { Log $falha } catch { Write-Output $falha }
@@ -374,10 +636,24 @@ try {
             try { Log 'ERRO nao foi possivel registrar falha no Supabase.' } catch {}
         }
     }
-    exit 1
+    }
+    }
+    $catalogoVendas = @{ ean=@{}; codigo=@{} }
+    try { $catalogoVendas = Criar-CatalogoVendas $jsonComSaldo $jsonSemSaldo }
+    catch { Log 'AVISO vendas catalogo indisponivel; nomes/categorias nulos e formato outro.' }
+    try { Sincronizar-Vendas $catalogoVendas }
+    catch { $VendasFalhou=$true; Log 'ERRO vendas falha local; estoque preservado.' }
+    $CodigoSaida = if (-not $EstoqueOk) { 1 } elseif ($VendasFalhou) { 3 } else { 0 }
+} catch {
+    # Configuracao/mutex invalidos impedem ambos os fluxos, sem chamadas extras.
+    try { Log ('ERRO fase=' + $Fase + ': ' + $Mensagem) } catch {}
+    $CodigoSaida = 1
+
 } finally {
     $Token = $null
     if ($Trava) { $Trava.Dispose() }
     if ($MutexAdquirido) { $Mutex.ReleaseMutex() }
     if ($Mutex) { $Mutex.Dispose() }
 }
+
+exit $CodigoSaida

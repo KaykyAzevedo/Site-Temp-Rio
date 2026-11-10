@@ -36,14 +36,10 @@
     function inputDe(nome) { return document.getElementById('f-' + nome); }
 
     /* ===================================================================
-     * Máscaras
+     * Máscaras — documento/telefone delegam ao arquivo compartilhado de B.
      * =================================================================== */
     function mascararTelefone(v) {
-        var d = v.replace(/\D/g, '').slice(0, 11);
-        if (d.length <= 2) return d.length ? '(' + d : '';
-        if (d.length <= 6) return '(' + d.slice(0, 2) + ') ' + d.slice(2);
-        if (d.length <= 10) return '(' + d.slice(0, 2) + ') ' + d.slice(2, 6) + '-' + d.slice(6);
-        return '(' + d.slice(0, 2) + ') ' + d.slice(2, 7) + '-' + d.slice(7);
+        return window.Validadores.mascararTelefone(v);
     }
 
     function mascararCep(v) {
@@ -52,34 +48,13 @@
     }
 
     function mascararCnpj(v) {
-        var d = v.replace(/\D/g, '').slice(0, 14);
-        if (d.length <= 2) return d;
-        if (d.length <= 5) return d.slice(0, 2) + '.' + d.slice(2);
-        if (d.length <= 8) return d.slice(0, 2) + '.' + d.slice(2, 5) + '.' + d.slice(5);
-        if (d.length <= 12) return d.slice(0, 2) + '.' + d.slice(2, 5) + '.' + d.slice(5, 8) + '/' + d.slice(8);
-        return d.slice(0, 2) + '.' + d.slice(2, 5) + '.' + d.slice(5, 8) + '/' + d.slice(8, 12) + '-' + d.slice(12);
+        return window.Validadores.mascararCnpj(v);
     }
 
     /* CNPJ com dígitos verificadores. Um campo que aceita qualquer número não
      * serve para emitir nota: o erro só apareceria no faturamento. */
     function cnpjValido(valor) {
-        var c = String(valor).replace(/\D/g, '');
-        if (c.length !== 14) return false;
-        if (/^(\d)\1{13}$/.test(c)) return false; // 00000000000000 e afins
-
-        function digito(base) {
-            var peso = base.length - 7;
-            var soma = 0;
-            for (var i = 0; i < base.length; i++) {
-                soma += Number(base.charAt(i)) * peso--;
-                if (peso < 2) peso = 9;
-            }
-            var resto = soma % 11;
-            return resto < 2 ? 0 : 11 - resto;
-        }
-
-        return digito(c.slice(0, 12)) === Number(c.charAt(12)) &&
-               digito(c.slice(0, 13)) === Number(c.charAt(13));
+        return window.Validadores.cnpjValido(valor);
     }
 
     /* ===================================================================
@@ -119,14 +94,14 @@
         },
         telefone: {
             obrigatorio: true,
-            testa: function (v) { var d = v.replace(/\D/g, ''); return d.length === 10 || d.length === 11; },
+            testa: function (v) { return window.Validadores.telefoneValido(v); },
             msg: 'Informe um telefone com DDD.'
         },
         email: {
             obrigatorio: true,
             // Pragmático, não RFC: melhor aceitar um endereço estranho do que
             // barrar um cliente real.
-            testa: function (v) { return /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(v.trim()); },
+            testa: function (v) { return window.Validadores.emailValido(v); },
             msg: 'Informe um e-mail válido.'
         },
         cep: {
@@ -285,6 +260,10 @@
                 }
                 cacheCep[digitos] = dados;
                 aplicarEndereco(dados);
+                // Único sinal de região que o painel usa (ver a nota na
+                // migração 007) — a pessoa já digitou o CEP por vontade
+                // própria, para saber o frete.
+                if (window.TempRioDB) window.TempRioDB.registrarCepConsultado(digitos);
             })
             .catch(function () {
                 clearTimeout(expirou);
@@ -340,6 +319,63 @@
 
     function totalComFrete() {
         return Cart.totais().valorCentavos + freteCentavos();
+    }
+
+    /* ===================================================================
+     * Display expositor (comodato gratuito)
+     *
+     * Os mesmos 3 tamanhos anunciados na home (index.html, seção #displays):
+     * o pedido mínimo de cada um está escrito ali, em texto para o cliente —
+     * aqui só é traduzido pra código, na mesma ordem em que a decisão deve
+     * ser tomada (o maior que bater primeiro, pra "Sob Medida" não perder
+     * pra "140cm" quando os dois batem ao mesmo tempo).
+     *
+     * Só aparece pra cliente do Rio de Janeiro (UF do endereço de entrega):
+     * o comodato depende de entrega e manutenção do próprio expositor, que
+     * hoje só cobrimos dentro do estado.
+     * =================================================================== */
+    var DISPLAYS = [
+        { id: 'sob-medida', rotulo: 'Display Sob Medida', bate: function (cx24, cx48, totalCx) { return totalCx >= 100; } },
+        { id: '140cm', rotulo: 'Display 140cm', bate: function (cx24, cx48) { return cx24 >= 40 && cx48 >= 15; } },
+        { id: '80cm', rotulo: 'Display 80cm', bate: function (cx24) { return cx24 >= 40; } }
+    ];
+
+    // Quantas caixas de cada tamanho (24 e 48 potes) o carrinho inteiro monta,
+    // somando sabor por sabor — é o mesmo cálculo que já monta o pedido
+    // (Cart.montarCaixas), só separado por tamanho em vez de somado num total.
+    function caixasPorTamanho() {
+        var porTamanho = {};
+        Cart.itens().forEach(function (it) {
+            Cart.montarCaixas(it.potes).forEach(function (c) {
+                porTamanho[c.potes] = (porTamanho[c.potes] || 0) + c.caixas;
+            });
+        });
+        return porTamanho;
+    }
+
+    function recomendarDisplay() {
+        var porTamanho = caixasPorTamanho();
+        var cx24 = porTamanho[24] || 0;
+        var cx48 = porTamanho[48] || 0;
+        var totalCx = Cart.totais().caixas;
+        for (var i = 0; i < DISPLAYS.length; i++) {
+            if (DISPLAYS[i].bate(cx24, cx48, totalCx)) return DISPLAYS[i];
+        }
+        return null;
+    }
+
+    // Sobrevive a redesenhos do resumo (o checkbox é recriado a cada render):
+    // o estado mora aqui, fora do DOM, e o render devolve pro elemento novo.
+    var interesseDisplayMarcado = false;
+
+    // Anexa o interesse no display à observação só nesta cópia dos dados,
+    // gerada na hora do envio — nunca no campo que o cliente vê e edita.
+    function comNotaDeDisplay(d) {
+        var rec = recomendarDisplay();
+        if (!rec || !interesseDisplayMarcado || d.uf !== 'RJ') return d;
+        var nota = 'Tem interesse no ' + rec.rotulo + ' em comodato gratuito.';
+        d.observacoes = d.observacoes ? d.observacoes + '\n' + nota : nota;
+        return d;
     }
 
     function atualizarAvisoEntrega() {
@@ -486,7 +522,7 @@
     }
 
     function dadosDaEspera() {
-        var d = lerFormulario();
+        var d = comNotaDeDisplay(lerFormulario());
         var t = Cart.totais();
         return {
             enviadoEm: new Date().toISOString(),
@@ -515,7 +551,7 @@
     /* Monta a linha do pedido para o banco. Os nomes das colunas seguem o
      * padrão do Postgres (minúsculas com underscore), não o do formulário. */
     function pedidoParaBanco() {
-        var d = lerFormulario();
+        var d = comNotaDeDisplay(lerFormulario());
         var t = Cart.totais();
         return {
             razao_social: d.razaoSocial,
@@ -781,7 +817,7 @@
             return;
         }
 
-        var envio = montarEnvio(lerFormulario());
+        var envio = montarEnvio(comNotaDeDisplay(lerFormulario()));
         if (!envio) return;
 
         // Registra o pedido no painel. Sem await de propósito: o que importa
@@ -1013,7 +1049,48 @@
                 Cart.formatarBRL(totalComFrete()) + '</span>' +
         '</div>' +
 
+        blocoDisplay() +
+
+        avisoSemPagamento() +
+
         (atendeEndereco() ? blocoEnvio() : blocoForaDaArea());
+    }
+
+    // Sempre visível no resumo, esteja o endereço na área ou não — é o
+    // último aviso antes de qualquer botão que finaliza ou envia o pedido.
+    function avisoSemPagamento() {
+        return '' +
+        '<div class="rounded-xl border border-white/10 bg-white/5 p-4 flex items-start gap-3">' +
+            '<i class="fa-solid fa-circle-info text-primary-400 mt-0.5"></i>' +
+            '<p class="text-xs text-textSecondary leading-relaxed">' +
+                '<span class="text-white font-bold">Nenhum pagamento é feito neste site.</span> ' +
+                'Ao enviar, você fala primeiro com um vendedor pelo WhatsApp, que confirma o pedido ' +
+                'e combina o pagamento com você.' +
+            '</p>' +
+        '</div>';
+    }
+
+    /* Só para cliente do Rio de Janeiro (UF do endereço) e só quando o
+     * pedido já bate o mínimo de algum tamanho — ver DISPLAYS acima. Fica
+     * claro que é uma escolha do cliente, não algo que o site decide por
+     * ele: o checkbox começa desmarcado, e só o marcar avisa o vendedor. */
+    function blocoDisplay() {
+        if (inputDe('uf').value !== 'RJ') return '';
+        var rec = recomendarDisplay();
+        if (!rec) return '';
+
+        return '' +
+        '<div class="rounded-xl border border-primary-500/30 bg-primary-500/5 p-4 space-y-2">' +
+            '<p class="flex items-center gap-2 text-sm font-bold text-primary-400">' +
+                '<i class="fa-solid fa-shop"></i> Seu pedido dá direito a um ' + esc(rec.rotulo) + '</p>' +
+            '<p class="text-xs text-textSecondary leading-relaxed">' +
+                'Expositor em comodato gratuito para a sua loja — sem custo, você só devolve se parar ' +
+                'de trabalhar com a Temp Rio. Combinamos entrega e instalação pelo WhatsApp.</p>' +
+            '<label class="flex items-start gap-2 text-xs pt-1 cursor-pointer">' +
+                '<input type="checkbox" id="f-interesseDisplay" class="mt-0.5">' +
+                '<span>Quero o ' + esc(rec.rotulo) + ' — avisar o vendedor junto com o pedido</span>' +
+            '</label>' +
+        '</div>';
     }
 
     function blocoEnvio() {
@@ -1024,11 +1101,7 @@
 
         '<button type="button" id="btn-copiar" class="w-full py-3 rounded-xl border border-white/12 text-white/70 hover:text-white hover:border-white/25 transition-all text-xs font-bold uppercase tracking-widest">' +
             'Copiar pedido' +
-        '</button>' +
-
-        '<p class="text-[0.65rem] text-textSecondary text-center leading-relaxed">' +
-            'Nenhum pagamento é feito aqui. Um vendedor confirma o pedido com você.' +
-        '</p>';
+        '</button>';
     }
 
     /* Fora da área: não é porta fechada, é triagem. A lista de espera é o
@@ -1099,19 +1172,50 @@
         $('#pedido-lista').innerHTML = itens.map(CartUI.linhaHTML).join('');
         $('#pedido-resumo').innerHTML = resumoHTML(t);
 
+        // O checkbox é recriado a cada render: devolve o estado que mora em
+        // interesseDisplayMarcado, e volta a escutar a mudança.
+        var caixaDisplay = document.getElementById('f-interesseDisplay');
+        if (caixaDisplay) {
+            caixaDisplay.checked = interesseDisplayMarcado;
+            caixaDisplay.addEventListener('change', function () {
+                interesseDisplayMarcado = this.checked;
+            });
+        }
+
         // Os botões do resumo mudam conforme o endereço atende ou não.
         var enviar_ = $('#btn-enviar');
         if (enviar_) enviar_.addEventListener('click', enviar);
 
         var copiar_ = $('#btn-copiar');
         if (copiar_) copiar_.addEventListener('click', function () {
-            var envio = montarEnvio(lerFormulario());
+            var envio = montarEnvio(comNotaDeDisplay(lerFormulario()));
             if (!envio) return;
             copiar(envio.copia).then(function () { CartUI.toast('Pedido copiado.'); });
         });
 
         var espera_ = $('#btn-espera');
         if (espera_) espera_.addEventListener('click', entrarNaListaDeEspera);
+    }
+
+    /* ===================================================================
+     * Pedido rápido — monta o carrinho de uma vez com os N temperos mais
+     * vendidos (rankingVendas, ver data/produtos.js e o catálogo), 1 caixa
+     * de cada. Vive só na tela de carrinho vazio (pedido.html): depois que
+     * o cliente já montou algo à mão, o botão não faz mais sentido ali.
+     *
+     * rankingVendas só cobre 49 sabores (o 50º da lista original repetia um
+     * nome já ranqueado — ver conversa que criou o campo). "Top 50" e "Top
+     * 49" dão o mesmo resultado; o rótulo do botão fica no número que o
+     * cliente reconhece.
+     * =================================================================== */
+    function pedidoRapido(n) {
+        var lista = produtos
+            .filter(function (p) { return p.rankingVendas && p.rankingVendas <= n; })
+            .sort(function (a, b) { return a.rankingVendas - b.rankingVendas; });
+
+        lista.forEach(function (p) { Cart.adicionar(p.id, p.nome, Cart.PASSO); });
+
+        CartUI.toast(lista.length + ' sabores adicionados — 1 caixa de cada.');
     }
 
     /* ===================================================================
@@ -1131,6 +1235,11 @@
             if (Cart.vazio()) return;
             Cart.limpar();
             CartUI.toast('Pedido esvaziado.');
+        });
+
+        [30, 40, 50].forEach(function (n) {
+            var b = document.getElementById('btn-rapido-' + n);
+            if (b) b.addEventListener('click', function () { pedidoRapido(n); });
         });
 
         // Máscaras

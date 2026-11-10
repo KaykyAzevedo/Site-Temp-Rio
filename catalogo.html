@@ -30,6 +30,9 @@
     <!-- Registro de pedidos e visitas no painel. So insere; nunca le. -->
     <script src="./js/db.js"></script>
 
+    <!-- Validadores de CPF/CNPJ/telefone -- usados pelo pre-registro. -->
+    <script src="./js/validadores.js"></script>
+
     <!-- Regioes de entrega: CEP -> regiao, taxa e prazo. -->
     <script src="./data/regioes.js"></script>
     <script src="./js/entrega.js"></script>
@@ -107,6 +110,12 @@
                      quando nao ha nenhuma vitrine aprovada e vigente. -->
                 <section id="vitrine-secao" class="hidden mb-14"></section>
 
+                <!-- Some com a busca ativa: a ordem só faz sentido pro catálogo
+                     completo, não pra um resultado filtrado. -->
+                <p id="ordenacao-aviso" class="text-xs uppercase tracking-widest font-bold text-primary-500 mb-6 flex items-center gap-2 fade-in">
+                    <i class="fa-solid fa-ranking-star"></i> Ordenado pelos 50 temperos mais vendidos
+                </p>
+
                 <!-- Carregado via JS -->
                 <div class="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6" id="catalogGrid">
                 </div>
@@ -171,6 +180,7 @@
                         <li><a href="index.html#sobre" class="hover:text-primary-400 transition-colors">Nossos
                                 Diferenciais</a></li>
                         <li><a href="index.html#faq" class="hover:text-primary-400 transition-colors">Perguntas Frequentes (FAQ)</a></li>
+                        <li><a href="privacidade.html" class="hover:text-primary-400 transition-colors">Política de Privacidade</a></li>
                     </ul>
                 </div>
 
@@ -228,6 +238,9 @@
     <script src="./js/product-modal.js"></script>
     <script src="./js/cart-ui.js"></script>
     <script src="./js/content-loader.js"></script>
+
+    <!-- Pop-up de pre-registro: 3s depois de carregar, uma vez por navegador. -->
+    <script src="./js/pre-registro.js"></script>
 </body>
 
 </html>

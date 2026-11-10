@@ -1,3 +1,6 @@
+-- 019_solidcon_espelho.sql: JA APLICADA em producao como 012 de A. Renomeacao documental: NAO REAPLICAR.
+-- Reaplicar 019 substitui solidcon_receber_produtos pela versao anterior a 020, interrompendo historico e eventos.
+-- Corpo original preservado; numeros antigos abaixo sao historicos.
 -- 012: espelho isolado. Nao consulta/escreve no ERP nem altera o catalogo do site.
 -- Aplicacao manual futura; requer os helpers de papeis de PRODUCAO e auth.users.
 begin;

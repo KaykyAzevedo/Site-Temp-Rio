@@ -1,7 +1,11 @@
+> Worktree unificado local. Não instalar/reaplicar SQL no banco existente.
+> Consulte MERGE_DECISOES.md e admin/migracoes/LEIAME.md antes de qualquer operação.
+
 # Painel de administrador — como ligar
 
 O painel fica em `admin.html`. Ele mostra pedidos, histórico por cliente,
-dashboard de vendas mensal, lista de espera e visitas.
+dashboard de vendas mensal, lista de espera, visitas (com monitor geográfico) e
+leads captados pelo pop-up de pré-registro do catálogo.
 
 **Leia a primeira seção antes de qualquer coisa.** Ela explica por que o painel
 começa vazio, e por que "vendas" não é a mesma coisa que "pedidos".
@@ -55,6 +59,8 @@ quanto se perde entre o clique e o negócio fechado — costuma ser o número ma
    | 3º | `admin/supabase-vitrine.sql` | `vitrines` e a seção "Onde comprar" |
    | 4º a 8º | `admin/migracoes/004` a `008` | cadastro de clientes, catálogo, itens de pedido e relatórios |
    | 10º | `admin/migracoes/010_realtime_pedidos.sql` | sino de notificação e "últimos pedidos" ao vivo no dashboard |
+   | 11º | `admin/migracoes/011_leads_pre_registro.sql` | `leads` — contatos do pop-up de pré-registro do catálogo |
+   | 12º | `admin/migracoes/012_completar_visita_rpc.sql` | corrige o preenchimento de tempo de sessão, CEP e pré-registro em `visitas` |
 
    A ordem importa: todos os outros usam a função `eh_admin()`, que nasce no
    primeiro. Rodar fora de ordem dá erro de função inexistente.
@@ -112,6 +118,26 @@ Sem isso, qualquer pessoa cria conta no seu projeto. As políticas ainda barram 
 leitura (por causa da tabela `admins`), mas cadastro aberto é porta que não
 precisa existir.
 
+### 5a. Dar acesso a um vendedor (opcional)
+
+Desde a migração 014, `admins` tem uma coluna `papel`: `admin` (acesso total,
+o padrão) ou `vendedor` (só as abas Dashboard, Pedidos, Clientes e Histórico —
+o resto do painel some da tela, e o banco recusa a leitura mesmo que alguém
+tente pela API direto).
+
+Os passos são os mesmos 4 e 5a acima (criar o usuário no Supabase, confirmar
+o e-mail), e no SQL Editor:
+
+```sql
+insert into public.admins (email, papel) values ('vendedor@exemplo.com', 'vendedor');
+```
+
+Para promover a admin (ou voltar a vendedor) depois:
+
+```sql
+update public.admins set papel = 'admin' where email = 'vendedor@exemplo.com';
+```
+
 ### 6. Conferir
 
 Abra `admin.html`, faça login e o painel deve carregar. Sem pedidos ainda, ele
@@ -132,9 +158,10 @@ Quem protege os dados são as políticas de **Row Level Security** em
 |---|---|
 | Site (visitante anônimo) | **Só inserir** pedido e visita |
 | Site (visitante anônimo) | **Não pode ler nada** |
-| Você, logado e na tabela `admins` | Ler e atualizar pedidos |
+| Logado, papel `vendedor` | Ler e atualizar pedidos, clientes e usuários — só isso |
+| Logado, papel `admin` | Tudo: o de cima, mais região, vitrine, catálogo, visitas, leads |
 
-Duas consequências que valem saber:
+Três consequências que valem saber:
 
 **Esconder um botão não protege dado nenhum.** Por isso a proteção está no
 banco, não na interface — mesmo quem editar o JavaScript da página no próprio
@@ -146,6 +173,98 @@ pública. É a mesma condição da lista de espera. Na prática o risco é baixo
 há o que ganhar com isso), e um pedido falso é visível na hora na aba Pedidos —
 você cancela. Se algum dia virar problema, o caminho é um servidor próprio
 intermediando a gravação, e eu faço essa mudança.
+
+**O login em si não é feito à mão.** Senha, token de sessão e a renovação
+automática dele são do Supabase Auth, não deste código — é a mesma
+infraestrutura que projetos muito maiores usam, e reescrever isso por conta
+própria (senha em bcrypt, token JWT, refresh) seria pior segurança que a de
+hoje, não melhor. A única coisa configurável que este projeto não conseguiu
+apertar é o *tempo* de expiração da sessão (hoje no padrão do Supabase, cerca
+de 1 hora) — **Authentication → Sessions**, no painel do Supabase, tem os
+campos certos ("Time-box user sessions", "Inactivity timeout"), mas eles só
+funcionam no plano **Pro** ou acima; no plano Free ficam bloqueados,
+mostrando "Upgrade to Pro". Se algum dia migrar de plano, vale voltar lá e
+apertar esse número.
+
+## Por que CPF/CNPJ, telefone e endereço NÃO são criptografados
+
+Foi cogitado (e descartado) guardar CPF/CNPJ como hash irreversível e
+telefone/endereço como texto cifrado (AES). Três motivos pesaram contra,
+nessa ordem:
+
+**São dados operacionais, não só cadastro.** O CNPJ real é exigido por lei
+para emitir nota fiscal — um hash não volta a ser número, então a loja
+perderia a capacidade de faturar o próprio cliente. O telefone é o que vira o
+link do WhatsApp (`linkWhats()`, em `js/admin.js`) — cifrado, o botão
+"Chamar" não tem para onde ligar. O endereço é para onde o produto é
+entregue. Cifrar esses três campos não protege o negócio: impede o negócio.
+
+**bcrypt quebraria a própria unicidade que o sistema já usa.** `bcrypt` gera
+um hash diferente a cada vez, mesmo para o mesmo CPF (salt aleatório de
+propósito) — o índice único `usuarios.documento` (migração 004), que existe
+para não duplicar cliente, deixaria de funcionar, e as checagens de dígito
+verificador de CPF/CNPJ (migração 013) ficariam impossíveis de rodar sobre um
+hash.
+
+**Não existe onde guardar a chave de verdade.** O site não tem servidor —
+qualquer chave de criptografia reversível (AES) que morasse no JavaScript da
+página estaria visível a qualquer pessoa que abrisse o DevTools. Não seria
+criptografia, seria só ofuscação. Fazer isso de verdade exigiria rodar a
+cifra dentro do banco (o Supabase tem `pgcrypto` e um cofre de segredos,
+o Vault, para isso) — uma peça de infraestrutura nova, não uma função
+isolada, e cada leitura de telefone/endereço (WhatsApp, entrega) passaria a
+depender dela.
+
+**O que já protege esses dados, sem nada disso:**
+
+- **RLS** (ver a tabela acima) — visitante anônimo não lê nada; só quem está
+  logado e cadastrado em `admins` (papel `admin` ou `vendedor`) enxerga CPF,
+  CNPJ, telefone e endereço.
+- **Criptografia em repouso do próprio banco.** O Postgres do Supabase roda
+  sobre infraestrutura que já cifra o disco — isso é automático, da
+  plataforma, e não depende de nada escrito neste projeto.
+
+Se um dia isso precisar mudar — por exigência legal (LGPD) ou por escala —,
+o caminho certo é `pgcrypto` + Vault no banco, não uma biblioteca de
+criptografia rodando no navegador.
+
+## Força bruta no login e abuso do formulário
+
+**O que está ligado.** Em **Authentication → Rate Limits**, no painel do
+Supabase, "Rate limit for sign-ups and sign-ins" veio configurado pela
+plataforma em 30 tentativas a cada 5 minutos por IP (360/hora) — solto demais
+para um painel de uma pessoa só. Está em **5 a cada 5 minutos (60/hora)**: um
+adivinhador de senha não passa de 5 tentativas antes de esperar; você, errando
+a senha de verdade, dificilmente bate nesse teto.
+
+**O que falta, e por que não entrou:**
+
+- **CAPTCHA no login.** O Supabase suporta de verdade (hCaptcha ou Cloudflare
+  Turnstile, em **Authentication → Attack Protection → Enable Captcha
+  protection**), mas exige uma chave secreta de uma conta sua nesses serviços
+  — não é algo que eu possa criar por você. Passo a passo, quando quiser
+  ligar: (1) crie uma conta grátis em hCaptcha.com ou
+  developers.cloudflare.com/turnstile; (2) cadastre o domínio do site e pegue
+  a **site key** e a **secret key**; (3) cole a secret key na tela de Attack
+  Protection do Supabase e salve; (4) me peça para colocar o widget no
+  formulário de login (`admin.html`) e passar o token pro
+  `signInWithPassword({ options: { captchaToken } })` — é um passo de código
+  pequeno, só depende de você ter as chaves primeiro.
+- **Bloqueio automático de conta + aviso "tentativa suspeita".** O rate
+  limit acima já reduz bastante o espaço de tentativas, mas um bloqueio de
+  conta específico com notificação exigiria um Edge Function do Supabase
+  reagindo a login falho (via Auth Hook) — é infraestrutura nova, não uma
+  função isolada, e este projeto não tem nenhuma Edge Function hoje. Fica
+  para quando/se isso virar necessidade real.
+- **Limite geral de 100 req/min na API pública.** As tabelas com INSERT
+  anônimo (`pedidos`, `leads`, `lista_espera`) não têm um limite de
+  requisições configurável no plano Free além do que a Rate Limits acima já
+  cobre para login — um limite genérico por IP em qualquer tabela exigiria
+  um proxy na frente da API (Cloudflare, ou Edge Function) ou o plano Pro.
+  O risco de hoje (pedido/lead falso) já é mitigado do jeito descrito na
+  seção de RLS: aparece na hora no painel, para cancelar.
+- **Upload de arquivo.** Não existe em lugar nenhum do site — nada a
+  limitar.
 
 ## Lista de espera
 
@@ -176,6 +295,101 @@ visitantes. Por isso o site não precisa de aviso de cookies por causa disso.
 
 "Sessões" é a aproximação de quantas pessoas navegaram; "páginas vistas" é
 quantas telas foram abertas no total.
+
+### Monitor geográfico
+
+Dentro da própria aba Visitas, um mapa do Rio com uma bolha por região — maior
+bolha, mais sessões. **A fonte é o CEP que o próprio visitante digita** na
+página de pedido para calcular o frete, não IP nem geolocalização do
+navegador. A nota completa do porquê está no topo de
+`admin/migracoes/007_visitas_regiao.sql`; resumindo: IP é dado pessoal e, no
+Brasil, costuma indicar a cidade errada — o CEP que a pessoa digita por
+vontade própria, para saber o frete, é exato e não pede aviso de cookies.
+
+**O custo honesto da escolha:** só entra no mapa quem chegou a consultar o
+CEP. Quem só passou pelo catálogo e saiu conta no total de visitas, mas
+aparece como "Sem CEP informado" nas estatísticas por região — não como um
+ponto no mapa.
+
+Os filtros **24h / 7 dias / 30 dias / Tudo**, acima do mapa, são locais a essa
+seção — não mexem no resto da tela nem no filtro de período do topo. Abaixo do
+mapa: contagem por região e por dispositivo, e uma tabela de sessões recentes
+(página, região, dispositivo, quando — sem nome, sem contato, porque a sessão
+ainda não tem um). Botão **CSV** exporta a tabela como está, já filtrada.
+
+## Leads — o pop-up de pré-registro
+
+Ao entrar no catálogo, o visitante vê um convite pedindo nome, telefone e CPF
+ou CNPJ, com o botão "Continuar navegando" — aparece uma vez por sessão, 3
+segundos depois de a página carregar, e nunca por cima do modal de produto ou
+do carrinho. É captação de contato, diferente da Vitrine (que só aparece
+**depois** de um pedido, como cortesia): aqui a pessoa ainda não comprou nada.
+
+Quem preenche vira uma linha na aba **Leads** do painel — mesmo formato de
+tabela, filtro e exportação da aba Clientes. O selo **DDD Rio** marca quando o
+telefone é da área (21 ou 24): é só uma pista para o vendedor, não uma regra —
+quem realmente decide a área de entrega é o CEP no pedido.
+
+**Envio de SMS de boas-vindas não está ligado.** A coluna `sms_enviado`
+existe no banco para isso, mas mandar SMS a partir do navegador do visitante
+exporia a credencial da Twilio a qualquer pessoa que abrisse o DevTools —
+precisa de uma Supabase Edge Function, que este site (todo estático) ainda não
+tem. O cabeçalho de `admin/migracoes/011_leads_pre_registro.sql` explica o
+caminho para ligar isso, se um dia fizer sentido.
+
+## LGPD — consentimento, direitos do titular e retenção
+
+A página `/privacidade.html` é o centro disso: explica o que coletamos, por
+quanto tempo, e tem um formulário para exercer os três direitos que a LGPD
+garante e que fazem sentido aqui (acesso, correção, exclusão). O checkbox do
+pop-up de pré-registro (aba Leads) agora linka para essa página, e cada aceite
+gera uma linha em `consentimentos` — data e versão da política, sem IP (ver o
+porquê no cabeçalho de `admin/migracoes/015_lgpd.sql`).
+
+**Acesso é self-service.** A pessoa digita CPF/CNPJ + telefone (os dois
+juntos, como segunda confirmação) e vê os próprios dados na hora — cadastro,
+endereço e pedidos. Não passa pelo painel, não precisa de você.
+
+**Correção e exclusão passam pela aba LGPD.** Aparecem como pedidos
+pendentes; nada muda sozinho. Para **correção**, edite o cadastro na aba
+Clientes do jeito que já faz hoje e depois clique **Marcar atendida** na aba
+LGPD, só para fechar o registro. Para **exclusão**, o botão **Excluir dados**
+já chama a função do banco que anonimiza tudo de uma vez — pede confirmação,
+porque não tem como desfazer.
+
+**O que "excluir" realmente apaga:** nome, telefone, e-mail, CPF/CNPJ e
+endereço, em `usuarios`/`clientes`; o mesmo tipo de dado nos pedidos já
+fechados dessa pessoa (telefone, e-mail, endereço, nome do responsável); e os
+pré-registros (`leads`) dela por completo. **O que fica:** o pedido em si
+(CNPJ, razão social, valor, itens, status) — é obrigação fiscal de 5 anos, e
+a própria LGPD prevê essa exceção (art. 16) para quando há lei específica
+exigindo a guarda.
+
+**Retenção também é manual, pelos dois botões no topo da aba LGPD** — este
+projeto não tem cron nem Edge Function para rodar isso sozinho:
+
+1. **Marcar inativos**: acha todo cliente sem pedido há 12 meses ou mais e
+   marca a data. Rode de vez em quando (uma vez por mês já cobre bem).
+2. **Anonimizar marcados**: quem foi marcado há 90 dias ou mais e continua
+   sem comprar é anonimizado — mesma limpeza da exclusão manual, só que em
+   lote.
+
+**Auditoria.** A tabela `auditoria` guarda quem (e-mail do admin, ou "self-
+service" quando é a própria pessoa consultando os dados) fez o quê e quando,
+para exclusões, purgas e consultas de acesso — é o rastro que a LGPD pede
+para ações consequentes sobre dado pessoal. **Não é um log de toda leitura do
+painel**: o Postgres não dispara gatilho em `SELECT`, e forçar isso (extensão
+`pgAudit`, ou reescrever toda tela do painel para passar por uma função)
+custaria mais do que vale para as telas de relatório. Se um auditor pedir
+"todo acesso, sempre", esse é o limite honesto do que este projeto entrega
+hoje.
+
+**Se um dia vazar dado de verdade:** a LGPD exige avisar a ANPD (Autoridade
+Nacional de Proteção de Dados) em até 72 horas da confirmação do incidente, e
+avisar as pessoas afetadas. Isso é um processo seu, não algo que o código
+faz sozinho — mas a tabela `auditoria` e os logs do próprio Supabase
+(Authentication → Audit Logs) são o primeiro lugar a olhar para entender o
+que aconteceu e quando.
 
 ## Clientes, Kanban, Dashboard de vendas e filtros
 
@@ -239,7 +453,7 @@ O tamanho do pedido define o plano; dois bônus podem subir um nível cada:
 | Bônus | Sobe um nível |
 |---|---|
 | 3 pedidos ou mais | sim |
-| Pedido acima de R$ 5.760,00 | sim |
+| Pedido que atende ao mínimo de comodato | sim |
 
 **Só no Rio.** A regra está em `js/config.js` e também como restrição no banco,
 que recusa qualquer vitrine de outro estado — uma checagem só na tela seria
@@ -283,3 +497,17 @@ listaEspera: { endpoint }                    // planilha, só como reserva
 supabase:    { url, anonKey }                // banco do painel
 vitrine:     { planos, caixasParaSugerir, ... }  // quem ganha destaque
 ```
+
+
+## Abas do painel unificado
+
+São 13: Dashboard, Pedidos (Kanban/tabela), Clientes, Histórico, Dashboard de
+vendas de pedidos, Espera, Vitrine, Regiões, Visitas/mapa, SOLIDCON,
+Vendas SOLIDCON, Leads e LGPD. Papéis e telas restritas seguem B 014:
+vendedor vê as abas permitidas; LGPD/Leads e retenção continuam admin.
+SOLIDCON é leitura da equipe; limite de estoque exige admin. Vendas SOLIDCON
+depende da 022 ainda não aplicada e exibe aviso isolado quando não instalada.
+O mapa usa Leaflet, incluído no head de admin.html.
+Lançamento manual/total servidor é código da 021 NÃO aplicada. Não muda o fluxo
+publicado até revisão futura. Nenhuma ação administrativa foi feita no banco
+durante os testes; o servidor de QA usa dados fictícios e bloqueia conexão externa.

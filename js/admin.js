@@ -350,13 +350,25 @@
      * =================================================================== */
     var sb = null;
     var usuario = null;
+    var papel = null; // 'admin' | 'vendedor' — ver migração 014
     var abaAtual = 'dashboard';
     var dados = { resumo: [], visitas: [], pedidos: [], espera: [],
                   regioes: [], faixas: [], vitrines: [], usuarios: [], clientes: [],
-                  vendasRegiao: [], vendasProduto: [] };
+                  vendasRegiao: [], vendasProduto: [], visitasBrutas: [], leads: [],
+                  solicitacoesLgpd: [] };
 
     var ABAS = ['dashboard', 'pedidos', 'clientes', 'historico', 'vendas',
-                'espera', 'vitrine', 'regioes', 'visitas', 'solidcon'];
+                'espera', 'vitrine', 'regioes', 'visitas', 'solidcon', 'vendassolid', 'leads', 'lgpd'];
+
+    /* Abas fora do alcance de um vendedor (migração 014: RLS só libera
+     * pedidos/clientes/usuarios para quem não é admin). Esconder a aba é
+     * só UX — a proteção de verdade já está no banco; sem isto, o vendedor
+     * só veria essas telas permanentemente vazias, o que confunde mais do
+     * que ajuda. LGPD entra na lista por um motivo à parte: é área
+     * juridicamente sensível (excluir/anonimizar dado de cliente), e as
+     * próprias funções RPC da migração 015 já exigem eh_admin() — o
+     * vendedor nem conseguiria agir aqui mesmo se visse a aba. */
+    var ABAS_SO_ADMIN = ['vendas', 'espera', 'vitrine', 'regioes', 'visitas', 'leads', 'lgpd'];
 
     /* Filtros globais: afetam Pedidos, Clientes e Dashboard de vendas — as
      * três telas que mostram linha a linha, em vez de um agregado já pronto
@@ -403,6 +415,7 @@
         $('#btn-atualizar').addEventListener('click', function () {
             carregar();
             if (abaAtual === 'solidcon') carregarSolidcon();
+            if (abaAtual === 'vendassolid') carregarVendas();
         });
         $('#filtro-periodo').addEventListener('change', function () { carregar(); });
 
@@ -538,9 +551,19 @@
         if (filtros.status.length) partes.push(filtros.status.length + ' status');
         $('#filtros-resumo').textContent = partes.length ? partes.join(' · ') : '';
 
-        desenharPedidos();
-        desenharClientes();
-        desenharVendas();
+        // Só as três telas que os filtros globais tocam — e só a que está
+        // na tela agora é redesenhada de fato; as outras duas ficam
+        // marcadas e são redesenhadas quando a pessoa clicar nelas (mesma
+        // ideia de desenharAbaSeSuja, para não travar o painel a cada
+        // mudança de filtro).
+        ['pedidos', 'clientes', 'vendas'].forEach(function (a) { abasParaRedesenhar[a] = true; });
+        desenharAbaSeSuja(abaAtual);
+
+        // O card de Receita, no modo "Personalizado", lê filtros.de/ate —
+        // sem isto, mudar o filtro global deixava o número visível
+        // desatualizado até a pessoa clicar de novo no botão Personalizado.
+        // É leve (só dois textContent) — pode continuar sempre em dia.
+        desenharCardReceita();
     }
 
     /* Um pedido passa no filtro quando bate com CADA critério ativo — critérios
@@ -599,8 +622,29 @@
     function abrirPainel() {
         mostrarTela('painel');
         $('#quem').textContent = usuario ? usuario.email : '';
-        carregar();
-        ligarRealtime();
+
+        sb.rpc('meu_papel').then(function (r) {
+            papel = (r.data) || null;
+            aplicarPapel();
+            carregar();
+            ligarRealtime();
+        });
+    }
+
+    /* Esconde as abas que o papel atual não usa, e tira o usuário de uma
+     * aba escondida se ele estava nela (troca de conta na mesma sessão,
+     * por exemplo). Não mexe em RLS nem em permissão — isso já está
+     * garantido no banco (migração 014); aqui é só a tela concordar com o
+     * que o banco já decidiu. */
+    function aplicarPapel() {
+        var restrito = papel === 'vendedor';
+        document.querySelectorAll('.adm-aba').forEach(function (b) {
+            var aba = b.getAttribute('data-aba');
+            b.classList.toggle('hidden', restrito && ABAS_SO_ADMIN.indexOf(aba) !== -1);
+        });
+        if (restrito && ABAS_SO_ADMIN.indexOf(abaAtual) !== -1) {
+            trocarAba('pedidos');
+        }
     }
 
     /* ===================================================================
@@ -633,7 +677,18 @@
             sb.from('usuarios').select('*').eq('tipo', 'cliente'),
             sb.from('clientes').select('*'),
             sb.rpc('vendas_por_produto', { meses: meses }),
-            sb.rpc('visitas_por_regiao', { meses: meses })
+            sb.rpc('visitas_por_regiao', { meses: meses }),
+            // Linhas cruas, não o agregado: o mapa e a tabela da aba Visitas
+            // precisam de cada sessão para filtrar por 24h/7d/30d e listar
+            // "o que aconteceu", não só "quanto". Limite de 1500 em vez de
+            // uma data: em um site de pouco tráfego uma data fixa devolveria
+            // pouca coisa; em um de muito tráfego, uma data fixa devolveria
+            // demais. O limite por linhas se adapta aos dois casos.
+            sb.from('visitas')
+                .select('pagina, sessao, criado_em, regiao_id, cep, dispositivo, referencia, segundos')
+                .order('criado_em', { ascending: false }).limit(1500),
+            sb.from('leads').select('*').order('criado_em', { ascending: false }),
+            sb.from('solicitacoes_lgpd').select('*').order('criado_em', { ascending: false })
         ]).then(function (rs) {
             marcarCarregando(false);
 
@@ -654,6 +709,9 @@
             dados.clientes = rs[8].data || [];
             dados.vendasProduto = rs[9].data || [];
             dados.vendasRegiao = rs[10].data || [];
+            dados.visitasBrutas = rs[11].data || [];
+            dados.leads = rs[12].data || [];
+            dados.solicitacoesLgpd = rs[13].data || [];
             montarChipsDeFiltro();
             desenharTudo();
         });
@@ -682,12 +740,62 @@
             $('#painel-' + a).classList.toggle('hidden', a !== qual);
         });
         if (qual === 'solidcon' && !solid.carregado && !solid.carregando) carregarSolidcon();
+        if (qual === 'vendassolid' && !vend.carregado && !vend.carregando) carregarVendas();
+
+        // A aba só é redesenhada de verdade agora, se algo mudou desde a
+        // última vez que ela foi vista (ver desenharAbaSeSuja) — é o que
+        // evita redesenhar as 11 abas inteiras a cada clique em "confirmar
+        // pedido".
+        desenharAbaSeSuja(qual);
+
+        // O mapa nasce em desenharVisitas() — se a aba acabou de aparecer
+        // agora (estava escondida, então media 0x0 e o Leaflet trava nesse
+        // tamanho), pede para recalcular depois que o container já é visível.
+        if (qual === 'visitas' && mapaVisitas) {
+            setTimeout(function () { mapaVisitas.invalidateSize(); }, 0);
+        }
+    }
+
+    /* Cada aba só é redesenhada de fato quando é a que está na tela — as
+     * outras dez ficam "sujas" (precisando de redesenho) até a pessoa
+     * clicar nelas. Antes, qualquer ação (confirmar pedido, marcar entregue,
+     * mudar um filtro...) chamava carregar() -> desenharTudo(), que refazia
+     * o HTML de TODAS as abas de uma vez — incluindo o Kanban inteiro, os
+     * gráficos SVG, a tabela de visitas E o mapa Leaflet (que ainda cria uma
+     * camada de tiles nova a cada chamada). Como o Tailwind via CDN
+     * recompila as classes a cada mutação grande do DOM, isso empilhava
+     * segundos de trabalho síncrono a cada clique — travando o painel
+     * inteiro por vários segundos numa ação tão comum quanto "confirmar
+     * venda". Redesenhar só o que está visível resolve isso na raiz, não só
+     * esconde o sintoma. */
+    var abasParaRedesenhar = {};
+    var DESENHAR_ABA = {
+        dashboard: desenharDashboard,
+        pedidos: desenharPedidos,
+        clientes: desenharClientes,
+        historico: desenharHistorico,
+        vendas: desenharVendas,
+        espera: desenharEspera,
+        vitrine: desenharVitrine,
+        regioes: desenharRegioes,
+        visitas: desenharVisitas,
+        leads: desenharLeads,
+        lgpd: desenharLgpd,
+        solidcon: desenharSolidcon,
+        vendassolid: desenharVendasSolid
+    };
+
+    function desenharAbaSeSuja(aba) {
+        if (!abasParaRedesenhar[aba]) return;
+        abasParaRedesenhar[aba] = false;
+        var fn = DESENHAR_ABA[aba];
+        if (fn) fn();
     }
 
     /* ===================================================================
-     * SOLIDCON — espelho SOMENTE LEITURA (migração 012)
+     * SOLIDCON — espelho SOMENTE LEITURA (migração 019; já aplicada como 012 de A)
      * Carrega sob demanda (ao abrir a aba) e isolado do carregar() geral:
-     * sem a 012 aplicada, só esta aba mostra o aviso; as demais não mudam.
+     * sem o espelho aplicado, só esta aba mostra o aviso; as demais não mudam.
      * =================================================================== */
     var solid = { carregado: false, carregando: false, produtos: [], syncs: [],
                   erro: null, ausente: false, busca: '', situacao: 'todos', caixa: 'todas',
@@ -819,7 +927,7 @@
         if (solid.ausente) {
             alvo.innerHTML = cartaoVazio('Integração SOLIDCON ainda não instalada',
                 'As tabelas solidcon_produtos e solidcon_sync não existem neste banco. ' +
-                'Aplique a migração 012 (admin/migracoes/012_solidcon_espelho.sql) para ativar esta aba.');
+                'Confira o ambiente conectado e o acesso ao espelho. A 019 já foi aplicada como 012 de A. Reaplicá-la restaura a RPC anterior à 020 e interrompe o histórico.');
             return;
         }
         if (solid.erro) {
@@ -1089,16 +1197,272 @@
     }
 
 
+    /* ===================================================================
+     * Vendas SOLIDCON — SOMENTE LEITURA (migração 022)
+     * Sob demanda e isolado do carregar() geral. Sem a 018: aviso na aba.
+     * =================================================================== */
+    var vend = { carregado: false, carregando: false, ausente: false, erro: null,
+                 dias: [], meses: [], fam: [], syncs: [], mesFoco: null };
+    var VEND_DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+    var VEND_FORMATOS = [['pote', 'Pote avulso'], ['cx24', 'Caixa 24'], ['cx48', 'Caixa 48'], ['outro', 'Outros']];
+
+    // Supabase corta em 1000 linhas por requisição: busca em páginas.
+    function vendPaginar(consulta) {
+        var todos = [];
+        function pagina(ini) {
+            return consulta().range(ini, ini + 999).then(function (r) {
+                if (r.error) return { error: r.error };
+                todos = todos.concat(r.data || []);
+                if ((r.data || []).length === 1000 && todos.length < 20000) return pagina(ini + 1000);
+                return { data: todos };
+            });
+        }
+        return pagina(0);
+    }
+
+    function carregarVendas() {
+        vend.carregando = true;
+        $('#painel-vendassolid').innerHTML = '<div class="adm-card p-8 text-center text-sm" style="color:var(--adm-tinta-2)">' +
+            '<i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando vendas do SOLIDCON…</div>';
+
+        Promise.all([
+            vendPaginar(function () { return sb.from('solidcon_vendas_por_mes').select('mes,valor_centavos,potes,dias_com_venda').order('mes', { ascending: true }); }),
+            vendPaginar(function () { return sb.from('solidcon_vendas_por_dia').select('dia,valor_centavos,potes').order('dia', { ascending: true }); }),
+            vendPaginar(function () { return sb.from('solidcon_vendas_familia_mes').select('mes,familia,nome_familia,formato,qtd,valor_centavos,potes').order('mes', { ascending: true }).order('familia', { ascending: true }).order('formato', { ascending: true }); }),
+            sb.from('solidcon_vendas_sync').select('status,coletado_em,em,mensagem').order('em', { ascending: false }).limit(100)
+        ]).then(function (rs) {
+            vend.carregando = false;
+            var falha = rs.filter(function (r) { return r.error; })[0];
+            vend.ausente = false; vend.erro = null;
+            if (falha) {
+                if (solidTabelaAusente(falha.error)) vend.ausente = true;
+                else vend.erro = String(falha.error.message || falha.error);
+                vend.carregado = false;
+            } else {
+                vend.meses = rs[0].data; vend.dias = rs[1].data; vend.fam = rs[2].data; vend.syncs = rs[3].data || [];
+                vend.carregado = true;
+                var ult = vend.meses.length ? vend.meses[vend.meses.length - 1].mes : null;
+                if (!vend.mesFoco || !vend.meses.some(function (m) { return m.mes === vend.mesFoco; })) vend.mesFoco = ult;
+            }
+            desenharVendasSolid();
+        }).catch(function (e) {
+            vend.carregando = false;
+            vend.erro = String(e && e.message || e);
+            desenharVendasSolid();
+        });
+    }
+
+    function vendNum(v) { return Number(v) || 0; }
+
+    // "IND - ALHO FRITO TEMPERIO 100G CX 24" -> "Alho Frito"
+    function vendLimparNome(n) {
+        var s = String(n == null ? '' : n)
+            .replace(/^\s*IND\s*-\s*/i, '')
+            .replace(/^\s*MP\s+/i, '')
+            .replace(/\bTEMPER(?:I)?O\b/gi, '')
+            .replace(/\b\d+([.,]\d+)?\s*(KG|G|GR|GRS|ML|L)\b/gi, '')
+            .replace(/\bCX\.?\s*\d+\b/gi, '')
+            .replace(/\bCAIXA\s*\d*\b/gi, '')
+            .replace(/\s*-\s*$/, '')
+            .replace(/\s{2,}/g, ' ').trim();
+        if (!s) s = String(n == null ? '' : n).trim();
+        return s.toLowerCase().replace(/(^|\s)(\S)/g, function (m, a, b) { return a + b.toUpperCase(); });
+    }
+
+    function vendMesRotulo(iso) { return rotuloMes(String(iso).slice(0, 10)); }
+    function vendMesAtual() {
+        var d = new Date();
+        return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-01';
+    }
+    function vendMesAnterior(iso) {
+        var p = String(iso).split('-'), m = Number(p[1]) - 1, a = Number(p[0]);
+        if (m < 1) { m = 12; a--; }
+        return a + '-' + String(m).padStart(2, '0') + '-01';
+    }
+
+    // Barras verticais em SVG. itens: [{rot, v, parcial, dica}]; cadaRotulo: mostra 1 rótulo a cada N.
+    function vendBarras(itens, desc, cadaRotulo) {
+        if (!itens.length) return '<p class="text-sm" style="color:var(--adm-tinta-3)">Sem dados.</p>';
+        var W = 640, H = 190, pl = 46, pr = 8, pt = 8, pb = 22;
+        var max = Math.max.apply(null, itens.map(function (i) { return i.v; }).concat([1]));
+        var slot = (W - pl - pr) / itens.length, bw = Math.max(1.5, slot * 0.72);
+        var y = function (v) { return pt + (H - pt - pb) * (1 - v / max); };
+        var out = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto" role="img" aria-label="' + esc(desc) + '">' +
+            '<line x1="' + pl + '" y1="' + y(0) + '" x2="' + (W - pr) + '" y2="' + y(0) + '" stroke="var(--adm-borda-forte)"/>' +
+            '<line x1="' + pl + '" y1="' + y(max) + '" x2="' + (W - pr) + '" y2="' + y(max) + '" stroke="var(--adm-borda)" stroke-dasharray="3 3"/>' +
+            '<text x="' + (pl - 5) + '" y="' + (y(max) + 4) + '" text-anchor="end" font-size="10" fill="var(--adm-tinta-3)">' + esc(brlCurto(max)) + '</text>' +
+            '<text x="' + (pl - 5) + '" y="' + (y(0) + 4) + '" text-anchor="end" font-size="10" fill="var(--adm-tinta-3)">0</text>';
+        itens.forEach(function (it, i) {
+            var x = pl + i * slot + (slot - bw) / 2, h = y(0) - y(it.v);
+            out += '<rect x="' + x.toFixed(1) + '" y="' + y(it.v).toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(0, h).toFixed(1) +
+                   '" rx="1.5" fill="' + (it.parcial ? 'rgba(255,255,255,.28)' : 'var(--adm-marca)') + '"><title>' + esc(it.dica) + '</title></rect>';
+            if (i % cadaRotulo === 0) {
+                out += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="10" fill="var(--adm-tinta-3)">' + esc(it.rot) + '</text>';
+            }
+        });
+        return out + '</svg>';
+    }
+
+    // Lista com barra horizontal proporcional (formatos, sabores).
+    function vendLista(linhas, total) {
+        if (!linhas.length) return '<p class="text-sm" style="color:var(--adm-tinta-3)">Sem vendas neste mês.</p>';
+        var max = Math.max.apply(null, linhas.map(function (l) { return l.v; }).concat([1]));
+        return linhas.map(function (l) {
+            var pct = total > 0 ? ' · ' + (l.v / total * 100).toFixed(1).replace('.', ',') + '%' : '';
+            return '<div class="mb-3"><div class="flex justify-between gap-3 text-sm mb-1">' +
+                '<span style="color:var(--adm-tinta-2)">' + esc(l.rot) + '</span>' +
+                '<span class="font-bold" style="white-space:nowrap">' + esc(brl(l.v)) + '<span class="text-xs font-normal" style="color:var(--adm-tinta-3)">' + esc(pct) + '</span></span></div>' +
+                '<div style="height:6px;border-radius:99px;background:var(--adm-borda)"><div style="height:6px;border-radius:99px;background:var(--adm-marca);width:' + (l.v / max * 100).toFixed(1) + '%"></div></div></div>';
+        }).join('');
+    }
+
+    function vendCabecalhoAtualizacao() {
+        var ok = null;
+        vend.syncs.forEach(function (s) {
+            if (s.status !== 'ok') return;
+            var t = new Date(s.coletado_em || s.em).getTime();
+            if (!ok || t > ok.t) ok = { t: t };
+        });
+        var ultima = vend.syncs[0] || null;
+        var txt = '—', alerta = '';
+        if (ok) {
+            var min = Math.max(0, Math.round((Date.now() - ok.t) / 60000));
+            txt = min < 60 ? 'há ' + min + ' min' : 'há ' + Math.floor(min / 60) + ' h' + (min % 60 ? ' ' + (min % 60) + ' min' : '');
+        } else {
+            alerta = 'Nenhuma sincronização de vendas concluída ainda.';
+        }
+        if (ultima && ultima.status === 'erro') {
+            var m = String(ultima.mensagem || 'sem detalhes');
+            alerta = 'A última sincronização de vendas falhou: ' + (m.length > 140 ? m.slice(0, 140) + '…' : m);
+        }
+        return { txt: txt, alerta: alerta };
+    }
+
+    function desenharVendasSolid() {
+        var alvo = $('#painel-vendassolid');
+        if (vend.ausente) {
+            alvo.innerHTML = cartaoVazio('Vendas ainda não instaladas',
+                'As views de vendas do SOLIDCON não existem neste banco. A migração 022 está pendente de implantação.');
+            return;
+        }
+        if (vend.erro) {
+            alvo.innerHTML = '<div class="adm-card p-8"><p class="font-bold mb-2">Não foi possível carregar as vendas</p>' +
+                '<p class="text-sm mb-4" style="color:var(--adm-tinta-2)">' + esc(vend.erro) + '</p>' +
+                '<button type="button" class="adm-botao-fantasma" id="vend-tentar">Tentar de novo</button></div>';
+            $('#vend-tentar').addEventListener('click', carregarVendas);
+            return;
+        }
+        if (!vend.carregado) return;
+        if (!vend.meses.length) {
+            alvo.innerHTML = cartaoVazio('Nenhuma venda sincronizada ainda', 'Quando a rotina de vendas rodar, os números aparecem aqui.');
+            return;
+        }
+
+        var atual = vendMesAtual();
+        var total = 0, potes = 0;
+        vend.meses.forEach(function (m) { total += vendNum(m.valor_centavos); potes += vendNum(m.potes); });
+        var completos = vend.meses.filter(function (m) { return m.mes < atual; });
+        var media = completos.length ? completos.reduce(function (a, m) { return a + vendNum(m.valor_centavos); }, 0) / completos.length : 0;
+        var cab = vendCabecalhoAtualizacao();
+
+        function kpi(r, v, nota) {
+            return '<div class="adm-card p-4"><p class="adm-tile-rotulo mb-1">' + r + '</p><p class="adm-tile-valor">' + esc(v) + '</p>' +
+                   (nota ? '<p class="text-xs mt-1" style="color:var(--adm-tinta-3)">' + esc(nota) + '</p>' : '') + '</div>';
+        }
+
+        // Mês em foco
+        var foco = vend.mesFoco;
+        var mf = vend.meses.filter(function (m) { return m.mes === foco; })[0];
+        var ma = vend.meses.filter(function (m) { return m.mes === vendMesAnterior(foco); })[0];
+        var vf = mf ? vendNum(mf.valor_centavos) : 0, va = ma ? vendNum(ma.valor_centavos) : 0;
+        var variacao;
+        if (!ma || va <= 0) {
+            variacao = '<span class="text-sm" style="color:var(--adm-tinta-3)">sem mês anterior para comparar</span>';
+        } else {
+            var pct = (vf - va) / va * 100, sobe = pct >= 0;
+            variacao = '<span class="text-sm font-bold" style="color:' + (sobe ? 'var(--adm-bom)' : 'var(--adm-ruim)') + '">' +
+                '<i class="fa-solid ' + (sobe ? 'fa-arrow-up' : 'fa-arrow-down') + ' mr-1"></i>' +
+                esc((sobe ? '+' : '') + pct.toFixed(1).replace('.', ',') + '%') + '</span>' +
+                '<span class="text-xs ml-2" style="color:var(--adm-tinta-3)">vs ' + esc(vendMesRotulo(vendMesAnterior(foco))) + ' (' + esc(brl(va)) + ')</span>';
+        }
+        var parcialFoco = foco === atual;
+
+        var fm = vend.fam.filter(function (f) { return f.mes === foco; });
+        var porFormato = VEND_FORMATOS.map(function (f) {
+            return { rot: f[1], v: fm.filter(function (x) { return x.formato === f[0]; }).reduce(function (a, x) { return a + vendNum(x.valor_centavos); }, 0) };
+        });
+        var mapaSab = {};
+        fm.forEach(function (x) {
+            var k = x.familia, o = mapaSab[k] || (mapaSab[k] = { rot: vendLimparNome(x.nome_familia), v: 0 });
+            o.v += vendNum(x.valor_centavos);
+        });
+        var sabores = Object.keys(mapaSab).map(function (k) { return mapaSab[k]; })
+            .filter(function (s) { return s.v > 0; }).sort(function (a, b) { return b.v - a.v; }).slice(0, 15);
+
+        // Por mês / por dia / dia da semana
+        var itensMes = vend.meses.map(function (m) {
+            return { rot: vendMesRotulo(m.mes), v: vendNum(m.valor_centavos), parcial: m.mes >= atual,
+                     dica: vendMesRotulo(m.mes) + ': ' + brl(vendNum(m.valor_centavos)) + (m.mes >= atual ? ' (mês parcial)' : '') };
+        });
+        var ult90 = vend.dias.slice(-90);
+        var itensDia = ult90.map(function (d) {
+            var p = String(d.dia).split('-');
+            return { rot: p[2] + '/' + p[1], v: vendNum(d.valor_centavos), dica: p[2] + '/' + p[1] + '/' + p[0] + ': ' + brl(vendNum(d.valor_centavos)) };
+        });
+        var soma = [0, 0, 0, 0, 0, 0, 0], cont = [0, 0, 0, 0, 0, 0, 0];
+        vend.dias.forEach(function (d) {
+            var v = vendNum(d.valor_centavos);
+            if (v <= 0) return;
+            var q = String(d.dia).split('-'), w = new Date(Number(q[0]), Number(q[1]) - 1, Number(q[2])).getDay();
+            soma[w] += v; cont[w]++;
+        });
+        var itensSemana = [1, 2, 3, 4, 5, 6, 0].map(function (w) {
+            var v = cont[w] ? soma[w] / cont[w] : 0;
+            return { rot: VEND_DIAS_SEMANA[w], v: v, dica: VEND_DIAS_SEMANA[w] + ': média ' + brl(Math.round(v)) + ' (' + cont[w] + ' dias com venda)' };
+        });
+
+        function cartao(titulo, sub, corpo) {
+            return '<div class="adm-card p-5"><p class="font-bold">' + esc(titulo) + '</p>' +
+                   '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">' + esc(sub) + '</p>' + corpo + '</div>';
+        }
+
+        alvo.innerHTML =
+            '<div class="flex items-center gap-2 mb-3 text-sm" style="color:var(--adm-tinta-2)"><i class="fa-regular fa-clock"></i><span>Atualizado ' + esc(cab.txt) + '</span></div>' +
+            (cab.alerta ? '<div class="adm-card p-4 mb-3 text-sm" role="alert" style="border-color:rgba(239,68,68,.45)"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:#FCA5A5"></i>' + esc(cab.alerta) + '</div>' : '') +
+            '<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">' +
+                kpi('Total no período', brl(total), vendMesRotulo(vend.meses[0].mes) + ' a ' + vendMesRotulo(vend.meses[vend.meses.length - 1].mes)) +
+                kpi('Média por mês completo', completos.length ? brl(Math.round(media)) : '—', completos.length + ' meses completos') +
+                kpi('Potes vendidos', NUM.format(Math.round(potes)), 'caixas contadas em potes') +
+                kpi('Meses no histórico', NUM.format(vend.meses.length), 'mês corrente é parcial') +
+            '</div>' +
+            '<div class="adm-card p-5 mb-5"><div class="flex items-center flex-wrap gap-3 mb-3">' +
+                '<label for="vend-mes" class="adm-tile-rotulo">Mês em foco</label>' +
+                '<select id="vend-mes" class="adm-input" style="width:auto;padding:.45rem .7rem">' +
+                    vend.meses.slice().reverse().map(function (m) {
+                        return '<option value="' + esc(m.mes) + '"' + (m.mes === foco ? ' selected' : '') + '>' + esc(vendMesRotulo(m.mes)) + '</option>';
+                    }).join('') + '</select></div>' +
+                '<p class="adm-heroi">' + esc(brl(vf)) + '</p>' +
+                '<div class="mt-1">' + variacao + '</div>' +
+                (parcialFoco ? '<p class="text-xs mt-2" style="color:var(--adm-tinta-3)">Mês em andamento: a comparação é com o mês anterior inteiro.</p>' : '') +
+            '</div>' +
+            '<div class="grid lg:grid-cols-2 gap-5 mb-5">' +
+                cartao('Por formato', 'Vendas do mês em foco', vendLista(porFormato.filter(function (f) { return f.v > 0; }), vf)) +
+                cartao('Top 15 sabores', 'Vendas do mês em foco', vendLista(sabores, vf)) +
+            '</div>' +
+            '<div class="grid gap-5">' +
+                cartao('Vendas por mês', 'Mês corrente em cinza (parcial)', vendBarras(itensMes, 'Vendas por mês em reais', 1)) +
+                cartao('Vendas por dia', 'Últimos 90 dias', vendBarras(itensDia, 'Vendas por dia nos últimos 90 dias em reais', 10)) +
+                cartao('Média por dia da semana', 'Só dias com venda, em todo o histórico', vendBarras(itensSemana, 'Média de vendas por dia da semana em reais', 1)) +
+            '</div>' +
+            '<p class="text-xs mt-4" style="color:var(--adm-tinta-3)">Somente leitura. Valores do ERP SOLIDCON, em reais.</p>';
+
+        $('#vend-mes').addEventListener('change', function (ev) { vend.mesFoco = ev.target.value; desenharVendasSolid(); });
+    }
+
+
     function desenharTudo() {
-        desenharDashboard();
-        desenharPedidos();
-        desenharClientes();
-        desenharHistorico();
-        desenharVendas();
-        desenharEspera();
-        desenharVitrine();
-        desenharRegioes();
-        desenharVisitas();
+        ABAS.forEach(function (a) { abasParaRedesenhar[a] = true; });
+        desenharAbaSeSuja(abaAtual);
     }
 
     /* ===================================================================
@@ -1617,7 +1981,7 @@
      *
      * O Marcio digita cada pedido do site no comercial do SOLIDCON. Este
      * bloco junta tudo o que ele precisa em um lugar só (+ "Copiar tudo") e
-     * registra o número do pedido lançado. Depende da migração 011: sem ela,
+     * registra o número do pedido lançado. Depende da migração 021: sem ela,
      * as colunas novas não vêm no select('*') e o bloco avisa em vez de quebrar.
      * =================================================================== */
     function abrirPedido(p) {
@@ -1627,7 +1991,7 @@
 
     function lancadoNoSolidcon(p) { return !!p.lancado_solidcon_em; }
 
-    // Sem a coluna (migração 011 pendente) não há selo: não dá para afirmar nada.
+    // Sem a coluna (migração 021 pendente) não há selo: não dá para afirmar nada.
     function seloSolidcon(p) {
         if (!('lancado_solidcon_em' in p) || p.status === 'cancelado') return '';
         return lancadoNoSolidcon(p)
@@ -1730,7 +2094,7 @@
         }
         if (!temColuna || info.semColuna) {
             avisos += '<p class="text-xs p-3 rounded-lg mb-3" style="background:rgba(255,255,255,0.04);color:var(--adm-tinta-2)">' +
-                'Migração 011 ainda não aplicada no banco: códigos SOLIDCON e o registro de lançamento ficam indisponíveis.</p>';
+                'Migração 021 ainda não aplicada no banco: códigos SOLIDCON e o registro de lançamento ficam indisponíveis.</p>';
         } else if (semCodigo) {
             avisos += '<p class="text-xs p-3 rounded-lg mb-3" style="background:rgba(239,68,68,0.14);color:#FCA5A5">' +
                 '<i class="fa-solid fa-circle-exclamation mr-1"></i>Há produto sem código SOLIDCON — procure pelo nome.</p>';
@@ -2039,16 +2403,56 @@
             });
         });
 
+        // "Detalhes" não abre modal: abre a própria linha, embaixo do cliente
+        // clicado — a linha de detalhe já está no DOM (ver linhaCliente),
+        // colapsada por CSS. Clicar só alterna a classe que a expande.
         alvo.querySelectorAll('[data-ver-cliente]').forEach(function (b) {
             b.addEventListener('click', function () {
-                var c = filtrados.filter(function (x) { return x.clienteId === b.getAttribute('data-ver-cliente'); })[0];
-                if (c) abrirModal(detalheCliente(c));
+                var linhaDetalhe = b.closest('tr').nextElementSibling;
+                if (!linhaDetalhe || !linhaDetalhe.classList.contains('adm-linha-detalhe')) return;
+                var colapso = linhaDetalhe.querySelector('.adm-detalhe-colapso');
+                var aberto = colapso.classList.toggle('is-aberto');
+                b.setAttribute('aria-expanded', String(aberto));
+                var icone = b.querySelector('[data-icone-detalhe]');
+                if (icone) {
+                    icone.classList.toggle('fa-chevron-down', !aberto);
+                    icone.classList.toggle('fa-chevron-up', aberto);
+                }
             });
         });
         alvo.querySelectorAll('[data-editar-cliente]').forEach(function (b) {
             b.addEventListener('click', function () {
                 var c = filtrados.filter(function (x) { return x.clienteId === b.getAttribute('data-editar-cliente'); })[0];
                 if (c) abrirModal(formEditarCliente(c));
+            });
+        });
+
+        // Reaproveita a mesma RPC da aba LGPD ("Excluir dados"): mantém o
+        // pedido (obrigação fiscal de 5 anos), anonimiza nome/telefone/
+        // e-mail/endereço em usuarios, clientes e pedidos, e apaga leads
+        // com o mesmo documento. Sem solicitação de LGPD associada — só
+        // passa o documento, o terceiro parâmetro fica null.
+        alvo.querySelectorAll('[data-excluir-cliente]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                var documento = b.getAttribute('data-documento');
+                if (!documento) {
+                    window.alert('Este cliente não tem CPF/CNPJ cadastrado — não é possível excluir.');
+                    return;
+                }
+                if (!window.confirm(
+                    'Excluir este cliente?\n\n' +
+                    'Remove nome, telefone, e-mail e endereço do cadastro. Pedidos já fechados ' +
+                    'continuam existindo (obrigação fiscal de 5 anos), mas sem contato nem endereço ' +
+                    'ligados a eles.\n\n' +
+                    'Não tem como desfazer.'
+                )) return;
+
+                b.disabled = true;
+                sb.rpc('lgpd_excluir_pessoa', { p_documento: documento }).then(function (r) {
+                    b.disabled = false;
+                    if (r.error) { window.alert('Não foi possível excluir: ' + r.error.message); return; }
+                    carregar();
+                });
             });
         });
     }
@@ -2061,11 +2465,23 @@
             '<td class="num">' + NUM.format(c.pedidos) + '</td>' +
             '<td class="num">' + esc(brl(c.ticket)) + '</td>' +
             '<td><div class="flex items-center gap-1 flex-wrap">' +
-                '<button type="button" class="adm-botao-fantasma" data-ver-cliente="' + esc(c.clienteId) + '">' +
-                    '<i class="fa-regular fa-eye mr-1"></i>Detalhes</button>' +
+                '<button type="button" class="adm-botao-fantasma" data-ver-cliente="' + esc(c.clienteId) + '" aria-expanded="false">' +
+                    '<i class="fa-solid fa-chevron-down mr-1" data-icone-detalhe></i>Detalhes</button>' +
                 '<button type="button" class="adm-botao-fantasma" data-editar-cliente="' + esc(c.clienteId) + '">' +
                     '<i class="fa-solid fa-pen mr-1"></i>Editar</button>' +
+                '<button type="button" class="adm-botao-fantasma" data-excluir-cliente="' + esc(c.clienteId) + '" ' +
+                    'data-documento="' + esc(c.cnpj || c.cpf || '') + '" style="color:#FCA5A5">' +
+                    '<i class="fa-solid fa-trash mr-1"></i>Excluir</button>' +
                 linkWhats(c.telefone) +
+            '</div></td>' +
+        '</tr>' +
+        // Linha de detalhe: nasce colapsada (CSS), logo depois da linha do
+        // cliente — "Detalhes" alterna a classe que a abre, em vez de um
+        // modal. Fica sempre no DOM, mesmo fechada, para a transição de
+        // altura ter o que animar (ver .adm-detalhe-colapso em admin.css).
+        '<tr class="adm-linha-detalhe">' +
+            '<td colspan="6"><div class="adm-detalhe-colapso">' +
+                '<div class="adm-detalhe-conteudo">' + detalheCliente(c) + '</div>' +
             '</div></td>' +
         '</tr>';
     }
@@ -2074,18 +2490,17 @@
         var pedidosDoCliente = dados.pedidos.filter(function (p) { return p.cliente_id === c.clienteId; })
             .sort(function (a, b) { return new Date(b.criado_em) - new Date(a.criado_em); });
 
-        return '<h2 class="text-lg font-bold mb-1">' + esc(c.nome) + '</h2>' +
-            '<p class="text-xs mb-5" style="color:var(--adm-tinta-3)">' +
+        return '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">' +
                 esc(c.tipo === 'PJ' ? 'CNPJ ' + c.cnpj : 'CPF ' + c.cpf) +
                 (c.bairro || c.cidade ? ' · ' + esc([c.bairro, c.cidade].filter(Boolean).join(', ')) + '/' + esc(c.uf || '') : '') +
             '</p>' +
-            '<div class="grid sm:grid-cols-3 gap-4 mb-5">' +
+            '<div class="grid sm:grid-cols-3 gap-4 mb-4">' +
                 ficha('Pedidos', NUM.format(c.pedidos), NUM.format(c.fechados) + ' fechados') +
                 ficha('Total comprado', brl(c.gasto), 'confirmado + entregue') +
                 ficha('Ticket médio', brl(c.ticket), 'por pedido fechado') +
             '</div>' +
             (c.telefone || c.email
-                ? '<p class="text-sm mb-5">' + esc(c.telefone) + (c.email ? ' · ' + esc(c.email) : '') + '</p>'
+                ? '<p class="text-sm mb-4">' + esc(c.telefone) + (c.email ? ' · ' + esc(c.email) : '') + '</p>'
                 : '') +
             '<p class="font-bold text-sm mb-3">Pedidos</p>' +
             (pedidosDoCliente.length
@@ -2098,7 +2513,7 @@
                   }).join('') + '</div>'
                 : '<p class="adm-vazio">Nenhum pedido no período carregado.</p>') +
             (linkWhats(c.telefone)
-                ? '<div class="mt-5 pt-4" style="border-top:1px solid var(--adm-borda)">' + linkWhats(c.telefone) + '</div>'
+                ? '<div class="mt-4 pt-4" style="border-top:1px solid var(--adm-borda)">' + linkWhats(c.telefone) + '</div>'
                 : '');
     }
 
@@ -2931,6 +3346,12 @@
         var alvo = $('#painel-visitas');
         var v = dados.visitas;
 
+        // O HTML inteiro do painel é substituído logo abaixo — o <div> que o
+        // mapa ocupava deixa de existir. Um objeto Leaflet apontando para um
+        // nó removido do DOM trava na próxima atualização, então ele morre
+        // aqui e nasce de novo em desenharMonitorGeografico().
+        if (mapaVisitas) { mapaVisitas.remove(); mapaVisitas = null; mapaVisitasCamada = null; }
+
         if (!v.length) {
             alvo.innerHTML = cartaoVazio('Nenhuma visita registrada',
                 'A contagem começa quando o site com o painel conectado entrar no ar. ' +
@@ -2951,7 +3372,9 @@
 
             cartaoGrafico('g-visitas', 'Sessões por mês',
                 'Uma sessão é uma pessoa navegando. Sem cookie, sem terceiros, sem IP guardado.',
-                't-visitas');
+                't-visitas') +
+
+            htmlMonitorGeografico();
 
         desenharLinha($('#g-visitas'), v.map(function (r) {
             return { rotulo: rotuloMes(r.mes), valor: Number(r.sessoes), extra: r };
@@ -2968,6 +3391,483 @@
             v.map(function (r) {
                 return [rotuloMes(r.mes), NUM.format(r.sessoes), NUM.format(r.visitas)];
             }), [false, true, true]);
+
+        ligarMonitorGeografico(alvo);
+        desenharMonitorGeografico();
+    }
+
+    /* ===================================================================
+     * Monitor geográfico — mapa e tabela de visitas por região
+     *
+     * "Onde" vem do CEP que o próprio visitante digita na página de pedido,
+     * não de IP nem de geolocalização do navegador — a mesma fonte que a
+     * migração 007 já usa para o relatório mensal, aqui só olhada sessão a
+     * sessão. Sem coleta nova, sem custo de API paga, sem novo dado pessoal:
+     * ver a nota grande no topo de admin/migracoes/007_visitas_regiao.sql.
+     *
+     * Bolha por região, não ponto por visita: o dado é "essa sessão bateu no
+     * CEP tal", não uma coordenada exata — um verdadeiro mapa de calor
+     * inventaria uma precisão que a coleta não tem.
+     * =================================================================== */
+    var REGIAO_COORDS = {
+        'centro':            [-22.9068, -43.1729],
+        'zona-sul':          [-22.9707, -43.1823],
+        'zona-norte':        [-22.9235, -43.2369],
+        'barra-jacarepagua': [-22.9990, -43.3652],
+        'zona-oeste':        [-22.8756, -43.6217],
+        'niteroi':           [-22.8832, -43.1034],
+        'sao-goncalo':       [-22.8268, -43.0539],
+        'baixada':           [-22.7556, -43.4111]
+        // 'resto-rj' fica de fora de propósito: é "todo o resto do estado",
+        // sem um ponto único que o represente sem enganar.
+    };
+
+    var visitasJanela = '7d';
+    var visitasPagina = 1;
+    var POR_PAGINA_VISITAS = 20;
+    var mapaVisitas = null;
+    var mapaVisitasCamada = null;
+
+    function regiaoNome(id) {
+        if (!id) return 'Sem CEP informado';
+        var r = dados.regioes.filter(function (x) { return x.id === id; })[0];
+        return r ? r.nome : id;
+    }
+
+    var DISPOSITIVO_ROTULO = { celular: 'Celular', tablet: 'Tablet', computador: 'Computador' };
+
+    function visitaBrutaPassaNaJanela(r) {
+        if (visitasJanela === 'tudo') return true;
+        var horas = visitasJanela === '24h' ? 24 : (visitasJanela === '7d' ? 24 * 7 : 24 * 30);
+        var corte = Date.now() - horas * 60 * 60 * 1000;
+        return new Date(r.criado_em).getTime() >= corte;
+    }
+
+    function htmlMonitorGeografico() {
+        return '<div class="adm-card p-5 mb-7">' +
+            '<div class="flex items-start justify-between flex-wrap gap-3 mb-1">' +
+                '<div>' +
+                    '<p class="font-bold text-sm mb-1">Monitor geográfico</p>' +
+                    '<p class="text-xs" style="color:var(--adm-tinta-3)">' +
+                        'Por região de CEP consultado na página de pedido — não por IP. ' +
+                        'Só conta quem chegou a consultar o frete.' +
+                    '</p>' +
+                '</div>' +
+                '<div class="flex gap-1">' +
+                    ['24h', '7d', '30d', 'tudo'].map(function (j) {
+                        var rot = j === '24h' ? 'Últimas 24h' : j === '7d' ? '7 dias' : j === '30d' ? '30 dias' : 'Tudo';
+                        return '<button type="button" class="adm-chip' + (visitasJanela === j ? ' is-ativo' : '') +
+                            '" data-visitas-janela="' + j + '">' + rot + '</button>';
+                    }).join('') +
+                '</div>' +
+            '</div>' +
+            '<div id="mapa-visitas" style="height:360px;border-radius:.75rem;margin-top:1rem;overflow:hidden"></div>' +
+            '<div id="stats-visitas" class="grid sm:grid-cols-2 gap-4 mt-5"></div>' +
+            '<div class="flex items-center justify-between flex-wrap gap-3 mt-6 mb-3">' +
+                '<p class="font-bold text-sm">Sessões recentes</p>' +
+                botoesExportar('visitas-geo') +
+            '</div>' +
+            '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">' +
+                'Sessões anônimas — sem nome, sem contato. Vira contato só quando a pessoa preenche o pop-up (aba Leads).' +
+            '</p>' +
+            '<div id="tabela-visitas-geo"></div>' +
+        '</div>';
+    }
+
+    function ligarMonitorGeografico(alvo) {
+        alvo.querySelectorAll('[data-visitas-janela]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                visitasJanela = b.getAttribute('data-visitas-janela');
+                visitasPagina = 1;
+                desenharVisitas();
+            });
+        });
+    }
+
+    function desenharMonitorGeografico() {
+        var filtradas = dados.visitasBrutas.filter(visitaBrutaPassaNaJanela);
+
+        // --- Mapa: uma bolha por região, raio proporcional a sessões distintas ---
+        var alvoMapa = $('#mapa-visitas');
+        if (alvoMapa && typeof L !== 'undefined') {
+            if (!mapaVisitas) {
+                mapaVisitas = L.map('mapa-visitas', { scrollWheelZoom: false })
+                    .setView([-22.92, -43.35], 10);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '&copy; OpenStreetMap',
+                    maxZoom: 18
+                }).addTo(mapaVisitas);
+            }
+            if (mapaVisitasCamada) { mapaVisitas.removeLayer(mapaVisitasCamada); }
+
+            var porRegiaoMapa = {};
+            filtradas.forEach(function (r) {
+                if (!r.regiao_id || !REGIAO_COORDS[r.regiao_id]) return;
+                porRegiaoMapa[r.regiao_id] = (porRegiaoMapa[r.regiao_id] || 0) + 1;
+            });
+            var maiorContagem = Math.max.apply(null, Object.keys(porRegiaoMapa).map(function (k) { return porRegiaoMapa[k]; }).concat([1]));
+
+            mapaVisitasCamada = L.layerGroup();
+            Object.keys(porRegiaoMapa).forEach(function (id) {
+                var n = porRegiaoMapa[id];
+                var raio = 8 + Math.round((n / maiorContagem) * 26);
+                L.circleMarker(REGIAO_COORDS[id], {
+                    radius: raio, color: '#F28C52', weight: 1,
+                    fillColor: '#F28C52', fillOpacity: 0.45
+                }).bindTooltip(regiaoNome(id) + ': ' + NUM.format(n) + (n === 1 ? ' sessão' : ' sessões'))
+                  .addTo(mapaVisitasCamada);
+            });
+            mapaVisitasCamada.addTo(mapaVisitas);
+            // Mapa sem bolha nenhuma (nenhum CEP consultado na janela) já é
+            // avisado pelo cartão "Por região" logo abaixo — sem duplicar o
+            // aviso dentro do próprio mapa.
+            setTimeout(function () { if (mapaVisitas) mapaVisitas.invalidateSize(); }, 50);
+        } else if (alvoMapa) {
+            alvoMapa.innerHTML = '<p class="adm-vazio">Mapa indisponível (biblioteca não carregou).</p>';
+        }
+
+        // --- Estatísticas: região e dispositivo, só desta janela ---
+        var porRegiao = {}, porDispositivo = {};
+        filtradas.forEach(function (r) {
+            var rid = r.regiao_id || 'sem-cep';
+            porRegiao[rid] = (porRegiao[rid] || 0) + 1;
+            var disp = r.dispositivo || 'desconhecido';
+            porDispositivo[disp] = (porDispositivo[disp] || 0) + 1;
+        });
+        var listaRegiao = Object.keys(porRegiao)
+            .map(function (id) { return { rotulo: id === 'sem-cep' ? 'Sem CEP informado' : regiaoNome(id), valor: porRegiao[id] }; })
+            .sort(function (a, b) { return b.valor - a.valor; });
+        var listaDispositivo = Object.keys(porDispositivo)
+            .map(function (d) { return { rotulo: DISPOSITIVO_ROTULO[d] || 'Desconhecido', valor: porDispositivo[d] }; })
+            .sort(function (a, b) { return b.valor - a.valor; });
+
+        var alvoStats = $('#stats-visitas');
+        if (alvoStats) {
+            alvoStats.innerHTML =
+                '<div class="adm-card p-4">' +
+                    '<p class="font-bold text-sm mb-3">Por região</p>' +
+                    (listaRegiao.length
+                        ? listaRegiao.map(function (d) {
+                              return '<div class="flex items-center justify-between text-sm py-1">' +
+                                  '<span>' + esc(d.rotulo) + '</span><span style="color:var(--adm-tinta-3)">' + NUM.format(d.valor) + '</span></div>';
+                          }).join('')
+                        : '<p class="adm-vazio">Sem dados nesta janela.</p>') +
+                '</div>' +
+                '<div class="adm-card p-4">' +
+                    '<p class="font-bold text-sm mb-3">Por dispositivo</p>' +
+                    (listaDispositivo.length
+                        ? listaDispositivo.map(function (d) {
+                              return '<div class="flex items-center justify-between text-sm py-1">' +
+                                  '<span>' + esc(d.rotulo) + '</span><span style="color:var(--adm-tinta-3)">' + NUM.format(d.valor) + '</span></div>';
+                          }).join('')
+                        : '<p class="adm-vazio">Sem dados nesta janela.</p>') +
+                '</div>';
+        }
+
+        // --- Tabela de sessões recentes ---
+        var ordenadas = filtradas.slice().sort(function (a, b) { return new Date(b.criado_em) - new Date(a.criado_em); });
+        var pag = paginar(ordenadas, visitasPagina, POR_PAGINA_VISITAS);
+        visitasPagina = pag.pagina;
+
+        var alvoTabela = $('#tabela-visitas-geo');
+        if (alvoTabela) {
+            alvoTabela.innerHTML = ordenadas.length
+                ? '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr>' +
+                      '<th>Quando</th><th>Página</th><th>Região</th><th>Dispositivo</th>' +
+                  '</tr></thead><tbody>' +
+                      pag.itens.map(function (r) {
+                          return '<tr>' +
+                              '<td>' + esc(dataHora(r.criado_em)) + '</td>' +
+                              '<td>' + esc(r.pagina || '—') + '</td>' +
+                              '<td>' + esc(regiaoNome(r.regiao_id)) + '</td>' +
+                              '<td>' + esc(DISPOSITIVO_ROTULO[r.dispositivo] || '—') + '</td>' +
+                          '</tr>';
+                      }).join('') +
+                  '</tbody></table></div>' +
+                  controlesDePaginacao('visitasgeo', pag.pagina, pag.totalPaginas)
+                : '<p class="adm-vazio">Nenhuma sessão nesta janela.</p>';
+
+            alvoTabela.querySelectorAll('[data-pagina^="visitasgeo:"]').forEach(function (b) {
+                b.addEventListener('click', function () {
+                    visitasPagina = Number(b.getAttribute('data-pagina').split(':')[1]);
+                    desenharMonitorGeografico();
+                });
+            });
+        }
+
+        var raizExportar = $('#painel-visitas');
+        if (raizExportar) {
+            ligarBotoesExportar(raizExportar, {
+                'visitas-geo': function () { exportarVisitasGeoCSV(ordenadas); }
+            });
+        }
+    }
+
+    function exportarVisitasGeoCSV(lista) {
+        exportarCSV('visitas-por-regiao', ['Data', 'Página', 'Região', 'CEP', 'Dispositivo', 'Referência'],
+            lista.map(function (r) {
+                return [dataHora(r.criado_em), r.pagina, regiaoNome(r.regiao_id), r.cep || '', DISPOSITIVO_ROTULO[r.dispositivo] || '', r.referencia || ''];
+            }));
+    }
+
+    /* ===================================================================
+     * Leads — captados pelo pop-up de pré-registro do catálogo
+     *
+     * Mesmo padrão de tabela/paginação/exportação de Clientes. Diferente de
+     * Clientes, um lead não vira cliente sozinho — é só um contato que se
+     * ofereceu, ainda sem pedido nenhum (ver admin/migracoes/011).
+     * =================================================================== */
+    var leadsPagina = 1;
+    var POR_PAGINA_LEADS = 20;
+    var leadsFiltroTipo = 'todos'; // todos | cpf | cnpj
+
+    function leadPassaNoFiltro(l) {
+        if (filtros.de && String(l.criado_em).slice(0, 10) < filtros.de) return false;
+        if (filtros.ate && String(l.criado_em).slice(0, 10) > filtros.ate) return false;
+        if (leadsFiltroTipo !== 'todos' && l.tipo_documento !== leadsFiltroTipo) return false;
+        if (filtros.busca) {
+            var alvo = (String(l.nome || '') + ' ' + String(l.telefone || '') + ' ' + String(l.documento || '')).toLowerCase();
+            if (alvo.indexOf(filtros.busca) === -1) return false;
+        }
+        return true;
+    }
+
+    function desenharLeads() {
+        var alvo = $('#painel-leads');
+        var todos = dados.leads;
+
+        if (!todos.length) {
+            alvo.innerHTML = cartaoVazio('Nenhum lead ainda',
+                'Um lead aparece aqui assim que alguém preenche o pop-up de pré-registro no catálogo — ' +
+                'nome, telefone e CPF ou CNPJ, antes mesmo do primeiro pedido.');
+            return;
+        }
+
+        var filtrados = todos.filter(leadPassaNoFiltro);
+        var pag = paginar(filtrados, leadsPagina, POR_PAGINA_LEADS);
+        leadsPagina = pag.pagina;
+
+        alvo.innerHTML =
+            '<div class="flex items-center justify-between flex-wrap gap-3 mb-5">' +
+                '<div class="flex gap-1">' +
+                    ['todos', 'cpf', 'cnpj'].map(function (v) {
+                        return '<button type="button" class="adm-chip' + (leadsFiltroTipo === v ? ' is-ativo' : '') +
+                            '" data-leads-tipo="' + v + '">' + (v === 'todos' ? 'Todos' : v.toUpperCase()) + '</button>';
+                    }).join('') +
+                '</div>' +
+                botoesExportar('leads') +
+            '</div>' +
+
+            (filtrados.length
+                ? '<div class="adm-card p-5">' +
+                  '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr>' +
+                      '<th>Quando</th><th>Nome</th><th>Telefone</th><th>Documento</th>' +
+                      '<th>Origem</th><th>Ação</th>' +
+                  '</tr></thead><tbody>' +
+                  pag.itens.map(linhaLead).join('') +
+                  '</tbody></table></div>' +
+                  controlesDePaginacao('leads', pag.pagina, pag.totalPaginas) +
+                  '</div>'
+                : cartaoVazio('Nenhum lead com esses filtros',
+                      'Há ' + NUM.format(todos.length) + ' leads ao todo — tente limpar os filtros acima.'));
+
+        ligarBotoesExportar(alvo, { leads: function () { exportarLeadsCSV(filtrados); } });
+
+        alvo.querySelectorAll('[data-leads-tipo]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                leadsFiltroTipo = b.getAttribute('data-leads-tipo');
+                leadsPagina = 1;
+                desenharLeads();
+            });
+        });
+        alvo.querySelectorAll('[data-pagina^="leads:"]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                leadsPagina = Number(b.getAttribute('data-pagina').split(':')[1]);
+                desenharLeads();
+            });
+        });
+    }
+
+    function linhaLead(l) {
+        return '<tr>' +
+            '<td>' + esc(dataHora(l.criado_em)) + '</td>' +
+            '<td>' + esc(l.nome) + (l.ddd_rio ? ' <span class="adm-selo adm-selo-confirmado" style="margin-left:.4rem">DDD Rio</span>' : '') + '</td>' +
+            '<td>' + esc(l.telefone) + '</td>' +
+            '<td>' + esc((l.tipo_documento || '').toUpperCase()) + ' ' + esc(l.documento) + '</td>' +
+            '<td>' + esc(l.pagina_origem || '—') + '</td>' +
+            '<td>' + linkWhats(l.telefone) + '</td>' +
+        '</tr>';
+    }
+
+    function exportarLeadsCSV(lista) {
+        exportarCSV('leads', ['Data', 'Nome', 'Telefone', 'Tipo', 'Documento', 'DDD Rio', 'Página de origem'],
+            lista.map(function (l) {
+                return [dataHora(l.criado_em), l.nome, l.telefone, (l.tipo_documento || '').toUpperCase(),
+                        l.documento, l.ddd_rio ? 'Sim' : 'Não', l.pagina_origem || ''];
+            }));
+    }
+
+    /* ===================================================================
+     * LGPD — pedidos do titular (acesso é self-service, não passa por
+     * aqui) e retenção (migração 015)
+     *
+     * "Corrigir" nunca acontece sozinho: o admin lê a mensagem, edita o
+     * cadastro na aba Clientes do jeito que já faz hoje, e só então marca
+     * o pedido como atendido aqui. "Excluir" tem um botão que chama a
+     * função do banco direto — é a única ação desta aba que muda dado.
+     * =================================================================== */
+    var lgpdFiltro = 'pendentes'; // pendentes | atendidos | todos
+
+    function lgpdPassaNoFiltro(s) {
+        if (lgpdFiltro === 'pendentes') return !s.atendido;
+        if (lgpdFiltro === 'atendidos') return s.atendido;
+        return true;
+    }
+
+    var LGPD_TIPO_ROTULO = { exclusao: 'Exclusão', correcao: 'Correção' };
+
+    function desenharLgpd() {
+        var alvo = $('#painel-lgpd');
+        var todos = dados.solicitacoesLgpd;
+
+        var pendentes = todos.filter(function (s) { return !s.atendido; }).length;
+
+        var cabecalhoRetencao =
+            '<div class="adm-card p-5 mb-7">' +
+                '<p class="font-bold text-sm mb-1">Retenção de dados</p>' +
+                '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">' +
+                    'Cliente sem pedido há 12 meses é marcado; depois de mais 90 dias sem voltar a comprar, ' +
+                    'os dados de contato e endereço são anonimizados (o pedido em si fica — 5 anos, por lei fiscal). ' +
+                    'Sem servidor agendado neste projeto, os dois passos são botões — rode de tempos em tempos.' +
+                '</p>' +
+                '<div class="flex gap-2 flex-wrap">' +
+                    '<button type="button" class="adm-botao-fantasma" id="btn-lgpd-marcar">' +
+                        '<i class="fa-regular fa-clock mr-1"></i>1. Marcar inativos (12+ meses)</button>' +
+                    '<button type="button" class="adm-botao-fantasma" id="btn-lgpd-purgar">' +
+                        '<i class="fa-solid fa-broom mr-1"></i>2. Anonimizar marcados (90+ dias)</button>' +
+                '</div>' +
+                '<p id="lgpd-retencao-resultado" class="text-xs mt-3" style="color:var(--adm-tinta-3)"></p>' +
+            '</div>';
+
+        if (!todos.length) {
+            alvo.innerHTML = cabecalhoRetencao + cartaoVazio('Nenhum pedido de titular ainda',
+                'Pedidos de correção ou exclusão de dados, feitos pelo formulário em /privacidade.html, aparecem aqui. ' +
+                'Pedido de acesso não aparece — é self-service, a pessoa vê os próprios dados na hora.');
+            ligarBotoesRetencao(alvo);
+            return;
+        }
+
+        var filtrados = todos.filter(lgpdPassaNoFiltro);
+
+        alvo.innerHTML = cabecalhoRetencao +
+            '<div class="flex items-center justify-between flex-wrap gap-3 mb-5">' +
+                '<div class="flex gap-1">' +
+                    ['pendentes', 'atendidos', 'todos'].map(function (v) {
+                        var rotulo = v === 'pendentes' ? 'Pendentes (' + pendentes + ')' : v.charAt(0).toUpperCase() + v.slice(1);
+                        return '<button type="button" class="adm-chip' + (lgpdFiltro === v ? ' is-ativo' : '') +
+                            '" data-lgpd-filtro="' + v + '">' + rotulo + '</button>';
+                    }).join('') +
+                '</div>' +
+            '</div>' +
+            (filtrados.length
+                ? '<div class="adm-card p-5"><div class="overflow-x-auto"><table class="adm-tabela"><thead><tr>' +
+                      '<th>Quando</th><th>Tipo</th><th>Documento</th><th>Telefone</th><th>Mensagem</th><th>Ação</th>' +
+                  '</tr></thead><tbody>' +
+                  filtrados.map(linhaLgpd).join('') +
+                  '</tbody></table></div></div>'
+                : cartaoVazio('Nenhum pedido com esse filtro', 'Troque o filtro acima para ver os demais.'));
+
+        ligarBotoesRetencao(alvo);
+
+        alvo.querySelectorAll('[data-lgpd-filtro]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                lgpdFiltro = b.getAttribute('data-lgpd-filtro');
+                desenharLgpd();
+            });
+        });
+
+        alvo.querySelectorAll('[data-lgpd-atender]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                var id = b.getAttribute('data-lgpd-atender');
+                sb.from('solicitacoes_lgpd')
+                    .update({ atendido: true, atendido_em: new Date().toISOString(), atendido_por: usuario ? usuario.email : null })
+                    .eq('id', id)
+                    .then(function (r) {
+                        if (r.error) { window.alert('Não foi possível marcar: ' + r.error.message); return; }
+                        carregar();
+                    });
+            });
+        });
+
+        alvo.querySelectorAll('[data-lgpd-excluir]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                var id = b.getAttribute('data-lgpd-excluir');
+                var documento = b.getAttribute('data-lgpd-documento');
+                if (!window.confirm(
+                    'Confirmar exclusão dos dados de ' + documento + '?\n\n' +
+                    'Isso apaga o cadastro, telefone e endereço. Pedidos já fechados continuam ' +
+                    'existindo (obrigação fiscal de 5 anos), mas sem contato nem endereço ligados a eles.\n\n' +
+                    'Não tem como desfazer.'
+                )) return;
+
+                b.disabled = true;
+                sb.rpc('lgpd_excluir_pessoa', { p_documento: documento, p_solicitacao_id: id })
+                    .then(function (r) {
+                        b.disabled = false;
+                        if (r.error) { window.alert('Não foi possível excluir: ' + r.error.message); return; }
+                        carregar();
+                    });
+            });
+        });
+    }
+
+    function linhaLgpd(s) {
+        return '<tr>' +
+            '<td>' + esc(dataHora(s.criado_em)) + '</td>' +
+            '<td>' + esc(LGPD_TIPO_ROTULO[s.tipo] || s.tipo) + '</td>' +
+            '<td>' + esc(s.documento) + '</td>' +
+            '<td>' + esc(s.telefone || '—') + (s.contato ? ' · ' + esc(s.contato) : '') + '</td>' +
+            '<td class="max-w-xs truncate" title="' + esc(s.mensagem || '') + '">' + esc(s.mensagem || '—') + '</td>' +
+            '<td><div class="flex items-center gap-1 flex-wrap">' +
+                (s.atendido
+                    ? '<span class="adm-selo adm-selo-confirmado">Atendido</span>'
+                    : '<button type="button" class="adm-botao-fantasma" data-lgpd-atender="' + esc(s.id) + '">Marcar atendida</button>' +
+                      (s.tipo === 'exclusao'
+                          ? '<button type="button" class="adm-botao-fantasma" data-lgpd-excluir="' + esc(s.id) +
+                            '" data-lgpd-documento="' + esc(s.documento) + '">' +
+                            '<i class="fa-solid fa-user-slash mr-1"></i>Excluir dados</button>'
+                          : '')) +
+            '</div></td>' +
+        '</tr>';
+    }
+
+    function ligarBotoesRetencao(alvo) {
+        var resultado = alvo.querySelector('#lgpd-retencao-resultado');
+
+        var botaoMarcar = alvo.querySelector('#btn-lgpd-marcar');
+        if (botaoMarcar) botaoMarcar.addEventListener('click', function () {
+            botaoMarcar.disabled = true;
+            sb.rpc('lgpd_marcar_inativos').then(function (r) {
+                botaoMarcar.disabled = false;
+                if (r.error) { window.alert('Não foi possível marcar: ' + r.error.message); return; }
+                resultado.textContent = (r.data || 0) + ' cliente(s) marcado(s) como inativo — entram na carência de 90 dias.';
+            });
+        });
+
+        var botaoPurgar = alvo.querySelector('#btn-lgpd-purgar');
+        if (botaoPurgar) botaoPurgar.addEventListener('click', function () {
+            if (!window.confirm(
+                'Isso anonimiza (apaga contato e endereço, mantém o pedido fiscal) todo cliente marcado ' +
+                'há 90 dias ou mais. Não tem como desfazer. Continuar?'
+            )) return;
+            botaoPurgar.disabled = true;
+            sb.rpc('lgpd_purgar_marcados').then(function (r) {
+                botaoPurgar.disabled = false;
+                if (r.error) { window.alert('Não foi possível anonimizar: ' + r.error.message); return; }
+                resultado.textContent = (r.data || 0) + ' cliente(s) anonimizado(s) por retenção vencida.';
+                if (r.data > 0) carregar();
+            });
+        });
     }
 
     /* ===================================================================

@@ -38,6 +38,7 @@
     <link rel="stylesheet" href="./css/base.css">
     <link rel="stylesheet" href="./css/components.css">
     <link rel="stylesheet" href="./css/animations.css">
+    <link rel="stylesheet" href="./css/destaques.css">
     <link rel="stylesheet" href="./css/cart.css">
 </head>
 
@@ -104,9 +105,9 @@
 
                     <!-- CTAs -->
                     <div class="hero-anim hero-anim-4 flex flex-col sm:flex-row justify-center gap-3 mb-6 w-full">
-                        <a href="https://wa.me/5521996203535" target="_blank"
+                        <a href="pedido.html"
                             class="btn-primary px-6 py-3 rounded-xl font-bold text-base flex items-center justify-center gap-3">
-                            <i class="fa-brands fa-whatsapp text-xl"></i> Fale com um vendedor
+                            <i class="fa-solid fa-cart-shopping text-xl"></i> Faça seu pedido
                         </a>
                         <a href="catalogo.html"
                             class="px-6 py-3 rounded-xl font-semibold text-base flex items-center justify-center gap-2 border border-white/12 text-white/70 hover:text-white hover:border-white/25 transition-all backdrop-blur-sm">
@@ -117,7 +118,7 @@
                     <!-- Stats bar -->
                     <div class="hero-anim hero-anim-5 flex items-center justify-center gap-8 md:gap-14 w-full">
                         <div class="hero-stat">
-                            <span class="hero-stat-num">73</span>
+                            <span class="hero-stat-num">70+</span>
                             <span class="hero-stat-label">Produtos</span>
                         </div>
                         <div class="stat-divider"></div>
@@ -339,23 +340,76 @@
         </section>
 
         <!-- 4. PRODUTOS -->
-        <section id="produtos" class="py-24 border-y border-borderSubtle">
+        <section id="produtos" class="py-16 border-y border-borderSubtle">
             <div class="max-w-7xl mx-auto px-6">
-                <div class="flex flex-col md:flex-row md:items-end justify-between mb-16 gap-6 fade-in">
-                    <div>
-                        <h2 class="text-3xl md:text-5xl font-bold tracking-tight mb-4">Nossos Destaques</h2>
-                        <p class="text-textSecondary font-light text-lg max-w-xl">Os queridinhos da casa. Ingredientes selecionados especialmente para dar aquele toque de chef na sua cozinha.</p>
-                        <p class="text-primary-500 font-bold uppercase tracking-widest text-sm mt-4">EXPERIMENTE E SURPREENDA-SE!</p>
-                    </div>
-                    <a href="catalogo.html"
-                        class="text-primary-400 hover:text-primary-500 font-semibold flex items-center gap-2 group transition-colors">
-                        Ver catálogo completo <i
-                            class="fa-solid fa-arrow-right transform group-hover:translate-x-1 transition-transform"></i>
-                    </a>
-                </div>
+                <!-- Hero interativa, copiada como estava, agora em destaque aqui
+                     (montada por js/destaques.js) -->
+                <div id="destaques-hero">
+                    <div class="dest-split">
 
-                <!-- Produtos listados dinamicamente pelo JS -->
-                <div id="destaques-container" class="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                        <!-- Texto -->
+                        <div class="dest-copy">
+                            <div class="dest-eyebrow">Temperos naturais · Venda no atacado</div>
+
+                            <h1 class="dest-hl">
+                                <span class="dest-mask dest-m1"><span>Pequenos potes.</span></span>
+                                <span class="dest-mask dest-m2"><span>Um mundo <span class="dest-acc" id="dest-word">cítrico</span></span></span>
+                                <span class="dest-mask dest-m3"><span>de sabor.</span></span>
+                            </h1>
+
+                            <p class="dest-lead">
+                                O sabor que transforma a sua prateleira. Abasteça sua loja com
+                                <b>70+ temperos</b> de ingredientes selecionados, 100% naturais e zero glutamato.
+                            </p>
+
+                            <div class="dest-ctas">
+                                <a class="dest-btn" href="pedido.html">
+                                    Abastecer minha loja <span aria-hidden="true">↗</span>
+                                </a>
+                                <a class="dest-link-more" href="catalogo.html">
+                                    Explorar sabores <span class="arr" aria-hidden="true">→</span>
+                                </a>
+                                <button type="button" id="dest-lote" class="cart-quick-add dest-link-more" hidden></button>
+                            </div>
+
+                            <div class="dest-stats">
+                                <div class="dest-stat"><b id="dest-c1">70+</b><span>Produtos no catálogo</span></div>
+                                <div class="dest-vr"></div>
+                                <div class="dest-stat"><b id="dest-c2">500+</b><span>Clientes atendidos</span></div>
+                            </div>
+                        </div>
+
+                        <!-- Painel do tempero em destaque, do maior para o menor ranking
+                             de vendas -->
+                        <div class="dest-panel" id="dest-panel">
+                            <div class="dest-stage"></div>
+                            <div class="dest-halo"></div>
+                            <div class="dest-scrim"></div>
+                            <canvas class="dest-dust" id="dest-dust"></canvas>
+                            <div class="dest-grain"></div>
+
+                            <div class="dest-feat">
+                                <small>Conheça um dos favoritos</small>
+                                <span class="dest-mask"><span class="dest-feat-name" id="dest-fname">Lemon Pepper</span></span>
+                                <div class="dest-feat-meta" id="dest-fmeta">1º mais vendido · pote 70g</div>
+                            </div>
+
+                            <div class="dest-seal" aria-label="100% natural, zero glutamato">
+                                <svg viewBox="0 0 100 100" aria-hidden="true">
+                                    <defs>
+                                        <path id="destSealPath" d="M50,50 m-38,0 a38,38 0 1,1 76,0 a38,38 0 1,1 -76,0" />
+                                    </defs>
+                                    <text><textPath href="#destSealPath">100% NATURAL · ZERO GLUTAMATO · </textPath></text>
+                                </svg>
+                                <div class="core">
+                                    <div><b>100%</b><small>Natural</small></div>
+                                </div>
+                            </div>
+
+                            <div class="dest-thumbs" id="dest-thumbs"></div>
+                        </div>
+
+                    </div>
                 </div>
             </div>
         </section>
@@ -625,6 +679,7 @@
                         <li><a href="#faq" class="hover:text-primary-400 transition-colors">Perguntas Frequentes (FAQ)</a></li>
                         <li><a href="#como-comprar" class="hover:text-primary-400 transition-colors">Como Comprar</a>
                         </li>
+                        <li><a href="privacidade.html" class="hover:text-primary-400 transition-colors">Política de Privacidade</a></li>
                     </ul>
                 </div>
 
@@ -678,6 +733,7 @@
 
     <!-- Scripts -->
     <script src="./js/main.js"></script>
+    <script src="./js/destaques.js"></script>
     <script src="./js/faq.js"></script>
     <script src="./js/sliders.js"></script>
     <script src="./js/counters.js"></script>

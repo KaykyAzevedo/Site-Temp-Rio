@@ -161,6 +161,40 @@ body.admin {
 
 .adm-tabela tbody tr:hover td { background-color: rgba(255, 255, 255, 0.03); }
 
+/* Linha de detalhe expansível (ex.: "Detalhes" de um cliente): abre embaixo da
+   própria linha, não num modal. `grid-template-rows` de 0fr a 1fr seria o
+   jeito de animar uma altura desconhecida sem medir nada em JS, mas dentro de
+   `<table>` o algoritmo de layout de linha/célula não respeita esse
+   colapso — a linha nasce com a altura cheia do conteúdo, animação nenhuma.
+   Por isso aqui é `max-height`: um teto generoso o bastante para o maior
+   conteúdo (a lista de pedidos já tem seu próprio limite e rolagem interna),
+   com transição de altura e opacidade — mais curto que o teto some rápido,
+   sem soletrar o tempo restante em silêncio. */
+.adm-tabela .adm-linha-detalhe td { padding: 0; border-top: none; }
+
+.adm-detalhe-colapso {
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition: max-height 0.22s ease, opacity 0.18s ease;
+}
+
+.adm-detalhe-colapso.is-aberto {
+    max-height: 700px;
+    opacity: 1;
+    transition: max-height 0.22s ease, opacity 0.22s ease 0.02s;
+}
+
+.adm-detalhe-conteudo {
+    padding: 1rem 0.7rem 1.25rem;
+    border-top: 1px solid var(--adm-borda);
+    background-color: rgba(255, 255, 255, 0.02);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .adm-detalhe-colapso, .adm-detalhe-colapso.is-aberto { transition: none; }
+}
+
 /* ===================== Selo de status ===================== */
 .adm-selo {
     display: inline-flex;

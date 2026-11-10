@@ -1,11 +1,23 @@
-# Espelho SOLIDCON: produtos
+# Situação das migrações
+
+O espelho e o histórico já estão instalados como 012 e 017 de A. Os arquivos
+foram renumerados para 019 e 020 no repositório unificado. A 022 de vendas está
+aprovada e ainda não foi aplicada. Este coletor é a versão candidata para
+estoque e vendas. A implantação da 022 precede a atualização do servidor.
+
+Reaplicar a 019 substitui a RPC `solidcon_receber_produtos` pela versão
+anterior à 020 e interrompe a atualização do histórico e dos eventos.
+
+# Espelho SOLIDCON: produtos e vendas
 
 Windows PowerShell **5.1**, sem instalar módulos. No servidor interno, faz
-somente estes dois GETs sequenciais a cada 30 minutos, nesta ordem:
+estes dois GETs de estoque a cada 30 minutos, nesta ordem:
 
 1. `http://localhost:5100/api/Produto/GetProdutos?ativo=true&estoque=true`
 2. `http://localhost:5100/api/Produto/GetProdutos?ativo=true&estoque=false`
 
+Após o estoque, tenta vendas de hoje e ontem no endpoint resumo-produtos-data,
+com filial 4 e data gerada pelo script (seção 022 abaixo).
 As queries são fixas no código. Aceita também `127.0.0.1`, sempre porta 5100,
 sem proxy nem redirecionamentos. Não envia nada ao ERP nem modifica o site.
 `estoque=true` filtra saldo >0; `estoque=false` filtra saldo <=0.
@@ -39,16 +51,21 @@ conta da tarefa e administradores; não use transcrição PowerShell com segredo
 Deixe `modo="teste"`: os campos Supabase podem continuar como placeholders.
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File C:\TempRio\solidcon\sync-produtos.ps1 -Config C:\TempRio\solidcon\config.json -ArquivoEntrada C:\caminho\com-saldo.json -ArquivoEntradaSemSaldo C:\caminho\sem-saldo.json
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File C:\TempRio\solidcon\sync-produtos.ps1 -Config C:\TempRio\solidcon\config.json -ArquivoEntrada C:\caminho\com-saldo.json -ArquivoEntradaSemSaldo C:\caminho\sem-saldo.json -ArquivoVendas C:\caminho\vendas-por-dia.json
 ```
 
-Informe **os dois arquivos ou nenhum**; uso parcial é recusado sem GET.
+Informe **os dois arquivos de estoque ou nenhum**; uso parcial é recusado sem GET.
+Para teste totalmente offline, inclua também -ArquivoVendas; sem ele, as vendas
+são marcadas como falha quando há arquivos de estoque (não faz GET implícito).
 Sem arquivos, faz os dois GETs locais. Arquivos locais são permitidos somente
 em modo teste. Em teste **não faz nenhuma chamada ao Supabase**, nem login nem
 log de falha. Produz `produtos-normalizados.json`,
 `resumo.json` e `ultimo-ok-teste.json` em `pastaSaida`. Saídas de teste são
 substituídas em cada sucesso; log tem rotação de 1 MiB e três arquivos antigos.
-Exit 0 = sucesso; exit 1 = falha. Não há senha/token nos logs.
+Exit 0 = estoque e vendas OK; exit 1 = configuração/mutex/estoque falhou;
+exit 3 = estoque OK e vendas falhou. Se ambos falharem, prevalece 1.
+Em backfill, 0 = vendas OK, 3 = falha de vendas, 1 = inicialização inválida.
+Não há senha/token nos logs.
 
 Em sobreposição, grava somente `resumo-rejeitado.json` e diagnóstico no log,
 preservando payload/resumo de sucesso/estado anteriores. As contagens são por
@@ -60,28 +77,13 @@ inclui insumos e é somente diagnóstico: **apenas `sobrepostos` bloqueia**.
 Em diagnóstico rejeitado, um ID pode integrar ambos os lados;
 essas contagens não representam um snapshot aceito.
 
-Validação local (PowerShell 5.1), usando as duas amostras originais de
-10/11/2026, manhã com saldo e tarde sem saldo:
+Em PowerShell 5.1, amostras de horários diferentes com uma caixa sobreposta
+foram rejeitadas com `fase=sobreposicao` e código 1. Uma cópia de teste com
+apenas insumos sobrepostos passou. Os insumos ficaram fora do payload e o
+saldo negativo das caixas foi normalizado para zero.
 
-```text
-DIAGNOSTICO linhas=557 filtradas=145 produtos=144 CX24=72 CX48=72
-com_saldo=97 zerados=48 zerados_erp=23 negativos=25 sobrepostos=1 sobrepostos_todos=4
-ERRO fase=sobreposicao
-exit=1
-```
-
-Resultado esperado: amostras de horários diferentes sobrepõem a caixa
-`7901035` e três insumos (`50161`, `7898472`, `7898479`). Não foi produzido
-payload aceito a partir desse par: a caixa sobreposta continua bloqueando.
-Em cópia sintética só para teste, retirando apenas a caixa `7901035` da segunda
-lista e mantendo os três insumos sobrepostos, passou com 144 produtos
-(72 CX24/72 CX48): 97 com saldo e 47 zerados normalizados, incluindo 25 negativos
-originais. Resumo: `sobrepostos=0` e `sobrepostos_todos=3`; nenhum insumo
-apareceu no payload. Insumo com filial errada continua abortando.
-Essa manipulação de fixture não existe no coletor; as amostras foram preservadas.
-
-Também verificados: EAN com zeros, múltiplos EANs sem somar estoque, 1.005 →
-101 centavos, filial errada inclusive em insumo, array vazio/objeto, categoria
+Também verificados: EAN com zeros, múltiplos EANs sem somar estoque,
+arredondamento para centavos, filial errada inclusive em insumo, array vazio/objeto, categoria
 sem vendáveis, conflito entre EANs, host/porta/caminho recusados, arquivo local
 proibido em real, queda >50% bloqueada, queda exatamente 50% aceita, repetição
 e rotação do log. Regressão repetida após correções: metadados UTC/UUID e
@@ -92,20 +94,20 @@ sobre o total da união. As travas
 SQL de queda/ordem/janela foram verificadas por parser e simulação estática
 (não por execução em banco). Nenhuma chamada HTTP nesses testes.
 
-## Modo real (preparação futura, não executada nesta entrega)
+## Modo real (configuração de referência)
 
-A 012 requer `eh_equipe()` e `eh_admin()` com os papéis de produção e aborta
+A 019 requer `eh_equipe()` e `eh_admin()` com os papéis de produção e aborta
 se faltar qualquer helper. Há drift com o SQL base do repo: **não reaplicar
 `admin/supabase.sql`**. Equipe lê produtos/logs; só admin lê autorizações.
-Detalhes e rollback estão na seção 012 dos documentos do banco.
+Detalhes e rollback estão na seção 019 dos documentos do banco.
 
-Após revisão e aplicação manual da 012, crie uma conta dedicada em Auth e
+Em um ambiente novo com o espelho instalado, crie uma conta dedicada em Auth e
 cadastre seu UUID em `integracoes_autorizadas` via SQL owner. **Nunca inclua
 o email em `admins`**, nem conceda outro papel à conta. Preencha URL HTTPS,
 anon key pública, email e senha no arquivo externo e altere `modo` para `real`.
 Não use service_role. A conta só recebe a autorização nova das duas RPCs;
 as permissões públicas existentes do site continuam disponíveis a qualquer
-identidade (auditoria detalhada em `admin/ESTRUTURA-BANCO.md`, seção 012).
+identidade (auditoria detalhada em `admin/ESTRUTURA-BANCO.md`, seção 019).
 
 Login é `/auth/v1/token?grant_type=password`; o JWT fica somente em memória.
 O envio usa `solidcon_receber_produtos`; falhas tentam
@@ -153,7 +155,87 @@ Execute **no servidor**, com a identidade que tem acesso à pasta externa:
 schtasks /Create /TN "TempRio SOLIDCON produtos" /SC MINUTE /MO 30 /RU "SYSTEM" /TR "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\TempRio\solidcon\sync-produtos.ps1 -Config C:\TempRio\solidcon\config.json" /F
 ```
 
-O comando usa a conta atual; para rodar sem sessão aberta, configure a conta
+O comando usa SYSTEM; para outra identidade, configure a conta
 e a execução independente de login no Agendador de Tarefas. Não coloque senha
 na linha de comando. Comece agendando em teste; confira saída e Last Run Result
 antes de habilitar real. Nenhuma tarefa foi criada nesta entrega.
+
+## 022 — Vendas: hoje/ontem e carga inicial manual
+
+Funcionalidade aprovada. A migração 022 e este coletor ainda aguardam implantação.
+No futuro, aplicar primeiro 022 e só depois substituir o script do servidor,
+preservando cópia anterior. Configuração externa e agendamento não mudam.
+
+Única rota adicional autorizada, somente GET, loopback:5100, sem proxy/redirect:
+
+```text
+/api/Vendas/resumo-produtos-data?idFilial=4&data=YYYY-MM-DD
+```
+
+No ciclo normal, roda APÓS estoque, sucesso ou falha. Faz um GET e uma RPC por
+dia (hoje e ontem em São Paulo), com UUID/coleta próprios. Falha de um dia não
+impede tentar o outro. Erros de GET/normalização/RPC ficam em `ERRO vendas ...`;
+nunca apagam nem desfazem estoque já salvo. Falhas antes da RPC não fingem
+resposta vazia nem criam log remoto de sucesso.
+
+Enriquece usando as duas respostas GetProdutos já coletadas, por EAN/código
+interno/cdProduto. Pote em processo=1, CX24=24, CX48=48; demais=outro/NULL.
+Reconhece a categoria de pote com o U+FFFD real da API, sem corrigir textos.
+EAN13 de pote usa a base de 12 dígitos; GTIN14 de caixa usa posições 2..13.
+Catálogo ausente/inválido ou item sem correspondência: nome/categoria/família/
+fator NULL, formato outro. Receita é sempre mantida; os potes equivalentes
+incluem apenas os fatores conhecidos. Nenhuma embalagem é inferida só pelo EAN.
+
+Dinheiro usa centavos, arredondamento de metade para longe de zero; qtd pode
+ser fracionária. Agrega linhas repetidas por EAN/dia. idProduto int64 ou EAN
+textual continua texto, preservando zeros existentes. qtDesconto não é valor
+monetário: desconto vem de vlDescontoPromocaoCombinada.
+
+Em teste grava envelopes `vendas-hoje.json` e `vendas-ontem.json`:
+dia/coleta/UUID, itens normalizados, linhas, total centavos, potes conhecidos e
+contagem sem catálogo. `vendas-resumo.json` soma o período. Nenhuma chamada ao
+Supabase em teste. Os arquivos continuam fora do repo e são ignorados no Git.
+
+### Backfill manual (não executar agora)
+
+`-BackfillDias N` aceita 1..400, incluindo hoje, mais antigo primeiro. É só vendas:
+não chama a RPC de estoque nem altera seu estado; os dois GETs de produtos
+servem apenas ao enriquecimento. Pausa 700ms entre GETs de dias, não entre
+leituras de arquivo; mantém o mesmo mutex global durante todo o lote.
+Continuar após erro não significa sucesso: exit 3 se algum dia falhou.
+
+```powershell
+# Futuro, no servidor, depois da revisao/022: consulta ERP e envia ao Supabase.
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File C:\TempRio\solidcon\sync-produtos.ps1 -Config C:\TempRio\solidcon\config.json -BackfillDias 180
+```
+
+Para teste **sem rede**, modo teste, passando os três arquivos:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\integracao\solidcon\sync-produtos.ps1 -Config C:\TempRio\solidcon\config-teste.json -ArquivoEntrada C:\amostras\estoque-true.json -ArquivoEntradaSemSaldo C:\amostras\estoque-false.json -ArquivoVendas C:\amostras\vendas-por-dia.json -BackfillDias 180
+```
+
+Backfill em teste grava `vendas-YYYY-MM-DD.json` para cada data e resumo geral.
+ArquivoVendas aceita array histórico dia/ean/qtd/valor/valor_bruto/desconto ou
+array bruto da API com dtCupom/idProduto/qtItem/valores. Datas fora do período
+solicitado não entram na saída. Dias sem linhas no arquivo são tratados como
+vazios somente nesse teste; o arquivo não informa falhas da coleta original.
+Todos os arquivos de entrada são recusados em modo real.
+
+### Resultado da amostra e limites
+
+Amostra real de 180 dias conferida linha a linha (totais, unidades, potes e
+formatos idênticos à origem; valores comerciais ficam fora do repositório, que
+é público). Identificadores sem catálogo: receita preservada,
+formato outro. Esses potes não foram estimados.
+
+Parser/execução PS5.1, regressão estoque e fluxos simulados passaram, sem HTTP
+real. PostgreSQL18 local: substituição, vazio, ordem/UUID, RLS, views e rollback
+após DELETE testados; carga completa local bateu nas três views.
+Nenhuma alteração em Supabase, ERP, tarefa ou arquivo do servidor.
+
+A RPC rejeita [] se já há linhas naquele dia; não há override nesta fase.
+Troca de coleta antiga/UUID repetido também é recusada. SQL/logs não dependem
+do estado local de estoque. DDL/rollback completos: seção 022 de
+admin/migracoes/LEIAME.md. Ao desfazer 022, restaurar também o script pré-022;
+caso contrário, estoque continua e vendas sinalizam exit 3.

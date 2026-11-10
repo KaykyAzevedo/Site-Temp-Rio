@@ -1,3 +1,6 @@
+> Worktree unificado local. Não instalar/reaplicar SQL no banco existente.
+> Consulte MERGE_DECISOES.md e admin/migracoes/LEIAME.md antes de qualquer operação.
+
 # Lista de espera na planilha do Google — caminho alternativo
 
 > **Este não é mais o caminho principal.** A lista de espera passou a viver no

@@ -1,3 +1,38 @@
+# Estrutura unificada — situação do banco e fontes
+
+O merge não alterou o banco. B 011–016 estão aplicadas, incluindo Leads,
+completar_visita, validações, RBAC e LGPD. A 012/017 também estão aplicadas,
+agora arquivadas como 019/020. A 011 (agora 021, total no servidor) NÃO foi
+aplicada; A 018 (agora 022, vendas diárias) NÃO foi aplicada.
+Não reaplicar o SQL base nem executar a pasta de migrações inteira.
+
+O site público usa B e inclui a adição direta do lote mínimo nos destaques.
+Admin: núcleo A com SOLIDCON e vendas ERP, mais Leads/LGPD/Leaflet/RBAC de B.
+eh_equipe() identifica equipe; eh_admin() exige papel admin (B 014).
+O carregamento sob demanda de B evita construir mapas em abas ocultas.
+
+| Área | Objetos do banco | Fonte/documento ativo |
+|---|---|---|
+| Captura | leads, visitas.pre_registro, completar_visita | B 011/012 |
+| Validação | cpf_valido, cnpj_valido, telefone_valido, texto_seguro, trg_pedidos_valida | B 013/016 |
+| Papéis | admins.papel, eh_equipe, eh_admin, meu_papel | B 014 |
+| LGPD | consentimentos, solicitacoes_lgpd, deletados_logicamente, auditoria, RPCs LGPD | B 015 |
+| Espelho | solidcon_produtos, solidcon_sync, integracoes_autorizadas | 019, já aplicada como A 012 |
+| Histórico | solidcon_estoque_diario, solidcon_eventos, solidcon_config | 020, já aplicada como A 017 |
+| Total/manual ERP | campos *_site_centavos, codigo_erp, RPC marcar_lancado_solidcon | 021, NÃO APLICADA |
+| Vendas ERP | solidcon_vendas_dia, solidcon_vendas_sync, três views | 022, NÃO APLICADA |
+
+A seção “Total no servidor” abaixo descreve código disponível, não comportamento
+implantado. O formulário unificado continua enviando exatamente o contrato de
+B, sem acrescentar os campos futuros da 021. MERGE_DECISOES.md registra escolhas
+e como recuperar cada alternativa. admin/migracoes/LEIAME.md contém o mapa
+completo e os cuidados de aplicação futura.
+
+Reaplicar a 019 substitui a RPC `solidcon_receber_produtos` pela versão
+anterior à 020 e interrompe a atualização do histórico e dos eventos.
+
+## Referência de B
+
 # Estrutura do banco
 
 Onze tabelas, um esquema (`public`), Postgres no Supabase. Este documento é o
@@ -46,7 +81,6 @@ erDiagram
 
     catalogo_produtos {
         text id PK "slug: alho-em-po"
-        text codigo_erp UK "SOLIDCON; único quando não nulo"
         text nome
         text descricao
         bigint preco_centavos "inteiro, nunca decimal"
@@ -68,10 +102,6 @@ erDiagram
         int caixas
         bigint valor_centavos
         bigint frete_centavos
-        bigint valor_site_centavos "auditoria do navegador"
-        bigint frete_site_centavos "auditoria do navegador"
-        text numero_solidcon
-        timestamptz lancado_solidcon_em
         jsonb itens "cópia congelada do WhatsApp"
         bool enviado_whatsapp
         timestamptz criado_em
@@ -182,7 +212,7 @@ view `clientes_historico`.
 
 **`pedidos.itens` (jsonb) e `pedido_items` não são a mesma informação duas
 vezes.** O jsonb é a cópia congelada do que foi para o WhatsApp — prova, nunca
-editada; desde a 011, seus itens alimentam o recálculo no servidor. `pedido_items` é a verdade consultável: todo relatório
+editada, nunca somada. `pedido_items` é a verdade consultável: todo relatório
 por produto sai dela. Se divergirem, `pedido_items` está certa, porque é
 derivada da outra.
 
@@ -192,7 +222,6 @@ derivada da outra.
 |---|---|---|
 | Criar pedido | `INSERT` em `pedidos` (como hoje) ou `criar_pedido(jsonb)` | qualquer visitante |
 | Marcar enviado no WhatsApp | `marcar_enviado_whatsapp(id)` | qualquer visitante (só liga, nunca desliga) |
-| Registrar/desfazer lançamento SOLIDCON | `marcar_lancado_solidcon(p_pedido uuid, p_numero text)` — retorna a linha atualizada ou NULL se inexistente/invisível | admin autenticado (security invoker/RLS) |
 | Mudar status do pedido | `atualizar_status_pedido(id, status, obs)` | admin |
 | Criar/editar produto | `salvar_produto(...)` | admin |
 | Remover produto | `remover_produto(id)` — soft delete | admin |
@@ -213,7 +242,6 @@ Os que a especificação pediu, mais os que as chaves estrangeiras exigem para o
 | `pedidos` | `cliente_id` | histórico de um cliente |
 | `pedidos` | `status`, `confirmado_em desc` | fila e faturamento |
 | `pedidos` | `regiao_id` | relatório por região |
-| `catalogo_produtos` | `codigo_erp` (único parcial: não nulo) | identificar produto no comercial SOLIDCON |
 | `catalogo_produtos` | `vendedor_id` | produtos de um vendedor |
 | `catalogo_produtos` | `nome` (parcial: só ativos) | catálogo |
 | `pedido_items` | `pedido_id`, `produto_id` | montar o pedido, vendas por produto |
@@ -256,7 +284,9 @@ de alguém. E, desde a 006, também não é possível alterar o cadastro de um
 cliente enviando um pedido com o CNPJ dele — os gatilhos só preenchem campo
 vazio, nunca sobrescrevem.
 
-## Total no servidor e lançamento manual (011)
+## Extensões de A
+
+## Total no servidor e lançamento manual (021)
 
 `pedidos_total_servidor` é BEFORE INSERT e roda depois de
 `pedidos_resolver_cliente` pela ordem alfabética dos nomes. Preserva os valores
@@ -267,7 +297,7 @@ mercadoria; frete continua separado. Sem CEP válido, sem região ou com região
 inativa, frete é zero. Não há fallback para outra região ativa.
 
 O helper interno `pedido_itens_precificados(jsonb)` é compartilhado com
-`pedido_explodir_itens`: produto ausente/sem id custa 400 centavos e tem FK nula;
+`pedido_explodir_itens`: produto ausente ou sem id usa o preço padrão da 021 e tem FK nula;
 produto existente usa o preço cadastrado mesmo inativo/removido. Potes segue a
 006: regex `^[0-9]+$`, mínimo 1; inválido/ausente/fora de integer vira 1. JSON
 fora do formato array produz zero itens. Linhas que excederiam potes integer ou
@@ -284,19 +314,17 @@ se nenhuma linha for visível/encontrada. EXECUTE é concedido a authenticated,
 com security invoker e as políticas de admin existentes. INSERT sempre inicia
 os dois campos nulos, inclusive se o navegador tentar enviá-los preenchidos.
 
-Pedidos anteriores ficam intactos, com auditoria nula. A 011 não altera
+Pedidos anteriores ficam intactos, com auditoria nula. A 021 não altera
 `criar_pedido`, lista de espera nem JavaScript. O preço do navegador ainda é
 fixo: se o catálogo for reajustado, o painel recebe o valor do servidor e a
 auditoria permite comparar com o valor mostrado/enviado pelo site.
 
-O seletor de região da 011 e `js/entrega.js` usam a mesma ordem total:
-prioridade decrescente, ativo primeiro e id crescente em ordem Unicode/binária
-(`COLLATE "C"` no SQL). Especificidade continua definida pela prioridade;
-largura da faixa de CEP não participa. Inverter a ordem dos dados não muda
-a região selecionada quando prioridade e estado empatam.
+A 021 ordena por prioridade decrescente, região ativa primeiro e id em ordem
+crescente (`COLLATE "C"`). O checkout ainda usa o desempate de B. Antes de
+implantar a 021, confira as faixas ativas cadastradas e alinhe os dois lados.
 
 
-## 012 — Espelho de produtos SOLIDCON
+## 019 — Espelho de produtos SOLIDCON
 
 Espelho isolado: sem relação com catálogo, pedidos ou preço do site nesta fase.
 Origem: dois GETs locais no endpoint GetProdutos, porta 5100, filial 4,
@@ -337,11 +365,11 @@ abortando; EAN nunca multiplica estoque.
 
 Pré-requisito de produção: `public.eh_equipe()` identifica qualquer email em
 `admins`; `public.eh_admin()` exige também `papel='admin'`. O Tech Lead confirmou
-essas definições no banco implantado. A 012 verifica a existência de ambas com
+essas definições no banco implantado. A 019 verifica a existência de ambas com
 `to_regprocedure` e aborta com mensagem clara se faltar alguma. Há drift:
 `eh_equipe()` não está no repo e o `eh_admin()` de `admin/supabase.sql` ainda usa
 a regra antiga, só por email. **Não reaplicar `admin/supabase.sql`**: sobrescreveria
-a separação de papéis de produção. A 012 não cria nem redefine esses helpers.
+a separação de papéis de produção. A 019 não cria nem redefine esses helpers.
 
 Todas as tabelas têm RLS: equipe lê produtos/logs via `eh_equipe()`;
 apenas admin lê autorizações via `eh_admin()`. Nenhum anon/authenticated escreve
@@ -404,19 +432,19 @@ dedicada também consegue as operações que qualquer visitante consegue:
 - RPCs públicas `criar_pedido` e `marcar_enviado_whatsapp`
   (`admin/migracoes/008_crud.sql:25`, `:81`).
 
-A 012 não amplia essas permissões nem modifica as existentes. Isolar a conta
+A 019 não amplia essas permissões nem modifica as existentes. Isolar a conta
 também dessas operações públicas exigiria revisão específica das policies E
 RPCs existentes, fora desta entrega. A verificação final do estado implantado
 via `pg_policies`/grants está pendente: nenhum SQL foi executado no Supabase.
 
 Para desfazer: parar a tarefa, remover as duas RPCs e as três tabelas em
-transação, sem CASCADE, conforme SQL de `admin/migracoes/LEIAME.md`, seção 012.
-Perde o espelho/log/autorizações; não altera catálogo, pedidos ou objetos da 011.
+transação, sem CASCADE, conforme SQL de `admin/migracoes/LEIAME.md`, seção 019.
+Perde o espelho/log/autorizações; não altera catálogo, pedidos ou objetos da 021.
 
 
-## 017 — Histórico diário, eventos e limite SOLIDCON
+## 020 — Histórico diário, eventos e limite SOLIDCON
 
-Extensão isolada da 012 já instalada; não altera o coletor, o catálogo ou
+Extensão isolada da 019 já instalada; não altera o coletor, o catálogo ou
 pedidos. Os números 013–016 são reservados às migrações do outro repo já
 implantadas. Os nomes novos são específicos de SOLIDCON, sem objetos genéricos.
 
@@ -432,12 +460,12 @@ o nome observado mesmo se uma manutenção posterior remover o produto. Índices
 dos eventos: `solidcon_eventos_em_idx` e `solidcon_eventos_produto_em_idx`.
 A PK do diário serve para upsert e retenção por dia.
 
-A RPC de recebimento mantém assinatura, contrato JSON e todas as travas da 012.
+A RPC de recebimento mantém assinatura, contrato JSON e todas as travas da 019.
 Somente após a aceitação, ainda sob o mesmo advisory lock, lê o limite e compara
 o payload com o espelho anterior. Depois grava eventos, aplica o upsert/ausência
-da 012 e registra a foto final do espelho inteiro, inclusive ausentes. Um erro
+da 019 e registra a foto final do espelho inteiro, inclusive ausentes. Um erro
 nesses acréscimos reverte todo o snapshot. Rejeições de negócio só gravam o
-log de erro da 012, sem tocar em eventos, diário, config ou espelho.
+log de erro da 019, sem tocar em eventos, diário, config ou espelho.
 
 | Evento | Regra | Valores antes → depois |
 |---|---|---|
@@ -477,13 +505,96 @@ anon/authenticated, nem admin. Mudança de limite é exclusivamente pela RPC
 authenticated; acesso à sequência dos eventos revogado. A opção DEFINER evita
 dar UPDATE direto ao admin, necessário se fosse INVOKER.
 
-Pré-requisito validado antes de criar objetos: 012 completa, sua RPC de três
+Pré-requisito validado antes de criar objetos: 019 completa, sua RPC de três
 argumentos e helpers de produção. Não reaplicar `admin/supabase.sql` por causa
-do drift de papéis. A 017 não foi executada em produção nesta entrega.
+do drift de papéis. A 020 já está aplicada em produção como 017 de A.
 Teste dinâmico realizado no PostgreSQL 18 local isolado, com helpers de
 identidade simulados; nenhum acesso ao ERP/Supabase.
 
-Rollback: pausar a tarefa, restaurar só a RPC da 012 e remover RPC de limite e
-as três tabelas da 017 na mesma transação, sem CASCADE. O gerador PowerShell
-completo está na seção 017 de `admin/migracoes/LEIAME.md`. Perde histórico,
+Rollback: pausar a tarefa, restaurar só a RPC da 019 e remover RPC de limite e
+as três tabelas da 020 na mesma transação, sem CASCADE. O gerador PowerShell
+completo está na seção 020 de `admin/migracoes/LEIAME.md`. Perde histórico,
 eventos e configuração; mantém espelho/log/autorizações e o script.
+
+
+## 022 — Vendas diárias, formatos e famílias SOLIDCON
+
+Extensão independente do estoque/eventos 019/020, com preflight dessas duas
+migrações e dos helpers de papéis. Não modifica suas tabelas ou RPCs.
+
+| Objeto | Dados/uso |
+|---|---|
+| `solidcon_vendas_dia` | PK `(dia date,ean text)`; nome/categoria text NULL; formato pote/cx24/cx48/outro; potes_por_unidade integer NULL; familia text NULL; qtd numeric; valor_centavos, valor_bruto_centavos, desconto_centavos bigint; coletado_em timestamptz |
+| `solidcon_vendas_sync` | id bigint identity; dia, status ok/erro, linhas, valor_total_centavos bigint, coletado_em, execucao_id uuid, mensagem text, em timestamptz |
+| `solidcon_receber_vendas(date,jsonb,timestamptz,uuid)` | Autorização da integração, validação, ordem e substituição atômica de um dia |
+| `solidcon_vendas_por_dia` | dia, soma do líquido em centavos, potes equivalentes conhecidos |
+| `solidcon_vendas_por_mes` | mes (primeiro dia), líquido, potes, dias distintos com qtd>0 ou líquido>0 |
+| `solidcon_vendas_familia_mes` | mes, família, nome_familia, formato, qtd, líquido e potes |
+
+RLS nas duas tabelas: SELECT somente eh_equipe; nenhuma escrita direta para
+anon/authenticated, nem admin. Views security_invoker, SELECT authenticated;
+quem não é equipe lê zero linhas. RPC SECURITY DEFINER, pg_catalog, schemas
+explícitos, EXECUTE authenticated e whitelist integracoes_autorizadas.
+Lock próprio `(5100,18)`; não disputa o lock de estoque `(5100,4)`.
+
+O dia aceita hoje-400..hoje, referência America/Sao_Paulo. Máximo 2000 itens/
+4 MiB, valores não negativos, EANs textuais únicos. Coleta deve estar nas últimas
+24h e no máximo 5min à frente; nunca confundir data da coleta com dia da venda.
+Sob lock, verifica o último sucesso **por dia** e UUID aceito global. Depois
+DELETE+INSERT substitui todas as linhas daquele dia. Um erro reverte tudo.
+`[]` é permitido para dia sem linhas e rejeitado se o dia já tinha vendas,
+mesmo se o vazio for legítimo; não há override nesta fase.
+Rejeição só grava log erro com motivo controlado e retorna status erro; não
+atualiza a referência aceita nem os dados. Falha antes da RPC fica no log local.
+Não há retenção automática das vendas/logs nesta entrega.
+
+Enriquecimento usa as duas respostas GetProdutos do ciclo, inclusive categorias
+que não entram no espelho de caixas. Busca por codigo_ean, depois id_produto,
+ou cdProduto no retorno bruto. EAN/código interno retornado pela venda continua
+como texto original; zeros textuais são preservados. Aliases não somam estoque
+e metadados conflitantes não são resolvidos pela última linha: ficam sem mapa.
+
+| Categoria ERP | Formato | Potes por unidade |
+|---|---|---|
+| TEMPERO - MATÉRIA PRIMA EM PROCESSO | pote | 1 |
+| TEMPERO - CAIXA 24 UN | cx24 | 24 |
+| TEMPERO - CAIXA 48 UN | cx48 | 48 |
+| Outras ou sem correspondência | outro | NULL |
+
+A variante MATÉRIA com U+FFFD já quebrada na API também é reconhecida, sem
+reescrever nome/categoria. Família: EAN13 de pote perde o último dígito;
+GTIN14 de caixa usa os 12 dígitos das posições 2..13. Ao resolver código interno,
+pode usar a família de um EAN do catálogo se inequívoca. Fora desses casos,
+família fica NULL. Não inferir embalagem desconhecida só pelo tamanho do EAN.
+Valores entram nas somas mesmo quando formato é outro; potes desses itens
+não são estimados (contribuem zero no agregado de potes conhecidos).
+
+Nome da família prioriza o nome mais recente de um pote vendido daquela família
+quando houver nos dados; senão usa nome de item. Sem família, a view agrupa por
+`ean:identificador` para não fundir todos os desconhecidos no mesmo grupo;
+sem nome, usa essa chave. SUM de dinheiro/quantidades é numeric, sem ponto
+flutuante. Dias vazios não criam linha nas views: o painel deve preencher lacunas.
+
+Hoje/ontem são coletados após estoque, sucesso ou falha. Falha na leitura do
+catálogo não cancela vendas: nome/categoria/fator/família NULL, formato outro.
+Um sucesso posterior reclassifica o dia ao substituir seus dados. Isso pode
+deixar o agregado de potes temporariamente incompleto, preservando receita.
+Cada dia tem UUID e coletado_em próprios; falhas de vendas não alteram estoque.
+Código 3 identifica só vendas falhando com estoque OK; 1 prevalece se estoque
+falhar; 0 só quando os fluxos executados terminam OK.
+
+Backfill manual N=1..400 não envia estoque: lê catálogo para enriquecer e
+consulta/envia N datas, incluindo hoje, com pausa 700ms entre GETs de dias.
+Modo teste nunca chama Supabase; ArquivoVendas aceita o array bruto ou o array
+histórico dia/ean/qtd/valor/valor_bruto/desconto. Com arquivos, vazios inferidos
+são apenas um recurso de teste; modo real recusa todos os arquivos de entrada.
+
+QA com amostra real de 180 dias: totais conferidos linha a linha contra a origem
+(valores comerciais ficam fora do repositório, que é público). Alguns
+identificadores ficaram sem catálogo nas amostras; a receita é preservada.
+Testado no PostgreSQL 18 local isolado, inclusive carga completa e views,
+RLS/ordem/vazio/substituição/rollback, sem acessar produção.
+
+Rollback e ordem de implantação futura: seção 022 de admin/migracoes/LEIAME.md.
+Remover views, RPC e as duas tabelas (sem CASCADE) perde só vendas/logs; restaurar
+o script pré-022. Objetos 019/020 e dados de estoque/eventos permanecem intactos.

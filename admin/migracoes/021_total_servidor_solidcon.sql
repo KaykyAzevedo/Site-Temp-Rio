@@ -1,3 +1,5 @@
+-- 021_total_servidor_solidcon.sql: NAO APLICADA: total no servidor, antes 011 de A.
+-- Corpo original preservado; numeros antigos abaixo sao historicos.
 -- 011 — Total no servidor e lançamento manual no comercial SOLIDCON
 --
 -- Rode depois das migrações 004–010. Não há integração automática com ERP:
@@ -42,7 +44,7 @@ begin
   -- ela, e não à região genérica que a engloba. Filtrar por `ativo` aqui faria
   -- o pedido cair na faixa errada e sumir do relatório da região certa.
   -- Especificidade é prioridade, não largura da faixa (regra preservada).
-  -- Desempate total igual a js/entrega.js: prioridade DESC, ativo DESC,
+  -- Desempate desta migracao: prioridade DESC, ativo DESC,
   -- id ASC em ordem Unicode/binária (COLLATE "C"), sem depender da ordem dos dados.
   if v_cep is not null and length(v_cep) = 8 then
     select r.id into v_regiao
