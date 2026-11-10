@@ -1066,6 +1066,7 @@
                     : '') +
             '</div>' +
             '<p class="text-xs mt-1 mb-2" style="color:var(--adm-tinta-3)">' + esc(dataHora(p.criado_em)) + '</p>' +
+            (seloSolidcon(p) ? '<div class="mb-2">' + seloSolidcon(p) + '</div>' : '') +
             '<div class="flex items-center gap-1 flex-wrap pt-2" style="border-top:1px solid var(--adm-borda)">' +
                 acoesDeStatus(p) +
             '</div>' +
@@ -1083,7 +1084,7 @@
                     '<td>' + esc(dataHora(p.criado_em)) + '</td>' +
                     '<td>' + esc(p.razao_social) + '</td>' +
                     '<td>' + esc((p.cidade || '') + '/' + (p.uf || '')) + '</td>' +
-                    '<td>' + selo(p.status) + '</td>' +
+                    '<td>' + selo(p.status) + ' ' + seloSolidcon(p) + '</td>' +
                     '<td class="num">' + esc(brl(p.valor_centavos)) + '</td>' +
                     '<td><div class="flex items-center gap-1 flex-wrap">' + acoesDeStatus(p) + '</div></td>' +
                 '</tr>';
@@ -1167,7 +1168,9 @@
                 '</div>' +
                 '<div>' +
                     '<p class="adm-tile-rotulo mb-1">Pedido</p>' +
-                    '<p class="adm-tile-valor" style="font-size:1.25rem">' + esc(brl(p.valor_centavos)) + '</p>' +
+                    '<p class="adm-tile-valor" style="font-size:1.25rem">' + esc(brl((p.valor_centavos || 0) + (Number(p.frete_centavos) || 0))) + '</p>' +
+                    '<p style="color:var(--adm-tinta-2)">Produtos ' + esc(brl(p.valor_centavos)) +
+                        ' · Frete ' + esc(brl(p.frete_centavos)) + '</p>' +
                     '<p style="color:var(--adm-tinta-2)">' + NUM.format(p.potes) + ' potes · ' +
                         NUM.format(p.caixas) + ' caixas</p>' +
                 '</div>' +
@@ -1188,6 +1191,8 @@
                   '<strong>Obs:</strong> ' + esc(p.observacoes) + '</p>'
                 : '') +
 
+            '<div id="bloco-solidcon" class="mb-4"></div>' +
+
             '<div class="flex items-center gap-2 flex-wrap pt-3" style="border-top:1px solid var(--adm-borda)">' +
                 acoesDeStatus(p) +
                 '<a href="https://wa.me/' + esc(String(p.telefone).replace(/\D/g, '').replace(/^/, '55')) + '"' +
@@ -1196,6 +1201,243 @@
                 '</a>' +
             '</div>' +
         '</div>';
+    }
+
+    /* ===================================================================
+     * Lançar no SOLIDCON
+     *
+     * O Marcio digita cada pedido do site no comercial do SOLIDCON. Este
+     * bloco junta tudo o que ele precisa em um lugar só (+ "Copiar tudo") e
+     * registra o número do pedido lançado. Depende da migração 011: sem ela,
+     * as colunas novas não vêm no select('*') e o bloco avisa em vez de quebrar.
+     * =================================================================== */
+    function abrirPedido(p) {
+        abrirModal(cartaoPedido(p));
+        carregarBlocoSolidcon(p);
+    }
+
+    function lancadoNoSolidcon(p) { return !!p.lancado_solidcon_em; }
+
+    // Sem a coluna (migração 011 pendente) não há selo: não dá para afirmar nada.
+    function seloSolidcon(p) {
+        if (!('lancado_solidcon_em' in p) || p.status === 'cancelado') return '';
+        return lancadoNoSolidcon(p)
+            ? '<span class="adm-selo adm-selo-confirmado" title="Pedido ' + esc(p.numero_solidcon || '') + '">' +
+              '<i class="fa-solid fa-check"></i>Lançado no SOLIDCON</span>'
+            : '<span class="adm-selo adm-selo-aguardando"><i class="fa-regular fa-clock"></i>Falta lançar</span>';
+    }
+
+    // Itens com preço congelado (pedido_items) + código do ERP; cai no jsonb se faltar.
+    function buscarItensSolidcon(p) {
+        return sb.from('pedido_items').select('*').eq('pedido_id', p.id).order('id').then(function (r) {
+            var linhas = (!r.error && r.data && r.data.length) ? r.data.map(function (i) {
+                return { produto_id: i.produto_id, nome: i.produto_nome, potes: i.quantidade,
+                         unit: i.preco_unitario_centavos };
+            }) : (Array.isArray(p.itens) ? p.itens : []).map(function (i) {
+                return { produto_id: i.id, nome: i.nome, potes: Number(i.potes) || 0, unit: null };
+            });
+            var ids = linhas.map(function (l) { return l.produto_id; }).filter(Boolean);
+            if (!ids.length) return { linhas: linhas, codigos: {}, semColuna: false };
+            return sb.from('catalogo_produtos').select('id,codigo_erp').in('id', ids).then(function (c) {
+                var codigos = {};
+                (c.data || []).forEach(function (x) { codigos[x.id] = x.codigo_erp; });
+                return { linhas: linhas, codigos: codigos, semColuna: !!c.error };
+            });
+        });
+    }
+
+    function carregarBlocoSolidcon(p) {
+        var alvo = $('#bloco-solidcon');
+        if (!alvo) return;
+        alvo.setAttribute('data-pedido-id', p.id);
+        alvo.innerHTML = '<p class="text-xs" style="color:var(--adm-tinta-3)">Carregando dados do SOLIDCON…</p>';
+        buscarItensSolidcon(p).then(function (info) {
+            if (alvo.isConnected && alvo.getAttribute('data-pedido-id') === String(p.id)) desenharBlocoSolidcon(alvo, p, info);
+        }, function () {
+            if (alvo.isConnected && alvo.getAttribute('data-pedido-id') === String(p.id)) desenharBlocoSolidcon(alvo, p, { linhas: [], codigos: {}, semColuna: true });
+        });
+    }
+
+    function textoParaSolidcon(p, info) {
+        var frete = Number(p.frete_centavos) || 0;
+        var L = [
+            'PEDIDO DO SITE - ' + dataHora(p.criado_em),
+            'Vendedor: Marcio',
+            'CNPJ: ' + (p.cnpj || ''),
+            'Razao social: ' + (p.razao_social || ''),
+            'IE: ' + (p.inscricao_estadual || 'ISENTO'),
+            'Responsavel: ' + (p.responsavel || ''),
+            'Telefone: ' + (p.telefone || ''),
+            'E-mail: ' + (p.email || ''),
+            'Endereco: ' + (p.logradouro || '') + (p.numero ? ', ' + p.numero : '') +
+                (p.complemento ? ' - ' + p.complemento : '') + ' - ' + (p.bairro || '') + ' - ' +
+                (p.cidade || '') + '/' + (p.uf || '') + (p.cep ? ' - CEP ' + p.cep : ''),
+            '',
+            'ITENS (codigo | produto | potes | unitario | subtotal)'
+        ];
+        info.linhas.forEach(function (l) {
+            L.push((info.codigos[l.produto_id] || 'SEM CODIGO') + ' | ' + l.nome + ' | ' + l.potes + ' | ' +
+                (l.unit == null ? '-' : brl(l.unit)) + ' | ' + (l.unit == null ? '-' : brl(l.unit * l.potes)));
+        });
+        L.push('', 'Produtos: ' + brl(p.valor_centavos), 'Frete: ' + brl(frete),
+               'TOTAL: ' + brl((p.valor_centavos || 0) + frete));
+        if (p.observacoes) L.push('Obs: ' + p.observacoes);
+        return L.join('\n');
+    }
+
+    function copiarTexto(texto) {
+        function plano() {
+            var t = document.createElement('textarea');
+            t.value = texto; t.style.position = 'fixed'; t.style.opacity = '0';
+            document.body.appendChild(t); t.select();
+            var ok = false;
+            try { ok = document.execCommand('copy'); } catch (e) { /* sem cópia */ }
+            t.remove();
+            return ok;
+        }
+        if (navigator.clipboard && window.isSecureContext) {
+            return navigator.clipboard.writeText(texto).then(function () { return true; }, function () { return plano(); });
+        }
+        return Promise.resolve(plano());
+    }
+
+    function desenharBlocoSolidcon(alvo, p, info) {
+        var temColuna = 'lancado_solidcon_em' in p;
+        var frete = Number(p.frete_centavos) || 0;
+        var total = (p.valor_centavos || 0) + frete;
+        var semCodigo = info.linhas.some(function (l) { return !info.codigos[l.produto_id]; });
+        var avisos = '';
+
+        // O que o cliente viu no site pode divergir do gravado (preço recalculado no servidor).
+        var difValor = p.valor_site_centavos != null && Number(p.valor_site_centavos) !== Number(p.valor_centavos);
+        var difFrete = p.frete_site_centavos != null && Number(p.frete_site_centavos) !== frete;
+        if (difValor || difFrete) {
+            avisos += '<p class="text-xs p-3 rounded-lg mb-3" style="background:rgba(234,179,8,0.14);color:#FDE047">' +
+                '<i class="fa-solid fa-triangle-exclamation mr-1"></i>O valor que o cliente viu era ' +
+                (difValor ? 'produtos ' + esc(brl(p.valor_site_centavos)) + ' (gravado ' + esc(brl(p.valor_centavos)) + ')' : '') +
+                (difValor && difFrete ? ' e ' : '') +
+                (difFrete ? 'frete ' + esc(brl(p.frete_site_centavos)) + ' (gravado ' + esc(brl(frete)) + ')' : '') +
+                '. Confirme com o cliente antes de lançar.</p>';
+        }
+        if (!temColuna || info.semColuna) {
+            avisos += '<p class="text-xs p-3 rounded-lg mb-3" style="background:rgba(255,255,255,0.04);color:var(--adm-tinta-2)">' +
+                'Migração 011 ainda não aplicada no banco: códigos SOLIDCON e o registro de lançamento ficam indisponíveis.</p>';
+        } else if (semCodigo) {
+            avisos += '<p class="text-xs p-3 rounded-lg mb-3" style="background:rgba(239,68,68,0.14);color:#FCA5A5">' +
+                '<i class="fa-solid fa-circle-exclamation mr-1"></i>Há produto sem código SOLIDCON — procure pelo nome.</p>';
+        }
+
+        var campo = function (r, v) {
+            return '<div><span style="color:var(--adm-tinta-3)">' + esc(r) + ':</span> ' + esc(v || '—') + '</div>';
+        };
+        var endereco = (p.logradouro || '') + (p.numero ? ', ' + p.numero : '') + (p.complemento ? ' - ' + p.complemento : '') +
+            ' · ' + (p.bairro || '') + ' · ' + (p.cidade || '') + '/' + (p.uf || '') + (p.cep ? ' · CEP ' + p.cep : '');
+
+        var lancamento = !temColuna ? '' :
+            '<div class="pt-3 mt-3" style="border-top:1px solid var(--adm-borda)">' +
+                '<label class="adm-tile-rotulo block mb-1" for="solidcon-numero">Nº do pedido no SOLIDCON</label>' +
+                '<div class="flex gap-2 flex-wrap items-center">' +
+                    '<input id="solidcon-numero" class="adm-input" style="max-width:14rem;padding:.55rem .7rem" ' +
+                        'inputmode="numeric" autocomplete="off" value="' + esc(p.numero_solidcon || '') + '">' +
+                    '<button type="button" id="solidcon-marcar" class="adm-botao">' +
+                        '<i class="fa-solid fa-check mr-1"></i>Marcar como lançado</button>' +
+                    (lancadoNoSolidcon(p)
+                        ? '<button type="button" id="solidcon-desfazer" class="adm-botao-fantasma">' +
+                          '<i class="fa-solid fa-rotate-left mr-1"></i>Desfazer</button>' : '') +
+                '</div>' +
+                '<p id="solidcon-msg" class="text-xs mt-2" role="status" style="color:var(--adm-tinta-2)">' +
+                    (lancadoNoSolidcon(p)
+                        ? '<i class="fa-solid fa-circle-check mr-1" style="color:var(--adm-bom)"></i>Lançado em ' +
+                          esc(dataHora(p.lancado_solidcon_em)) + (p.numero_solidcon ? ' · pedido ' + esc(p.numero_solidcon) : '')
+                        : 'Ainda não lançado.') +
+                '</p>' +
+            '</div>';
+
+        alvo.innerHTML = '<div class="adm-card p-4" style="border:1px solid var(--adm-borda)">' +
+            '<div class="flex items-center justify-between gap-2 flex-wrap mb-3">' +
+                '<p class="font-bold text-sm">Lançar no SOLIDCON ' + seloSolidcon(p) + '</p>' +
+                '<button type="button" id="solidcon-copiar" class="adm-botao-fantasma">' +
+                    '<i class="fa-regular fa-copy mr-1"></i>Copiar tudo</button>' +
+            '</div>' + avisos +
+            '<div class="grid sm:grid-cols-2 gap-x-4 gap-y-1 text-xs mb-3">' +
+                campo('CNPJ', p.cnpj) + campo('Razão social', p.razao_social) +
+                campo('IE', p.inscricao_estadual || 'ISENTO') + campo('Responsável', p.responsavel) +
+                campo('Telefone', p.telefone) + campo('E-mail', p.email) +
+                campo('Vendedor', 'Marcio') +
+                '<div class="sm:col-span-2">' + campo('Endereço', endereco) + '</div>' +
+            '</div>' +
+            '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr>' +
+                '<th>Código</th><th>Produto</th><th style="text-align:right">Potes</th>' +
+                '<th style="text-align:right">Unit.</th><th style="text-align:right">Subtotal</th></tr></thead><tbody>' +
+                (info.linhas.length ? info.linhas.map(function (l) {
+                    var cod = info.codigos[l.produto_id];
+                    return '<tr><td>' + (cod ? esc(cod) : '<span style="color:#FCA5A5">sem código</span>') + '</td>' +
+                        '<td>' + esc(l.nome) + '</td><td class="num">' + esc(NUM.format(l.potes)) + '</td>' +
+                        '<td class="num">' + (l.unit == null ? '—' : esc(brl(l.unit))) + '</td>' +
+                        '<td class="num">' + (l.unit == null ? '—' : esc(brl(l.unit * l.potes))) + '</td></tr>';
+                }).join('') : '<tr><td colspan="5">Sem itens registrados.</td></tr>') +
+            '</tbody></table></div>' +
+            '<div class="text-xs mt-3 text-right" style="color:var(--adm-tinta-2)">' +
+                'Produtos ' + esc(brl(p.valor_centavos)) + ' · Frete ' + esc(brl(frete)) +
+                ' · <strong style="color:var(--adm-tinta)">Total ' + esc(brl(total)) + '</strong></div>' +
+            (p.observacoes ? '<p class="text-xs mt-2" style="color:var(--adm-tinta-2)"><strong>Obs:</strong> ' + esc(p.observacoes) + '</p>' : '') +
+            lancamento + '</div>';
+
+        var btnCopiar = alvo.querySelector('#solidcon-copiar');
+        btnCopiar.addEventListener('click', function () {
+            copiarTexto(textoParaSolidcon(p, info)).then(function (ok) {
+                btnCopiar.innerHTML = ok ? '<i class="fa-solid fa-check mr-1"></i>Copiado!'
+                                         : '<i class="fa-solid fa-xmark mr-1"></i>Não copiou';
+                setTimeout(function () { btnCopiar.innerHTML = '<i class="fa-regular fa-copy mr-1"></i>Copiar tudo'; }, 2000);
+            });
+        });
+
+        if (!temColuna) return;
+        function gravar(numero) {
+            var msg = alvo.querySelector('#solidcon-msg');
+            var botoes = alvo.querySelectorAll('#solidcon-marcar, #solidcon-desfazer');
+            botoes.forEach(function (b) { b.disabled = true; });
+            msg.style.color = 'var(--adm-tinta-2)';
+            msg.textContent = 'Salvando…';
+            // A resposta pode chegar com outro pedido aberto: o bloco só é
+            // tocado se ainda for o deste pedido; o objeto em memória sempre.
+            var aindaAberto = function () {
+                return alvo.isConnected && alvo.getAttribute('data-pedido-id') === String(p.id);
+            };
+            var falha = function (texto) {
+                if (!aindaAberto()) return;
+                botoes.forEach(function (b) { b.disabled = false; });
+                msg.style.color = '#FCA5A5';
+                msg.textContent = texto;
+            };
+            sb.rpc('marcar_lancado_solidcon', { p_pedido: p.id, p_numero: numero }).then(function (r) {
+                if (r.error) { falha('Não foi possível salvar: ' + r.error.message); return; }
+                // A RPC devolve a linha do pedido; NULL = pedido não visível/inexistente.
+                var linha = Array.isArray(r.data) ? r.data[0] : r.data;
+                if (!linha || String(linha.id) !== String(p.id)) {
+                    falha('Não foi possível salvar: o pedido não foi encontrado ou você não tem acesso.');
+                    return;
+                }
+                p.numero_solidcon = linha.numero_solidcon || null;
+                p.lancado_solidcon_em = linha.lancado_solidcon_em || null;
+                if (aindaAberto()) desenharBlocoSolidcon(alvo, p, info);
+                desenharPedidos(); // atualiza o selo na lista/Kanban
+            }, function (e) {
+                falha('Falha de rede: ' + (e && e.message || e));
+            });
+        }
+        alvo.querySelector('#solidcon-marcar').addEventListener('click', function () {
+            var n = alvo.querySelector('#solidcon-numero').value.trim();
+            if (!n) {
+                var m = alvo.querySelector('#solidcon-msg');
+                m.style.color = '#FCA5A5';
+                m.textContent = 'Informe o nº do pedido no SOLIDCON.';
+                return;
+            }
+            gravar(n);
+        });
+        var desf = alvo.querySelector('#solidcon-desfazer');
+        if (desf) desf.addEventListener('click', function () { gravar(''); });
     }
 
     function acoesDeStatus(p) {
@@ -1233,7 +1475,7 @@
             elemento.addEventListener('click', function (ev) {
                 if (ev.target.closest('button[data-status]')) return; // clique era no botão, não na linha
                 var p = dados.pedidos.filter(function (x) { return x.id === elemento.getAttribute('data-ver-pedido'); })[0];
-                if (p) abrirModal(cartaoPedido(p));
+                if (p) abrirPedido(p);
             });
         });
     }
@@ -1603,7 +1845,7 @@
             elemento.addEventListener('click', function (ev) {
                 if (ev.target.closest('[data-reenviar-recibo]')) return;
                 var p = pedidos.filter(function (x) { return x.id === elemento.getAttribute('data-ver-pedido'); })[0];
-                if (p) abrirModal(cartaoPedido(p));
+                if (p) abrirPedido(p);
             });
         });
         alvo.querySelectorAll('[data-reenviar-recibo]').forEach(function (b) {
@@ -1629,7 +1871,9 @@
 
         var msg = 'Recibo Temp Rio — pedido de ' + new Date(p.criado_em).toLocaleDateString('pt-BR') + '\n\n' +
             (linhas ? linhas + '\n\n' : '') +
-            'Total: ' + brl(p.valor_centavos) + '\n' +
+            'Produtos: ' + brl(p.valor_centavos) + '\n' +
+            'Frete: ' + brl(p.frete_centavos) + '\n' +
+            'Total: ' + brl((p.valor_centavos || 0) + (Number(p.frete_centavos) || 0)) + '\n' +
             'Situação: ' + (STATUS[p.status] ? STATUS[p.status].rotulo : p.status);
 
         window.open('https://wa.me/' + fone + '?text=' + encodeURIComponent(msg), '_blank', 'noopener');

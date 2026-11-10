@@ -46,6 +46,7 @@ erDiagram
 
     catalogo_produtos {
         text id PK "slug: alho-em-po"
+        text codigo_erp UK "SOLIDCON; único quando não nulo"
         text nome
         text descricao
         bigint preco_centavos "inteiro, nunca decimal"
@@ -67,6 +68,10 @@ erDiagram
         int caixas
         bigint valor_centavos
         bigint frete_centavos
+        bigint valor_site_centavos "auditoria do navegador"
+        bigint frete_site_centavos "auditoria do navegador"
+        text numero_solidcon
+        timestamptz lancado_solidcon_em
         jsonb itens "cópia congelada do WhatsApp"
         bool enviado_whatsapp
         timestamptz criado_em
@@ -177,7 +182,7 @@ view `clientes_historico`.
 
 **`pedidos.itens` (jsonb) e `pedido_items` não são a mesma informação duas
 vezes.** O jsonb é a cópia congelada do que foi para o WhatsApp — prova, nunca
-editada, nunca somada. `pedido_items` é a verdade consultável: todo relatório
+editada; desde a 011, seus itens alimentam o recálculo no servidor. `pedido_items` é a verdade consultável: todo relatório
 por produto sai dela. Se divergirem, `pedido_items` está certa, porque é
 derivada da outra.
 
@@ -187,6 +192,7 @@ derivada da outra.
 |---|---|---|
 | Criar pedido | `INSERT` em `pedidos` (como hoje) ou `criar_pedido(jsonb)` | qualquer visitante |
 | Marcar enviado no WhatsApp | `marcar_enviado_whatsapp(id)` | qualquer visitante (só liga, nunca desliga) |
+| Registrar/desfazer lançamento SOLIDCON | `marcar_lancado_solidcon(p_pedido uuid, p_numero text)` — retorna a linha atualizada ou NULL se inexistente/invisível | admin autenticado (security invoker/RLS) |
 | Mudar status do pedido | `atualizar_status_pedido(id, status, obs)` | admin |
 | Criar/editar produto | `salvar_produto(...)` | admin |
 | Remover produto | `remover_produto(id)` — soft delete | admin |
@@ -207,6 +213,7 @@ Os que a especificação pediu, mais os que as chaves estrangeiras exigem para o
 | `pedidos` | `cliente_id` | histórico de um cliente |
 | `pedidos` | `status`, `confirmado_em desc` | fila e faturamento |
 | `pedidos` | `regiao_id` | relatório por região |
+| `catalogo_produtos` | `codigo_erp` (único parcial: não nulo) | identificar produto no comercial SOLIDCON |
 | `catalogo_produtos` | `vendedor_id` | produtos de um vendedor |
 | `catalogo_produtos` | `nome` (parcial: só ativos) | catálogo |
 | `pedido_items` | `pedido_id`, `produto_id` | montar o pedido, vendas por produto |
@@ -248,3 +255,42 @@ intermediando a gravação.
 de alguém. E, desde a 006, também não é possível alterar o cadastro de um
 cliente enviando um pedido com o CNPJ dele — os gatilhos só preenchem campo
 vazio, nunca sobrescrevem.
+
+## Total no servidor e lançamento manual (011)
+
+`pedidos_total_servidor` é BEFORE INSERT e roda depois de
+`pedidos_resolver_cliente` pela ordem alfabética dos nomes. Preserva os valores
+recebidos em `valor_site_centavos` e `frete_site_centavos`, recalcula `potes` e
+`valor_centavos` por item usando `catalogo_produtos.preco_centavos` e cobra
+`regioes.taxa_centavos` apenas da `regiao_id` resolvida e ativa. Valor é somente
+mercadoria; frete continua separado. Sem CEP válido, sem região ou com região
+inativa, frete é zero. Não há fallback para outra região ativa.
+
+O helper interno `pedido_itens_precificados(jsonb)` é compartilhado com
+`pedido_explodir_itens`: produto ausente/sem id custa 400 centavos e tem FK nula;
+produto existente usa o preço cadastrado mesmo inativo/removido. Potes segue a
+006: regex `^[0-9]+$`, mínimo 1; inválido/ausente/fora de integer vira 1. JSON
+fora do formato array produz zero itens. Linhas que excederiam potes integer ou
+total bigint são ignoradas nas duas funções, preservadas no JSON para revisão.
+Os gatilhos são security definer para consultar catálogo e gravar os itens;
+o helper não é exposto como RPC a anon/authenticated. Não há backfill.
+
+`codigo_erp` identifica o produto no SOLIDCON e é único quando não nulo.
+O vendedor lança o pedido manualmente no comercial e usa
+`marcar_lancado_solidcon(p_pedido, p_numero)` para registrar o número com trim e
+`lancado_solidcon_em = now()`. NULL ou texto vazio após trim limpa número e data;
+registrar novamente renova a data. A RPC retorna a linha atualizada, ou NULL
+se nenhuma linha for visível/encontrada. EXECUTE é concedido a authenticated,
+com security invoker e as políticas de admin existentes. INSERT sempre inicia
+os dois campos nulos, inclusive se o navegador tentar enviá-los preenchidos.
+
+Pedidos anteriores ficam intactos, com auditoria nula. A 011 não altera
+`criar_pedido`, lista de espera nem JavaScript. O preço do navegador ainda é
+fixo: se o catálogo for reajustado, o painel recebe o valor do servidor e a
+auditoria permite comparar com o valor mostrado/enviado pelo site.
+
+O seletor de região da 011 e `js/entrega.js` usam a mesma ordem total:
+prioridade decrescente, ativo primeiro e id crescente em ordem Unicode/binária
+(`COLLATE "C"` no SQL). Especificidade continua definida pela prioridade;
+largura da faixa de CEP não participa. Inverter a ordem dos dados não muda
+a região selecionada quando prioridade e estado empatam.

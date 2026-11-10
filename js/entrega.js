@@ -67,11 +67,24 @@
          * "indisponível" — nunca cair numa região mais ampla por baixo.
          *
          * Entre regiões de MESMA prioridade, aí sim a ativa ganha: é empate
-         * real, não uma específica sendo atropelada por uma genérica. */
+         * real, não uma específica sendo atropelada por uma genérica. Especificidade
+         * é prioridade, não largura da faixa. Empate de prioridade e estado
+         * usa id ascendente, conforme o resolver da migração 011. */
         candidatas.sort(function (a, b) {
             var porPrioridade = (b.prioridade || 0) - (a.prioridade || 0);
             if (porPrioridade !== 0) return porPrioridade;
-            return (b.ativo ? 1 : 0) - (a.ativo ? 1 : 0);
+            var porAtivo = (b.ativo ? 1 : 0) - (a.ativo ? 1 : 0);
+            if (porAtivo !== 0) return porAtivo;
+            // Igual a pedido_resolver_cliente em 011_total_servidor_solidcon.sql:
+            // prioridade DESC, ativo DESC, id ASC (SQL COLLATE "C").
+            // Pontos Unicode mantêm a ordem binária UTF-8 inclusive fora de ASCII.
+            var idA = Array.from(String(a.id));
+            var idB = Array.from(String(b.id));
+            for (var i = 0; i < Math.min(idA.length, idB.length); i++) {
+                var porId = idA[i].codePointAt(0) - idB[i].codePointAt(0);
+                if (porId !== 0) return porId;
+            }
+            return idA.length - idB.length;
         });
         return candidatas[0];
     }

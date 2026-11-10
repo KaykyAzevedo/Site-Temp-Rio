@@ -16,6 +16,7 @@ rodar de novo por engano não quebra nada e não duplica dado.
 | 008 | `migracoes/008_crud.sql` | as operações como funções do banco |
 | 009 | `migracoes/009_opcional_ip_geo.sql` | **opcional — leia o cabeçalho antes** |
 | 010 | `migracoes/010_realtime_pedidos.sql` | liga `pedidos` ao Supabase Realtime — sino de notificação e "últimos pedidos" do painel |
+| 011 | `migracoes/011_total_servidor_solidcon.sql` | total/frete no servidor, auditoria do navegador, código ERP e controle do lançamento manual no SOLIDCON |
 
 As três primeiras estão em `admin/` e não aqui porque já existiam antes desta
 pasta; renomeá-las quebraria as referências espalhadas pelo código.
@@ -24,11 +25,14 @@ pasta; renomeá-las quebraria as referências espalhadas pelo código.
 
 004 a 008 usam a função `eh_admin()`, que nasce em 001. 006 aponta para
 `clientes` (004) e `catalogo_produtos` (005). Rodar fora de ordem dá erro de
-objeto inexistente — o Postgres recusa e nada é gravado pela metade.
+objeto inexistente — o Postgres recusa e nada é gravado pela metade. A 011
+depende do catálogo (005), dos itens e do gatilho de região (006), além das
+regiões (002); aplique após 010. Ela usa transação explícita.
 
 ## O que muda no site depois de rodar
 
-**Nada.** É de propósito.
+Até a 010, o fluxo do site permanece igual. A 011 mantém o INSERT e passa a
+recalcular os valores no servidor, sem exigir alteração em JavaScript.
 
 O site continua fazendo o mesmo `INSERT` em `pedidos` que faz hoje. Gatilhos na
 migração 006 resolvem o cliente, resolvem a região pelo CEP e transformam o
@@ -101,3 +105,43 @@ nada mais muda):
 ```sql
 alter publication supabase_realtime drop table public.pedidos;
 ```
+
+## 011 — Total no servidor e SOLIDCON manual
+
+Sem backfill: pedidos e preços de itens antigos não são recalculados, e as
+colunas de auditoria antigas permanecem nulas. Novos INSERTs guardam o valor e
+frete recebidos em `*_site_centavos`, depois calculam o valor por produto
+(catálogo ou fallback 400), potes e frete da região ativa resolvida pela 006.
+`pedidos_total_servidor` roda depois de `pedidos_resolver_cliente` por nome.
+Os mesmos itens precificados alimentam o AFTER INSERT, sem usar preço médio.
+
+Casos revisados por leitura: item sem id usa FK nula/preço 400; potes inválido
+vira 1 (regex e mínimo iguais à 006); array ausente/malformado fica vazio;
+região inativa não cobra frete nem cai na genérica; sem CEP válido cobra zero.
+Overflow de quantidade vira 1; linha que excederia a soma integer/bigint fica
+só no JSON para revisão e é ignorada tanto no total quanto nos itens.
+
+O painel usa `marcar_lancado_solidcon(p_pedido uuid, p_numero text)`:
+trim e número não vazio gravam número/data; NULL/vazio desfaz ambos. Retorna a
+linha atualizada ou NULL se inexistente/invisível. É security invoker, EXECUTE
+apenas para authenticated, e depende do RLS de admin. INSERT inicia os campos
+de lançamento nulos. `codigo_erp` é text com índice único parcial não nulo.
+
+Aplique primeiro em ambiente de teste; esta entrega não executa SQL em produção.
+Confira novos pedidos com `pedidos_conferencia`, valores `*_site_centavos` e
+preços unitários de `pedido_items`. Diferenças antigas podem continuar na view.
+O navegador ainda usa preço fixo: reajuste no catálogo pode gerar divergência
+com o valor mostrado no site, registrada na auditoria.
+
+Para desfazer a 011, restaure o corpo antigo de `pedido_explodir_itens` da 006
+sem reexecutar seu backfill; remova o gatilho `pedidos_total_servidor`, suas
+funções/helper e a RPC, e só então as quatro colunas novas de pedidos e
+`catalogo_produtos.codigo_erp` (o índice é removido com a coluna). Remover essas
+colunas perde a auditoria e o controle de lançamento; os totais e preços já
+gravados permanecem como estavam.
+
+O seletor de região da 011 e `js/entrega.js` usam a mesma ordem total:
+prioridade decrescente, ativo primeiro e id crescente em ordem Unicode/binária
+(`COLLATE "C"` no SQL). Especificidade continua definida pela prioridade;
+largura da faixa de CEP não participa. Inverter a ordem dos dados não muda
+a região selecionada quando prioridade e estado empatam.
