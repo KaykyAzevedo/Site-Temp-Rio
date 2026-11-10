@@ -412,3 +412,78 @@ via `pg_policies`/grants está pendente: nenhum SQL foi executado no Supabase.
 Para desfazer: parar a tarefa, remover as duas RPCs e as três tabelas em
 transação, sem CASCADE, conforme SQL de `admin/migracoes/LEIAME.md`, seção 012.
 Perde o espelho/log/autorizações; não altera catálogo, pedidos ou objetos da 011.
+
+
+## 017 — Histórico diário, eventos e limite SOLIDCON
+
+Extensão isolada da 012 já instalada; não altera o coletor, o catálogo ou
+pedidos. Os números 013–016 são reservados às migrações do outro repo já
+implantadas. Os nomes novos são específicos de SOLIDCON, sem objetos genéricos.
+
+| Objeto | Campos e finalidade |
+|---|---|
+| `solidcon_estoque_diario` | PK `(dia date,id_produto bigint)`; `estoque_disponivel numeric`, `preco_centavos bigint`, `presente boolean`, `atualizado_em timestamptz` |
+| `solidcon_eventos` | `id bigint identity` PK; `em timestamptz`, `id_produto bigint`, `nome text`, `tipo text` com CHECK de sete tipos; `valor_antes numeric`, `valor_depois numeric`, `coletado_em timestamptz` |
+| `solidcon_config` | linha única `id smallint=1`; `limite_estoque_baixo integer NOT NULL DEFAULT 5 CHECK >=0`; `atualizado_em timestamptz` |
+| `solidcon_definir_limite(integer)` | Admin altera o limite, retorna o valor salvo; valida nulo/negativo, serializa com a coleta |
+
+Não há FK de histórico/eventos para o espelho: os registros conservam o ID e
+o nome observado mesmo se uma manutenção posterior remover o produto. Índices
+dos eventos: `solidcon_eventos_em_idx` e `solidcon_eventos_produto_em_idx`.
+A PK do diário serve para upsert e retenção por dia.
+
+A RPC de recebimento mantém assinatura, contrato JSON e todas as travas da 012.
+Somente após a aceitação, ainda sob o mesmo advisory lock, lê o limite e compara
+o payload com o espelho anterior. Depois grava eventos, aplica o upsert/ausência
+da 012 e registra a foto final do espelho inteiro, inclusive ausentes. Um erro
+nesses acréscimos reverte todo o snapshot. Rejeições de negócio só gravam o
+log de erro da 012, sem tocar em eventos, diário, config ou espelho.
+
+| Evento | Regra | Valores antes → depois |
+|---|---|---|
+| `produto_novo` | ID ainda não existe fisicamente em `solidcon_produtos` | NULL → estoque |
+| `esgotou` | Estava presente com estoque >0 e foi recebido com zero | estoque → 0 |
+| `voltou_estoque` | Estava presente com zero e foi recebido com >0 | 0 → estoque |
+| `estoque_baixo` | Estava presente com estoque >limite; recebido com `0 < estoque <= limite` | estoque → estoque |
+| `preco_mudou` | ID existente recebido com preço diferente, inclusive ao reaparecer | centavos → centavos |
+| `sumiu` | Estava presente e não veio na união aceita | 1 → 0 (presença) |
+| `reapareceu` | Existia com `presente=false` e voltou ao payload | 0 → 1 (presença) |
+
+`sumiu` significa não observado na coleta, não prova desativação no ERP.
+Não gera `esgotou` artificial ao sumir nem `voltou_estoque` artificial ao
+reaparecer. Produto novo e reaparecido não geram alerta baixo inicial;
+o alerta exige cruzamento com baseline presente. Permanecer abaixo do limite
+não repete alerta; subir e cruzar novamente gera outro. Preço pode gerar evento
+junto com estoque/presença. Alterar o limite não cria eventos retroativos.
+Limite zero desliga `estoque_baixo`. Os campos numéricos preservam frações de
+estoque e centavos sem ponto flutuante.
+
+`em` marca o processamento no banco, enquanto `coletado_em` identifica a
+observação do ERP. Dia da foto é `(coletado_em AT TIME ZONE
+'America/Sao_Paulo')::date`. Cada aceitação sobrescreve o dia com o estado mais
+recente aceito, sem backfill. Primeiro snapshot após a instalação usa o espelho
+já existente como baseline, podendo registrar alterações reais. Não classifica
+os existentes como novos; só IDs de fato inéditos geram `produto_novo`.
+
+Retenção diária, dentro da RPC aceita: `dia < hoje_em_Sao_Paulo - 400`.
+O dia com 400 dias exatos permanece, o de 401 sai; isso mantém hoje e até
+400 datas anteriores. Não depende de cron adicional, e rejeições não executam
+a limpeza. Eventos não são removidos automaticamente nesta fase.
+
+RLS/SELECT por `eh_equipe()` nas três tabelas. Nenhuma escrita direta para
+anon/authenticated, nem admin. Mudança de limite é exclusivamente pela RPC
+`solidcon_definir_limite`, **SECURITY DEFINER** com `eh_admin()` explícito,
+`auth.uid()`, `search_path=pg_catalog` e nomes qualificados. EXECUTE somente
+authenticated; acesso à sequência dos eventos revogado. A opção DEFINER evita
+dar UPDATE direto ao admin, necessário se fosse INVOKER.
+
+Pré-requisito validado antes de criar objetos: 012 completa, sua RPC de três
+argumentos e helpers de produção. Não reaplicar `admin/supabase.sql` por causa
+do drift de papéis. A 017 não foi executada em produção nesta entrega.
+Teste dinâmico realizado no PostgreSQL 18 local isolado, com helpers de
+identidade simulados; nenhum acesso ao ERP/Supabase.
+
+Rollback: pausar a tarefa, restaurar só a RPC da 012 e remover RPC de limite e
+as três tabelas da 017 na mesma transação, sem CASCADE. O gerador PowerShell
+completo está na seção 017 de `admin/migracoes/LEIAME.md`. Perde histórico,
+eventos e configuração; mantém espelho/log/autorizações e o script.

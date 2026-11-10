@@ -690,7 +690,8 @@
      * sem a 012 aplicada, só esta aba mostra o aviso; as demais não mudam.
      * =================================================================== */
     var solid = { carregado: false, carregando: false, produtos: [], syncs: [],
-                  erro: null, ausente: false, busca: '', situacao: 'todos', caixa: 'todas' };
+                  erro: null, ausente: false, busca: '', situacao: 'todos', caixa: 'todas',
+                  extra: false, eventos: [], limite: 5, ehAdmin: null, tipoEvento: 'todos' };
     var SOLID_BAIXO = 5;
     var SOLID_STALE_MS = 2 * 60 * 60 * 1000;
 
@@ -731,7 +732,8 @@
                 solid.syncs = rs[1].data || [];
                 solid.carregado = true;
             }
-            desenharSolidcon();
+            if (!solid.carregado) { desenharSolidcon(); return; }
+            return carregarSolidExtra().then(desenharSolidcon);
         }).catch(function (e) {
             solid.carregando = false;
             solid.erro = String(e && e.message || e);
@@ -798,14 +800,14 @@
 
     function solidLinha(p) {
         var esg = solidEsgotado(p), est = Number(p.estoque_disponivel) || 0;
-        var baixo = !esg && est <= SOLID_BAIXO;
+        var baixo = !esg && est <= solid.limite;
         var sit = esg
             ? '<span class="adm-selo adm-selo-cancelado"><i class="fa-solid fa-ban"></i>Esgotado</span>'
             : baixo
                 ? '<span class="adm-selo adm-selo-aguardando"><i class="fa-solid fa-arrow-down"></i>Estoque baixo</span>'
                 : '<span class="adm-selo adm-selo-confirmado"><i class="fa-solid fa-check"></i>Disponível</span>';
         var cx = solidCaixa(p);
-        return '<tr><td>' + esc(p.id_produto) + '</td><td>' + esc(p.nome) + '</td>' +
+        return '<tr data-solid-id="' + esc(p.id_produto) + '" tabindex="0" style="cursor:pointer" title="Ver histórico"><td>' + esc(p.id_produto) + '</td><td>' + esc(p.nome) + '</td>' +
             '<td>' + (cx ? 'CX ' + cx : '—') + '</td>' +
             '<td style="text-align:right">' + esc(NUM.format(esg ? 0 : est)) + '</td>' +
             '<td style="text-align:right">' + esc(brl(p.preco_centavos)) + '</td>' +
@@ -835,7 +837,7 @@
                        '" ' + attr + '="' + i[0] + '">' + i[1] + '</button>';
             }).join('');
         }
-        alvo.innerHTML = solidCabecalho() + solidContadores() +
+        alvo.innerHTML = solidCabecalho() + (solid.extra ? solidBlocoAtencao() : '') + solidContadores() +
             '<div class="flex items-center flex-wrap gap-3 mb-4">' +
                 '<input type="search" id="solid-busca" class="adm-input" style="max-width:18rem;padding:.55rem .7rem" ' +
                     'placeholder="Buscar por nome ou código" aria-label="Buscar produto" value="' + esc(solid.busca) + '">' +
@@ -846,7 +848,7 @@
                     chips('data-solid-cx', solid.caixa, [['todas', 'Todas as caixas'], ['24', 'CX 24'], ['48', 'CX 48']]) +
                 '</div>' +
             '</div>' +
-            '<div id="solid-lista"></div>' +
+            '<div id="solid-lista"></div>' + (solid.extra ? '<div class="mt-5">' + solidBlocoEventos() + '</div>' : '') +
             '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">Somente leitura. O preço do ERP é apenas referência — não altera o preço do site.</p>';
 
         $('#solid-busca').addEventListener('input', function (ev) {
@@ -858,6 +860,11 @@
         alvo.querySelectorAll('[data-solid-cx]').forEach(function (b) {
             b.addEventListener('click', function () { solid.caixa = b.getAttribute('data-solid-cx'); desenharSolidcon(); });
         });
+        alvo.querySelectorAll('[data-solid-tipo]').forEach(function (b) {
+            b.addEventListener('click', function () { solid.tipoEvento = b.getAttribute('data-solid-tipo'); desenharSolidcon(); });
+        });
+        var sv = $('#solid-limite-salvar');
+        if (sv) sv.addEventListener('click', salvarSolidLimite);
         desenharSolidLista();
     }
 
@@ -879,6 +886,206 @@
             lista.map(solidLinha).join('') + '</tbody></table></div>' +
             '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">' + NUM.format(lista.length) + ' de ' +
             NUM.format(solid.produtos.length) + ' produtos</p></div>';
+        if (solid.extra) {
+            alvo.querySelectorAll('tr[data-solid-id]').forEach(function (tr) {
+                var abrir = function () { abrirDetalheSolid(tr.getAttribute('data-solid-id')); };
+                tr.addEventListener('click', abrir);
+                tr.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') abrir(); });
+            });
+        }
+    }
+
+    /* ---- Extensão 017: eventos, histórico diário e limite de estoque baixo.
+     * Tudo opcional: se as tabelas não existirem, solid.extra fica false e a
+     * aba segue como antes, sem esses blocos. ---- */
+    var SOLID_TIPOS = {
+        esgotou:        { rotulo: 'Esgotou',           icone: 'fa-ban',         cls: 'adm-selo-cancelado' },
+        voltou_estoque: { rotulo: 'Voltou ao estoque', icone: 'fa-rotate-left', cls: 'adm-selo-confirmado' },
+        estoque_baixo:  { rotulo: 'Estoque baixo',     icone: 'fa-arrow-down',  cls: 'adm-selo-aguardando' },
+        preco_mudou:    { rotulo: 'Preço mudou',       icone: 'fa-tag',         cls: 'adm-selo-entregue' },
+        produto_novo:   { rotulo: 'Produto novo',      icone: 'fa-star',        cls: '', estilo: 'background:rgba(168,85,247,.14);color:#D8B4FE' },
+        sumiu:          { rotulo: 'Sumiu da lista',    icone: 'fa-eye-slash',   cls: '', estilo: 'background:rgba(255,255,255,.08);color:var(--adm-tinta-2)' },
+        reapareceu:     { rotulo: 'Reapareceu',        icone: 'fa-eye',         cls: '', estilo: 'background:rgba(255,255,255,.08);color:var(--adm-tinta-2)' }
+    };
+
+    function carregarSolidExtra() {
+        var desde = new Date(Date.now() - 7 * 86400000).toISOString();
+        return Promise.all([
+            sb.from('solidcon_eventos')
+                .select('id,em,id_produto,nome,tipo,valor_antes,valor_depois')
+                .gte('em', desde).order('em', { ascending: false }).limit(200),
+            sb.from('solidcon_config').select('limite_estoque_baixo').eq('id', 1).limit(1)
+        ]).then(function (rs) {
+            if (rs[0].error || rs[1].error) { solid.extra = false; return null; }
+            solid.extra = true;
+            solid.eventos = rs[0].data || [];
+            var c = (rs[1].data || [])[0];
+            solid.limite = c ? Number(c.limite_estoque_baixo) : SOLID_BAIXO;
+            // O painel não distingue papéis: tenta o helper do banco; se falhar,
+            // o botão aparece e a RPC recusa quem não é admin.
+            return sb.rpc('eh_admin').then(function (r) {
+                solid.ehAdmin = r.error ? null : r.data === true;
+            }, function () { solid.ehAdmin = null; });
+        }).catch(function () { solid.extra = false; });
+    }
+
+    function solidFmtValor(tipo, v) {
+        if (v == null) return '—';
+        if (tipo === 'preco_mudou') return brl(Number(v));
+        return NUM.format(Number(v));
+    }
+
+    function solidSeloTipo(tipo) {
+        var t = SOLID_TIPOS[tipo] || { rotulo: tipo, icone: 'fa-circle', cls: '' };
+        return '<span class="adm-selo ' + t.cls + '"' + (t.estilo ? ' style="' + t.estilo + '"' : '') + '>' +
+               '<i class="fa-solid ' + t.icone + '"></i>' + esc(t.rotulo) + '</span>';
+    }
+
+    function solidBlocoAtencao() {
+        var lim = solid.limite;
+        var esg = solid.produtos.filter(solidEsgotado);
+        var baixo = solid.produtos.filter(function (p) {
+            var e = Number(p.estoque_disponivel); return !solidEsgotado(p) && e > 0 && e <= lim;
+        });
+        var corte = Date.now() - 86400000;
+        var ev24 = solid.eventos.filter(function (e) { return new Date(e.em).getTime() >= corte; });
+
+        function lista(itens, fn) {
+            if (!itens.length) return '<p class="text-xs" style="color:var(--adm-tinta-3)">Nenhum.</p>';
+            return '<ul class="text-xs space-y-1" style="color:var(--adm-tinta-2)">' +
+                itens.slice(0, 5).map(fn).join('') + '</ul>' +
+                (itens.length > 5 ? '<p class="text-xs mt-1" style="color:var(--adm-tinta-3)">+ ' + (itens.length - 5) + ' outros</p>' : '');
+        }
+        function col(titulo, n, corpo) {
+            return '<div><p class="adm-tile-rotulo mb-1">' + titulo + '</p><p class="adm-tile-valor mb-2">' +
+                   NUM.format(n) + '</p>' + corpo + '</div>';
+        }
+        function prod(p) { return '<li>' + esc(p.nome) + ' <span style="color:var(--adm-tinta-3)">(' + esc(p.id_produto) + ')</span></li>'; }
+
+        return '<div class="adm-card p-5 mb-5"><p class="font-bold mb-4"><i class="fa-solid fa-bell mr-2" style="color:var(--adm-marca)"></i>Atenção</p>' +
+            '<div class="grid sm:grid-cols-3 gap-5">' +
+            col('Esgotados', esg.length, lista(esg, prod)) +
+            col('Estoque baixo (≤ ' + NUM.format(lim) + ')', baixo.length,
+                lista(baixo, function (p) {
+                    return '<li>' + esc(p.nome) + ' <span style="color:var(--adm-tinta-3)">— ' + esc(NUM.format(Number(p.estoque_disponivel))) + ' cx</span></li>';
+                })) +
+            col('Eventos nas últimas 24h', ev24.length,
+                lista(ev24, function (e) { return '<li>' + solidSeloTipo(e.tipo) + ' ' + esc(e.nome) + '</li>'; })) +
+            '</div>' + solidControleLimite() + '</div>';
+    }
+
+    function solidControleLimite() {
+        var lim = esc(NUM.format(solid.limite));
+        if (solid.ehAdmin === false) {
+            return '<p class="text-xs mt-4 pt-3" style="border-top:1px solid var(--adm-borda);color:var(--adm-tinta-3)">' +
+                   'Limite de estoque baixo: <strong>' + lim + '</strong> caixas (somente admin altera).</p>';
+        }
+        return '<div class="flex items-center flex-wrap gap-2 mt-4 pt-3 text-xs" style="border-top:1px solid var(--adm-borda);color:var(--adm-tinta-3)">' +
+            '<label for="solid-limite">Limite de estoque baixo (caixas):</label>' +
+            '<input type="number" min="0" step="1" id="solid-limite" class="adm-input" style="width:5.5rem;padding:.35rem .5rem" value="' + esc(solid.limite) + '">' +
+            '<button type="button" class="adm-botao-fantasma" id="solid-limite-salvar">Salvar</button>' +
+            '<span id="solid-limite-msg" role="status"></span></div>';
+    }
+
+    function salvarSolidLimite() {
+        var inp = $('#solid-limite'), msg = $('#solid-limite-msg'), btn = $('#solid-limite-salvar');
+        var v = Number(inp.value);
+        if (!inp.value || !isFinite(v) || v < 0 || Math.floor(v) !== v) {
+            msg.textContent = 'Informe um número inteiro ≥ 0.';
+            return;
+        }
+        btn.disabled = true; msg.textContent = 'Salvando…';
+        sb.rpc('solidcon_definir_limite', { p_limite: v }).then(function (r) {
+            btn.disabled = false;
+            if (r.error) {
+                var perm = r.error.code === '42501' || /somente admin|permission/i.test(r.error.message || '');
+                if (perm) { solid.ehAdmin = false; desenharSolidcon(); return; }
+                msg.textContent = 'Não foi possível salvar: ' + (r.error.message || '');
+                return;
+            }
+            solid.limite = Number(r.data);
+            desenharSolidcon();
+        });
+    }
+
+    function solidBlocoEventos() {
+        var tipos = Object.keys(SOLID_TIPOS);
+        var lista = solid.eventos.filter(function (e) { return solid.tipoEvento === 'todos' || e.tipo === solid.tipoEvento; });
+        var corpo = !solid.eventos.length
+            ? '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum evento nos últimos 7 dias.</p>'
+            : !lista.length
+                ? '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum evento desse tipo.</p>'
+                : '<div class="overflow-x-auto" style="max-height:20rem;overflow-y:auto"><table class="adm-tabela"><thead><tr>' +
+                  '<th>Data/hora</th><th>Produto</th><th>Evento</th><th>Antes → depois</th></tr></thead><tbody>' +
+                  lista.map(function (e) {
+                      var ad = (e.tipo === 'sumiu' || e.tipo === 'reapareceu') ? '—' :
+                          esc(solidFmtValor(e.tipo, e.valor_antes)) + ' → ' + esc(solidFmtValor(e.tipo, e.valor_depois));
+                      return '<tr><td>' + esc(dataHora(e.em)) + '</td><td>' + esc(e.nome) +
+                             ' <span style="color:var(--adm-tinta-3)">(' + esc(e.id_produto) + ')</span></td><td>' +
+                             solidSeloTipo(e.tipo) + '</td><td>' + ad + '</td></tr>';
+                  }).join('') + '</tbody></table></div>';
+        return '<div class="adm-card p-5"><div class="flex items-center justify-between flex-wrap gap-3 mb-4">' +
+            '<p class="font-bold">Eventos recentes <span class="text-xs font-normal" style="color:var(--adm-tinta-3)">últimos 7 dias</span></p>' +
+            '<div class="flex gap-1 flex-wrap"><button type="button" class="adm-chip' + (solid.tipoEvento === 'todos' ? ' is-ativo' : '') +
+            '" data-solid-tipo="todos">Todos</button>' +
+            tipos.map(function (t) {
+                return '<button type="button" class="adm-chip' + (solid.tipoEvento === t ? ' is-ativo' : '') +
+                       '" data-solid-tipo="' + t + '">' + esc(SOLID_TIPOS[t].rotulo) + '</button>';
+            }).join('') + '</div></div>' + corpo + '</div>';
+    }
+
+    function abrirDetalheSolid(id) {
+        var p = solid.produtos.filter(function (x) { return String(x.id_produto) === String(id); })[0];
+        if (!p) return;
+        abrirModal('<h3 class="font-bold text-lg mb-1">' + esc(p.nome) + '</h3>' +
+            '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Código ' + esc(p.id_produto) +
+            ' · preço ERP (referência) ' + esc(brl(p.preco_centavos)) + '</p>' +
+            '<div id="solid-hist" class="text-sm" style="color:var(--adm-tinta-2)"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando histórico…</div>');
+        var d = new Date(Date.now() - 30 * 86400000);
+        var desde = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        sb.from('solidcon_estoque_diario')
+            .select('dia,estoque_disponivel,preco_centavos,presente')
+            .eq('id_produto', p.id_produto).gte('dia', desde).order('dia', { ascending: true })
+            .then(function (r) {
+                var alvo = $('#solid-hist');
+                if (!alvo) return;
+                if (r.error) { alvo.textContent = 'Não foi possível carregar o histórico.'; return; }
+                alvo.innerHTML = solidHistoricoHtml(r.data || []);
+            });
+    }
+
+    function solidGrafico(dias) {
+        var W = 600, H = 170, pl = 36, pr = 10, pt = 10, pb = 22;
+        var max = Math.max.apply(null, dias.map(function (x) { return Number(x.estoque_disponivel); }).concat([1]));
+        var n = dias.length;
+        function X(i) { return n === 1 ? (pl + W - pr) / 2 : pl + i * (W - pl - pr) / (n - 1); }
+        function Y(v) { return pt + (H - pt - pb) * (1 - v / max); }
+        var pts = dias.map(function (x, i) { return X(i).toFixed(1) + ',' + Y(Number(x.estoque_disponivel)).toFixed(1); });
+        var rot = function (iso) { var q = String(iso).split('-'); return q[2] + '/' + q[1]; };
+        return '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto" role="img" aria-label="Estoque por dia nos últimos 30 dias">' +
+            '<line x1="' + pl + '" y1="' + Y(0) + '" x2="' + (W - pr) + '" y2="' + Y(0) + '" stroke="var(--adm-borda-forte)"/>' +
+            '<line x1="' + pl + '" y1="' + Y(max) + '" x2="' + (W - pr) + '" y2="' + Y(max) + '" stroke="var(--adm-borda)" stroke-dasharray="3 3"/>' +
+            '<text x="' + (pl - 6) + '" y="' + (Y(max) + 4) + '" text-anchor="end" font-size="10" fill="var(--adm-tinta-3)">' + esc(NUM.format(max)) + '</text>' +
+            '<text x="' + (pl - 6) + '" y="' + (Y(0) + 4) + '" text-anchor="end" font-size="10" fill="var(--adm-tinta-3)">0</text>' +
+            '<text x="' + pl + '" y="' + (H - 6) + '" font-size="10" fill="var(--adm-tinta-3)">' + esc(rot(dias[0].dia)) + '</text>' +
+            '<text x="' + (W - pr) + '" y="' + (H - 6) + '" text-anchor="end" font-size="10" fill="var(--adm-tinta-3)">' + esc(rot(dias[n - 1].dia)) + '</text>' +
+            '<polyline fill="none" stroke="var(--adm-marca)" stroke-width="2" stroke-linejoin="round" points="' + pts.join(' ') + '"/>' +
+            dias.map(function (x, i) {
+                return '<circle cx="' + X(i).toFixed(1) + '" cy="' + Y(Number(x.estoque_disponivel)).toFixed(1) +
+                       '" r="2.5" fill="var(--adm-marca)"><title>' + esc(rot(x.dia) + ': ' + NUM.format(Number(x.estoque_disponivel)) + ' cx') + '</title></circle>';
+            }).join('') + '</svg>';
+    }
+
+    function solidHistoricoHtml(dias) {
+        if (!dias.length) return '<p>Ainda não há histórico diário para este produto.</p>';
+        var fmt = function (iso) { var q = String(iso).split('-'); return q[2] + '/' + q[1] + '/' + q[0]; };
+        return '<p class="adm-tile-rotulo mb-2">Estoque por dia — últimos 30 dias</p>' + solidGrafico(dias) +
+            '<div class="overflow-x-auto mt-4" style="max-height:14rem;overflow-y:auto"><table class="adm-tabela"><thead><tr>' +
+            '<th>Dia</th><th style="text-align:right">Estoque</th><th style="text-align:right">Preço ERP</th><th>Na lista</th></tr></thead><tbody>' +
+            dias.slice().reverse().map(function (x) {
+                return '<tr><td>' + esc(fmt(x.dia)) + '</td><td style="text-align:right">' + esc(NUM.format(Number(x.estoque_disponivel))) +
+                       '</td><td style="text-align:right">' + esc(brl(x.preco_centavos)) + '</td><td>' + (x.presente ? 'Sim' : 'Não') + '</td></tr>';
+            }).join('') + '</tbody></table></div>';
     }
 
 

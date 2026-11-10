@@ -248,3 +248,98 @@ commit;
 
 Não usar CASCADE. A sequência identity cai com a tabela. A conta Auth e os
 arquivos externos permanecem; sua remoção é uma ação administrativa separada.
+
+
+## 017 — Histórico diário e eventos SOLIDCON
+
+`017_solidcon_historico.sql` requer a **012 já aplicada**, sua RPC de três
+argumentos, metadados de coleta/UUID e `eh_equipe()`/`eh_admin()` de produção.
+Aborta em transação com mensagem clara se faltar esse pré-requisito. Não
+reaplicar `admin/supabase.sql`: permanece o drift de papéis documentado na 012.
+Os números 013–016 pertencem ao outro repo e já foram aplicados no mesmo banco;
+não renumerar a 017 nem reaplicar aquelas migrações. Os novos objetos usam
+prefixo `solidcon_`; não houve colisão com os nomes das cópias locais 013–016.
+
+A 017 **não foi aplicada em produção nesta entrega**. Não altera ERP, script
+do servidor, payload, assinatura ou JSON de retorno de
+`solidcon_receber_produtos(jsonb,timestamptz,uuid)`. A função mantém as validações,
+autorização, lock, limite de queda, ordem, UUID e janela da 012. A rejeição só
+mantém o log `erro` já existente: não cria evento/foto nem roda retenção.
+Os acréscimos fazem parte da mesma transação do snapshot aceito.
+
+- `solidcon_estoque_diario`: PK `(dia,id_produto)`, foto final do espelho inteiro,
+  inclusive ausentes. Dia = data de `coletado_em` em `America/Sao_Paulo`;
+  atualizado_em = processamento no banco. Cada aceitação substitui a foto
+  daquele produto/dia, sem acumular uma linha por sincronização. Retenção usa
+  a data atual em São Paulo: apaga `dia < hoje - 400`, mantendo hoje e os 400
+  dias anteriores. A PK iniciada por dia atende a limpeza dentro da RPC.
+- `solidcon_eventos`: nome congelado, tipo, valores antes/depois `numeric`,
+  instante de processamento e `coletado_em`. Gerado antes de alterar o espelho.
+  O baseline é `solidcon_produtos`, não o histórico vazio: produtos já existentes
+  não viram `produto_novo` no primeiro snapshot após a 017. Sem backfill.
+  Eventos não têm expurgo automático nesta fase.
+- `solidcon_config`: uma linha `id=1`, limite padrão 5, `CHECK >=0`; reaplicação
+  conserva o limite configurado. Zero desliga o evento de estoque baixo.
+
+As três tabelas permitem SELECT somente à equipe (`eh_equipe()`), sem escrita
+direta para anon/authenticated, inclusive admin. O limite muda somente por
+`solidcon_definir_limite(p_limite integer)`; retorna o inteiro salvo, exige
+`auth.uid()` e `eh_admin()`, valida o valor e usa o mesmo advisory lock. Essa
+RPC é **SECURITY DEFINER**, com `search_path=pg_catalog`, nomes qualificados e
+EXECUTE apenas authenticated. Essa escolha preserva a proibição de escrita
+direta; uma RPC INVOKER exigiria conceder UPDATE da tabela ao chamador.
+Não concede nada à conta de sync além do que ela já tinha.
+
+```sql
+-- Exemplo futuro pelo admin autenticado; nao executado nesta entrega.
+select public.solidcon_definir_limite(5);
+```
+
+As regras exatas dos eventos e as unidades dos valores estão na seção 017 de
+`admin/ESTRUTURA-BANCO.md`. Aplicar a troca da função com a tarefa agendada
+pausada e retomá-la após commit, para não deixar uma chamada com o corpo antigo
+da RPC atravessar a instalação. Isso não exige modificar o script.
+
+### Validação local
+
+Parser PostgreSQL/PLpgSQL e testes dinâmicos no **PostgreSQL 18 local isolado**:
+pré-requisito ausente, reaplicação idempotente, primeiro snapshot com 148 itens,
+todos os tipos de evento, limite cruzando/sem repetição/zero, foto do dia,
+fuso, rejeições sem efeitos, retenção 400/401 dias, RLS e grants mínimos.
+Também verificados rollback total ao falhar o diário após eventos/upsert e o
+rollback gerado pelo comando abaixo, com a RPC da 012 funcionando ao final.
+Helpers de identidade/equipe/admin foram simulados somente nesse banco local.
+Nenhuma conexão com ERP/Supabase. O script do servidor permanece intacto.
+
+### Como desfazer a 017
+
+Pare a tarefa durante a troca. Primeiro restaure **somente o corpo da RPC de
+recebimento da 012**, depois remova os objetos da 017. Não reexecute a 012
+inteira nem o SQL base. Para gerar um rollback completo a partir do arquivo
+012 versionado, no PowerShell na raiz do repo:
+
+```powershell
+$base017 = Get-Content -Raw -Encoding UTF8 admin/migracoes/012_solidcon_espelho.sql
+$inicio017 = $base017.IndexOf('create or replace function public.solidcon_receber_produtos(')
+if ($inicio017 -lt 0) { throw 'Corpo da 012 nao encontrado; nao gerar rollback' }
+$fim017 = $base017.IndexOf('create or replace function public.solidcon_registrar_falha(', $inicio017)
+if ($fim017 -le $inicio017) { throw 'Final da RPC012 nao encontrado; nao gerar rollback' }
+$texto017 = @(
+  'begin;'
+  'select pg_catalog.pg_advisory_xact_lock(5100, 4);'
+  $base017.Substring($inicio017, $fim017 - $inicio017)
+  'drop function if exists public.solidcon_definir_limite(integer);'
+  'drop table if exists public.solidcon_estoque_diario;'
+  'drop table if exists public.solidcon_eventos;'
+  'drop table if exists public.solidcon_config;'
+  'commit;'
+) -join [Environment]::NewLine
+$destino017 = Join-Path $env:TEMP 'desfazer-solidcon-017.sql'
+[IO.File]::WriteAllText($destino017, $texto017, (New-Object Text.UTF8Encoding($false)))
+Write-Output $destino017
+```
+
+Revise o SQL gerado antes de executar como owner. Não usa CASCADE. Isso perde
+histórico, eventos e limite configurado; o espelho, log de sync e autorizações
+da 012 permanecem. Reaplicar 017 começa a coletar novamente, sem reconstruir
+histórico perdido. O retorno da RPC segue compatível com o script.
