@@ -356,7 +356,7 @@
                   vendasRegiao: [], vendasProduto: [] };
 
     var ABAS = ['dashboard', 'pedidos', 'clientes', 'historico', 'vendas',
-                'espera', 'vitrine', 'regioes', 'visitas'];
+                'espera', 'vitrine', 'regioes', 'visitas', 'solidcon'];
 
     /* Filtros globais: afetam Pedidos, Clientes e Dashboard de vendas — as
      * três telas que mostram linha a linha, em vez de um agregado já pronto
@@ -400,7 +400,10 @@
 
         $('#form-login').addEventListener('submit', entrar);
         $('#btn-sair').addEventListener('click', sair);
-        $('#btn-atualizar').addEventListener('click', function () { carregar(); });
+        $('#btn-atualizar').addEventListener('click', function () {
+            carregar();
+            if (abaAtual === 'solidcon') carregarSolidcon();
+        });
         $('#filtro-periodo').addEventListener('change', function () { carregar(); });
 
         document.querySelectorAll('.adm-aba').forEach(function (b) {
@@ -678,7 +681,206 @@
         ABAS.forEach(function (a) {
             $('#painel-' + a).classList.toggle('hidden', a !== qual);
         });
+        if (qual === 'solidcon' && !solid.carregado && !solid.carregando) carregarSolidcon();
     }
+
+    /* ===================================================================
+     * SOLIDCON — espelho SOMENTE LEITURA (migração 012)
+     * Carrega sob demanda (ao abrir a aba) e isolado do carregar() geral:
+     * sem a 012 aplicada, só esta aba mostra o aviso; as demais não mudam.
+     * =================================================================== */
+    var solid = { carregado: false, carregando: false, produtos: [], syncs: [],
+                  erro: null, ausente: false, busca: '', situacao: 'todos', caixa: 'todas' };
+    var SOLID_BAIXO = 5;
+    var SOLID_STALE_MS = 2 * 60 * 60 * 1000;
+
+    function solidCaixa(p) {
+        var m = /(\d+)\s*UN/i.exec(p.categoria || '');
+        return m ? Number(m[1]) : null;
+    }
+    function solidEsgotado(p) { return p.presente === false || Number(p.estoque_disponivel) <= 0; }
+
+    function solidTabelaAusente(erro) {
+        var t = String((erro && erro.message || '') + ' ' + (erro && erro.code || ''));
+        return /PGRST205|42P01|schema cache|does not exist|Could not find the table/i.test(t) ||
+               (erro && erro.status === 404);
+    }
+
+    function carregarSolidcon() {
+        solid.carregando = true;
+        $('#painel-solidcon').innerHTML = '<div class="adm-card p-8 text-center text-sm" style="color:var(--adm-tinta-2)">' +
+            '<i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando produtos do SOLIDCON…</div>';
+
+        Promise.all([
+            sb.from('solidcon_produtos')
+                .select('id_produto,nome,categoria,preco_centavos,estoque_disponivel,presente,eans,dtalteracao_erp,atualizado_em')
+                .order('nome', { ascending: true }).limit(5000),
+            sb.from('solidcon_sync')
+                .select('status,concluido_em,coletado_em,qtd_recebida,qtd_presente,mensagem')
+                .order('concluido_em', { ascending: false }).limit(200)
+        ]).then(function (rs) {
+            solid.carregando = false;
+            var falha = rs.filter(function (r) { return r.error; })[0];
+            solid.ausente = false; solid.erro = null;
+            if (falha) {
+                if (solidTabelaAusente(falha.error)) solid.ausente = true;
+                else solid.erro = String(falha.error.message || falha.error);
+                solid.carregado = false;
+            } else {
+                solid.produtos = rs[0].data || [];
+                solid.syncs = rs[1].data || [];
+                solid.carregado = true;
+            }
+            desenharSolidcon();
+        }).catch(function (e) {
+            solid.carregando = false;
+            solid.erro = String(e && e.message || e);
+            desenharSolidcon();
+        });
+    }
+
+    function solidCabecalho() {
+        var ultima = solid.syncs[0] || null;
+        var ok = null;
+        solid.syncs.forEach(function (s) {
+            if (s.status !== 'ok' || !s.coletado_em) return;
+            if (!ok || new Date(s.coletado_em) > new Date(ok.coletado_em)) ok = s;
+        });
+        var msg, alertas = [];
+        if (!ok) {
+            msg = 'Nenhuma sincronização concluída ainda';
+            alertas.push('Nunca houve uma sincronização OK — os dados abaixo podem estar vazios ou desatualizados.');
+        } else {
+            var ms = Date.now() - new Date(ok.coletado_em).getTime();
+            var min = Math.max(0, Math.round(ms / 60000));
+            msg = 'Atualizado há ' + (min < 60 ? min + ' min' :
+                  (Math.floor(min / 60) + ' h' + (min % 60 ? ' ' + (min % 60) + ' min' : '')));
+            if (ms > SOLID_STALE_MS) alertas.push('Última sincronização OK há mais de 2 horas (' + dataHora(ok.coletado_em) + ').');
+        }
+        if (ultima && ultima.status === 'erro') {
+            var m = String(ultima.mensagem || 'sem detalhes');
+            alertas.push('A última execução falhou: ' + (m.length > 140 ? m.slice(0, 140) + '…' : m));
+        }
+        return '<div class="flex items-center gap-2 mb-3 text-sm" style="color:var(--adm-tinta-2)">' +
+                   '<i class="fa-regular fa-clock"></i><span>' + esc(msg) + '</span>' +
+                   (ok ? '<span class="text-xs" style="color:var(--adm-tinta-3)">(' + esc(dataHora(ok.coletado_em)) + ')</span>' : '') +
+               '</div>' +
+               alertas.map(function (a) {
+                   return '<div class="adm-card p-4 mb-3 text-sm" role="alert" style="border-color:rgba(239,68,68,.45)">' +
+                          '<i class="fa-solid fa-triangle-exclamation mr-2" style="color:#FCA5A5"></i>' + esc(a) + '</div>';
+               }).join('');
+    }
+
+    function solidFiltrados() {
+        var q = solid.busca.trim().toLowerCase();
+        return solid.produtos.filter(function (p) {
+            if (solid.situacao === 'disponiveis' && solidEsgotado(p)) return false;
+            if (solid.situacao === 'esgotados' && !solidEsgotado(p)) return false;
+            if (solid.caixa !== 'todas' && String(solidCaixa(p)) !== solid.caixa) return false;
+            if (q && String(p.nome || '').toLowerCase().indexOf(q) < 0 &&
+                String(p.id_produto).indexOf(q) < 0) return false;
+            return true;
+        });
+    }
+
+    function solidContadores() {
+        var t = solid.produtos, esg = t.filter(solidEsgotado).length;
+        function tile(r, v) {
+            return '<div class="adm-card p-4"><p class="adm-tile-rotulo mb-1">' + r + '</p>' +
+                   '<p class="adm-tile-valor">' + NUM.format(v) + '</p></div>';
+        }
+        return '<div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-5">' +
+            tile('Total', t.length) + tile('Disponíveis', t.length - esg) + tile('Esgotados', esg) +
+            tile('CX 24', t.filter(function (p) { return solidCaixa(p) === 24; }).length) +
+            tile('CX 48', t.filter(function (p) { return solidCaixa(p) === 48; }).length) +
+            '</div>';
+    }
+
+    function solidLinha(p) {
+        var esg = solidEsgotado(p), est = Number(p.estoque_disponivel) || 0;
+        var baixo = !esg && est <= SOLID_BAIXO;
+        var sit = esg
+            ? '<span class="adm-selo adm-selo-cancelado"><i class="fa-solid fa-ban"></i>Esgotado</span>'
+            : baixo
+                ? '<span class="adm-selo adm-selo-aguardando"><i class="fa-solid fa-arrow-down"></i>Estoque baixo</span>'
+                : '<span class="adm-selo adm-selo-confirmado"><i class="fa-solid fa-check"></i>Disponível</span>';
+        var cx = solidCaixa(p);
+        return '<tr><td>' + esc(p.id_produto) + '</td><td>' + esc(p.nome) + '</td>' +
+            '<td>' + (cx ? 'CX ' + cx : '—') + '</td>' +
+            '<td style="text-align:right">' + esc(NUM.format(esg ? 0 : est)) + '</td>' +
+            '<td style="text-align:right">' + esc(brl(p.preco_centavos)) + '</td>' +
+            '<td>' + sit + '</td></tr>';
+    }
+
+    function desenharSolidcon() {
+        var alvo = $('#painel-solidcon');
+        if (solid.ausente) {
+            alvo.innerHTML = cartaoVazio('Integração SOLIDCON ainda não instalada',
+                'As tabelas solidcon_produtos e solidcon_sync não existem neste banco. ' +
+                'Aplique a migração 012 (admin/migracoes/012_solidcon_espelho.sql) para ativar esta aba.');
+            return;
+        }
+        if (solid.erro) {
+            alvo.innerHTML = '<div class="adm-card p-8"><p class="font-bold mb-2">Não foi possível carregar o SOLIDCON</p>' +
+                '<p class="text-sm mb-4" style="color:var(--adm-tinta-2)">' + esc(solid.erro) + '</p>' +
+                '<button type="button" class="adm-botao-fantasma" id="solid-tentar">Tentar de novo</button></div>';
+            $('#solid-tentar').addEventListener('click', carregarSolidcon);
+            return;
+        }
+        if (!solid.carregado) return;
+
+        function chips(attr, atual, itens) {
+            return itens.map(function (i) {
+                return '<button type="button" class="adm-chip' + (atual === i[0] ? ' is-ativo' : '') +
+                       '" ' + attr + '="' + i[0] + '">' + i[1] + '</button>';
+            }).join('');
+        }
+        alvo.innerHTML = solidCabecalho() + solidContadores() +
+            '<div class="flex items-center flex-wrap gap-3 mb-4">' +
+                '<input type="search" id="solid-busca" class="adm-input" style="max-width:18rem;padding:.55rem .7rem" ' +
+                    'placeholder="Buscar por nome ou código" aria-label="Buscar produto" value="' + esc(solid.busca) + '">' +
+                '<div class="flex gap-1 flex-wrap">' +
+                    chips('data-solid-sit', solid.situacao, [['todos', 'Todos'], ['disponiveis', 'Disponíveis'], ['esgotados', 'Esgotados']]) +
+                '</div>' +
+                '<div class="flex gap-1 flex-wrap">' +
+                    chips('data-solid-cx', solid.caixa, [['todas', 'Todas as caixas'], ['24', 'CX 24'], ['48', 'CX 48']]) +
+                '</div>' +
+            '</div>' +
+            '<div id="solid-lista"></div>' +
+            '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">Somente leitura. O preço do ERP é apenas referência — não altera o preço do site.</p>';
+
+        $('#solid-busca').addEventListener('input', function (ev) {
+            solid.busca = ev.target.value; desenharSolidLista();
+        });
+        alvo.querySelectorAll('[data-solid-sit]').forEach(function (b) {
+            b.addEventListener('click', function () { solid.situacao = b.getAttribute('data-solid-sit'); desenharSolidcon(); });
+        });
+        alvo.querySelectorAll('[data-solid-cx]').forEach(function (b) {
+            b.addEventListener('click', function () { solid.caixa = b.getAttribute('data-solid-cx'); desenharSolidcon(); });
+        });
+        desenharSolidLista();
+    }
+
+    function desenharSolidLista() {
+        var lista = solidFiltrados();
+        var alvo = $('#solid-lista');
+        if (!solid.produtos.length) {
+            alvo.innerHTML = cartaoVazio('Nenhum produto sincronizado ainda',
+                'Quando a rotina de sincronização rodar, os produtos aparecem aqui.');
+            return;
+        }
+        if (!lista.length) {
+            alvo.innerHTML = cartaoVazio('Nenhum produto com esses filtros', 'Tente limpar a busca ou os filtros.');
+            return;
+        }
+        alvo.innerHTML = '<div class="adm-card p-5"><div class="overflow-x-auto"><table class="adm-tabela"><thead><tr>' +
+            '<th>Código</th><th>Produto</th><th>Caixa</th><th style="text-align:right">Estoque disponível</th>' +
+            '<th style="text-align:right">Preço ERP (referência)</th><th>Situação</th></tr></thead><tbody>' +
+            lista.map(solidLinha).join('') + '</tbody></table></div>' +
+            '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">' + NUM.format(lista.length) + ' de ' +
+            NUM.format(solid.produtos.length) + ' produtos</p></div>';
+    }
+
 
     function desenharTudo() {
         desenharDashboard();

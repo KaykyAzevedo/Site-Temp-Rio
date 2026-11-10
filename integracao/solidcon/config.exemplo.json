@@ -1,0 +1,14 @@
+{
+  "apiBase": "http://localhost:5100",
+  "filialEsperada": 4,
+  "categorias": [
+    "TEMPERO - CAIXA 24 UN",
+    "TEMPERO - CAIXA 48 UN"
+  ],
+  "supabaseUrl": "https://PREENCHER.supabase.co",
+  "anonKey": "PREENCHER_ANON_KEY_PUBLICA",
+  "syncEmail": "PREENCHER_EMAIL_DA_CONTA_DE_SYNC",
+  "syncSenha": "PREENCHER_SENHA_FORA_DO_REPOSITORIO",
+  "modo": "teste",
+  "pastaSaida": "C:\\TempRio\\solidcon\\saida"
+}

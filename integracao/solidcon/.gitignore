@@ -1,0 +1,9 @@
+# Arquivos locais; credenciais e dados nunca devem entrar no repo publico.
+config.json
+saida/
+*.log*
+*.lock
+ultimo-ok-*.json
+produtos-normalizados.json
+resumo.json
+resumo-rejeitado.json
