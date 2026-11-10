@@ -188,7 +188,8 @@ implantar a 021, confira as faixas ativas cadastradas e alinhe os dois lados.
 `019_solidcon_espelho.sql` é transacional e idempotente; requer os dois helpers
 de papéis de produção descritos abaixo e `auth.users`. Prepara `solidcon_produtos`, `solidcon_sync` e
 `integracoes_autorizadas`. Não depende da 021 nem altera seus objetos ou o site.
-SQL **não aplicado nesta entrega**. Revisar antes da aplicação manual futura.
+**Já aplicada historicamente como 012 de A. Não reaplicar.** Reaplicar a 019
+restaura a RPC anterior à 020 e interrompe a atualização do histórico e dos eventos.
 
 Pré-requisito de produção: `public.eh_equipe()` identifica qualquer email em
 `admins`; `public.eh_admin()` exige também `papel='admin'`. O Tech Lead confirmou

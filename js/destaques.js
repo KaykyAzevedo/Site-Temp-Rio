@@ -75,7 +75,7 @@
     });
 
     /* ---------- troca de produto ---------- */
-    var idx = 0, timer = null;
+    var idx = 0, timer = null, timerNome = null;
 
     function atualizarLote(produto) {
         if (!botaoLote || !window.Cart) return;
@@ -93,7 +93,6 @@
         if (n === idx && !fromUser) return;
         idx = n;
         var p = PRODUCTS[n];
-        atualizarLote(p);
 
         section.style.setProperty('--d-accent', p.accent);
         section.style.setProperty('--d-accent-soft', p.soft);
@@ -133,13 +132,18 @@
         }, 300);
     }
 
+    function atualizarNomeELote(p) {
+        fname.textContent = p.nome;
+        fmeta.textContent = p.rank + 'º mais vendido · pote ' + p.peso;
+        atualizarLote(p);
+    }
+
     function swapName(p) {
-        var meta = p.rank + 'º mais vendido · pote ' + p.peso;
-        if (reduced) { fname.textContent = p.nome; fmeta.textContent = meta; return; }
+        if (reduced) { atualizarNomeELote(p); return; }
+        clearTimeout(timerNome);
         fname.style.animation = 'destNameOut .28s cubic-bezier(.5,0,.75,0) forwards';
-        setTimeout(function () {
-            fname.textContent = p.nome;
-            fmeta.textContent = meta;
+        timerNome = setTimeout(function () {
+            atualizarNomeELote(p);
             fname.style.animation = 'none'; void fname.offsetWidth;
             fname.style.animation = 'destNameIn .55s cubic-bezier(.16,.85,.24,1) forwards';
         }, 280);
@@ -242,7 +246,7 @@
     }
 
     /* ---------- boot ---------- */
-    atualizarLote(PRODUCTS[idx]);
+    atualizarNomeELote(PRODUCTS[idx]);
     resize();
     window.addEventListener('resize', resize);
 
