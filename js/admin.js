@@ -1177,6 +1177,7 @@
         alvo.innerHTML = cab + solidCabecalho() + solidBlocoAtencao() +
             '<div id="vitrine-vinculo"></div>' +
             '<div id="vitrine-giro"></div>' +
+            '<div id="vitrine-entradas"></div>' +
             '<div class="adm-card p-5 mb-5"><p class="font-bold mb-3">Produtos do site e estoque correspondente</p>' + solidTabelaPorProduto() +
             '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">O vínculo usa só o código ERP confirmado (família de 12 dígitos, id ou EAN). Estoque em caixas; o total soma as caixas convertidas em potes.</p></div>' +
             '<details class="mb-2"' + (solid.listaAberta ? ' open' : '') + '><summary class="text-sm font-bold cursor-pointer mb-3">Todos os produtos do ERP (' + NUM.format(solid.produtos.length) + ')</summary>' +
@@ -1205,6 +1206,7 @@
         desenharSolidLista();
         desenharVinculo();
         desenharGiro();
+        desenharEntradas();
     }
 
     /* ---- Vincular ao SOLIDCON: o admin confirma a família ERP de cada produto do site ---- */
@@ -2102,6 +2104,7 @@
         if ((qual === 'clientes' || qual === 'regioes' || qual === 'vendas') && precisa(cmp)) carregarCompras();
         if (qual === 'regioes' && precisa(geo)) carregarGeoClientes();
         if (qual === 'vitrine' && precisa(giro)) carregarGiro();
+        if (qual === 'vitrine' && precisa(ent)) carregarEntradas();
         if (qual === 'dashboard') dashCarregarProgressivo(forcar);
     }
     function recarregarErp() { carregarErpDaAba(abaAtual, true); }
@@ -2841,6 +2844,241 @@
 
 
     /* ===================================================================
+     * Vitrine — Entradas de estoque (estimativa a partir da foto diária)
+     * Fonte: solidcon_estoque_diario (1 foto/dia por produto, só leitura) + vendas por EAN já em cache (giro).
+     * Por produto e dia: entrada = estoque(d) - estoque(d-1) + vendido(d), na unidade do produto (caixa).
+     * Só entrada > 0 conta; negativo é "saída sem venda" (ajuste/perda), mostrado à parte.
+     * Dia sem foto do dia anterior, ou produto fora da lista em um dos dias, = sem estimativa.
+     * =================================================================== */
+    var ENT_LIMITE = 80000, ENT_JANELA = 90, ENT_DESDE_TXT = '10/11/2026';
+    var ent = { carregado: false, carregando: false, ausente: false, erro: null, linhas: [], truncado: false,
+                dias: 30, todos: false, memo: null };
+
+    function entIso(t) {
+        var d = new Date(t);
+        return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0') + '-' + String(d.getUTCDate()).padStart(2, '0');
+    }
+    function entDiaAnterior(iso) { return entIso(giroDiaUtc(iso) - 86400000); }
+    function entSegunda(iso) {
+        var t = giroDiaUtc(iso), w = new Date(t).getUTCDay();
+        return entIso(t - ((w + 6) % 7) * 86400000);
+    }
+
+    function carregarEntradas() {
+        ent.carregando = true;
+        entRedesenhar();
+        var d = new Date(Date.now() - (ENT_JANELA + 1) * 86400000);
+        var desde = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        return vendPaginar(function () {
+            return sb.from('solidcon_estoque_diario')
+                .select('dia,id_produto,estoque_disponivel,presente')
+                .gte('dia', desde).order('dia', { ascending: true }).order('id_produto', { ascending: true });
+        }, ENT_LIMITE).then(function (r) {
+            ent.carregando = false; ent.ausente = false; ent.erro = null;
+            if (r.error) {
+                if (solidTabelaAusente(r.error)) ent.ausente = true; else ent.erro = String(r.error.message || r.error);
+                ent.carregado = false;
+            } else {
+                ent.linhas = r.data || [];
+                ent.truncado = ent.linhas.length >= ENT_LIMITE; // exatamente no teto = não dá para provar completude
+                ent.memo = null;
+                ent.carregado = true;
+            }
+            entRedesenhar();
+        }).catch(function (e) {
+            ent.carregando = false; ent.erro = String(e && e.message || e); ent.carregado = false; entRedesenhar();
+        });
+    }
+
+    function entRedesenhar() {
+        dashAtualizarResumo();
+        abasParaRedesenhar.vitrine = true;
+        desenharAbaSeSuja(abaAtual);
+    }
+
+    // Fontes prontas (estoque do ERP, vendas do giro e fotos diárias), sem truncamento.
+    function entPronto() {
+        return solid.carregado && !solid.erro && !solid.ausente && giro.carregado && !giro.erro && !giro.ausente && !giro.truncado &&
+               ent.carregado && !ent.erro && !ent.ausente && !ent.truncado;
+    }
+
+    // Registros por produto/dia em potes: {dia, chave, nome, ent, sai, vend}. Memoizado pelas fontes.
+    function entCalcular() {
+        var m = ent.memo;
+        if (m && m.s === solid.produtos && m.g === giro.linhas && m.l === ent.linhas) return m.r;
+        var porId = {}, gDe = {}, eanIds = {};
+        solid.produtos.forEach(function (p) {
+            porId[String(p.id_produto)] = p;
+            (p.eans || []).forEach(function (e) { e = String(e); (eanIds[e] || (eanIds[e] = {}))[String(p.id_produto)] = true; });
+        });
+        solidGrupos().forEach(function (g) { g.itens.forEach(function (p) { gDe[String(p.id_produto)] = g; }); });
+        var ambig = {}; // EAN (ou código) dividido entre produtos: a venda não se atribui, então os produtos ficam sem estimativa
+        Object.keys(eanIds).forEach(function (e) {
+            var ids = Object.keys(eanIds[e]);
+            if (ids.length > 1) ids.forEach(function (i) { ambig[i] = true; });
+        });
+        var vendas = {}; // id|dia -> qtd na unidade do EAN
+        giro.linhas.forEach(function (l) {
+            var q = Number(l.qtd) || 0;
+            if (q <= 0) return;
+            // O coletor grava no campo ean o EAN ou, no fallback, o código/id do produto: une os dois caminhos.
+            var cod = String(l.ean), set = {};
+            Object.keys(eanIds[cod] || {}).forEach(function (i) { set[i] = true; });
+            if (porId[cod]) set[cod] = true;
+            var ids = Object.keys(set);
+            if (ids.length > 1) { ids.forEach(function (i) { ambig[i] = true; }); return; }
+            if (ids.length !== 1) return;
+            var k = ids[0] + '|' + l.dia;
+            vendas[k] = (vendas[k] || 0) + q;
+        });
+        var foto = {}, fotos = {};
+        ent.linhas.forEach(function (l) { foto[String(l.id_produto) + '|' + l.dia] = l; fotos[l.dia] = true; });
+        var regs = [], semProduto = {}, ignorados = {};
+        ent.linhas.forEach(function (l) {
+            var id = String(l.id_produto), p = porId[id];
+            if (!p) { semProduto[id] = true; return; }
+            if (ambig[id]) { ignorados[id] = true; return; }
+            var ant = foto[id + '|' + entDiaAnterior(l.dia)];
+            if (!ant || l.presente === false || ant.presente === false) return;
+            var un = solidCaixa(p) || 1, v = vendas[id + '|' + l.dia] || 0;
+            var delta = Number(l.estoque_disponivel) - Number(ant.estoque_disponivel) + v;
+            if (Math.abs(delta) < 1e-9) delta = 0;
+            var g = gDe[id];
+            regs.push({ dia: l.dia, chave: g ? g.chave : 'id:' + id, nome: g ? g.nome : String(p.nome),
+                        ent: delta > 0 ? delta * un : 0, sai: delta < 0 ? -delta * un : 0, vend: v * un });
+        });
+        var f = Object.keys(fotos).sort();
+        var r = { regs: regs, primeiraFoto: f[0] || null, semProduto: Object.keys(semProduto).length, ignorados: Object.keys(ignorados).length };
+        ent.memo = { s: solid.produtos, g: giro.linhas, l: ent.linhas, r: r };
+        return r;
+    }
+
+    function entFmt(n) { return NUM.format(Math.round(n)); }
+    function entRot(iso) { var q = String(iso).split('-'); return q[2] + '/' + q[1]; }
+
+    // Barras em potes; itens: [{rot, a, b, dica}]; comB = segunda série (vendas) ao lado.
+    function entBarras(itens, desc, cada, comB) {
+        if (!itens.length) return '<p class="text-sm" style="color:var(--adm-tinta-3)">Sem dados.</p>';
+        var W = 640, H = 190, pl = 46, pr = 8, pt = 8, pb = 22;
+        var max = Math.max.apply(null, itens.reduce(function (a, i) { return a.concat([i.a, i.b || 0]); }, [1]));
+        var slot = (W - pl - pr) / itens.length, bw = Math.max(1.5, slot * (comB ? 0.38 : 0.72));
+        var y = function (v) { return pt + (H - pt - pb) * (1 - v / max); };
+        var out = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto" role="img" aria-label="' + esc(desc) + '">' +
+            '<line x1="' + pl + '" y1="' + y(0) + '" x2="' + (W - pr) + '" y2="' + y(0) + '" stroke="var(--adm-borda-forte)"/>' +
+            '<line x1="' + pl + '" y1="' + y(max) + '" x2="' + (W - pr) + '" y2="' + y(max) + '" stroke="var(--adm-borda)" stroke-dasharray="3 3"/>' +
+            '<text x="' + (pl - 5) + '" y="' + (y(max) + 4) + '" text-anchor="end" font-size="10" fill="var(--adm-tinta-3)">' + esc(entFmt(max)) + '</text>' +
+            '<text x="' + (pl - 5) + '" y="' + (y(0) + 4) + '" text-anchor="end" font-size="10" fill="var(--adm-tinta-3)">0</text>';
+        itens.forEach(function (it, i) {
+            var x0 = pl + i * slot + (slot - bw * (comB ? 2 : 1)) / 2;
+            out += '<rect x="' + x0.toFixed(1) + '" y="' + y(it.a).toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(0, y(0) - y(it.a)).toFixed(1) +
+                   '" rx="1.5" fill="var(--adm-marca)"><title>' + esc(it.dica) + '</title></rect>';
+            if (comB) out += '<rect x="' + (x0 + bw).toFixed(1) + '" y="' + y(it.b).toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(0, y(0) - y(it.b)).toFixed(1) +
+                   '" rx="1.5" fill="rgba(255,255,255,.35)"><title>' + esc(it.dica) + '</title></rect>';
+            if (i % cada === 0) out += '<text x="' + (pl + i * slot + slot / 2).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="10" fill="var(--adm-tinta-3)">' + esc(it.rot) + '</text>';
+        });
+        return out + '</svg>';
+    }
+
+    // Agregados do período escolhido (últimos N dias, hoje incluído).
+    function entAgregar(dias) {
+        var c = entCalcular(), tot = { ent: 0, sai: 0, vend: 0 }, porDia = {}, porSemana = {}, porSabor = {};
+        c.regs.forEach(function (r) {
+            if (giroDiasAtras(r.dia) >= dias) return;
+            tot.ent += r.ent; tot.sai += r.sai; tot.vend += r.vend;
+            var d = porDia[r.dia] || (porDia[r.dia] = { ent: 0, sai: 0, vend: 0 }); d.ent += r.ent; d.sai += r.sai; d.vend += r.vend;
+            var sk = entSegunda(r.dia), s = porSemana[sk] || (porSemana[sk] = { ent: 0, sai: 0, vend: 0, dias: {} });
+            s.ent += r.ent; s.sai += r.sai; s.vend += r.vend; s.dias[r.dia] = true;
+            var o = porSabor[r.chave] || (porSabor[r.chave] = { nome: r.nome, ent: 0, sai: 0, vend: 0, diasEnt: {} });
+            o.ent += r.ent; o.sai += r.sai; o.vend += r.vend; if (r.ent > 0) o.diasEnt[r.dia] = true;
+        });
+        return { c: c, tot: tot, porDia: porDia, porSemana: porSemana,
+                 sabores: Object.keys(porSabor).map(function (k) { return porSabor[k]; }).filter(function (o) { return o.ent > 0 || o.sai > 0; })
+                     .sort(function (a, b) { return b.ent - a.ent || String(a.nome).localeCompare(String(b.nome)); }) };
+    }
+
+    var ENT_SUBTITULO = 'Estimativa de produção da fábrica/compras, a partir do estoque';
+    function entAviso() {
+        return ENT_SUBTITULO + ' (inclui compras e ajustes); histórico desde ' + ENT_DESDE_TXT +
+               '. Entrada do dia = estoque de hoje − estoque de ontem + vendido no dia, em potes (caixa 24/48 convertida). Dia sem foto do dia anterior fica sem estimativa.';
+    }
+
+    function entHtml() {
+        var A = entAgregar(ent.dias), c = A.c;
+        var chips = [7, 30, 90].map(function (d) {
+            return '<button type="button" class="adm-chip' + (ent.dias === d ? ' is-ativo' : '') + '" data-ent-dias="' + d + '">' + d + ' dias</button>';
+        }).join('');
+        var cab = '<div class="flex items-center justify-between flex-wrap gap-3 mb-1"><p class="text-sm" style="color:var(--adm-tinta-2)">Período</p><div class="flex gap-1 flex-wrap">' + chips + '</div></div>' +
+            '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">' + esc(entAviso()) + '</p>';
+        var nDias = Object.keys(A.porDia).length;
+        if (!nDias) {
+            return '<div class="adm-card p-5 mb-5">' + cab + '<p class="text-sm" style="color:var(--adm-tinta-3)">Ainda sem estimativa neste período: são necessárias duas fotos diárias consecutivas' +
+                (c.primeiraFoto ? ' (primeira foto lida: ' + esc(giroFmtData(c.primeiraFoto)) + ')' : '') + '.</p></div>';
+        }
+        // Diário: um slot por dia do período; dia sem estimativa fica vazio.
+        var diario = [], hoje = giroDiaUtc(giroIsoHoje());
+        for (var i = ent.dias - 1; i >= 0; i--) {
+            var iso = entIso(hoje - i * 86400000), x = A.porDia[iso];
+            diario.push({ rot: entRot(iso), a: x ? x.ent : 0, dica: entRot(iso) + (x ? ': ' + entFmt(x.ent) + ' potes de entrada' : ': sem estimativa') });
+        }
+        var semanas = Object.keys(A.porSemana).sort(), tabSem = semanas.slice().reverse();
+        var barSem = semanas.map(function (k) {
+            var s = A.porSemana[k];
+            return { rot: entRot(k), a: s.ent, b: s.vend, dica: 'Semana de ' + entRot(k) + ': entradas ' + entFmt(s.ent) + ' · vendas ' + entFmt(s.vend) + ' potes' };
+        });
+        var vis = ent.todos ? A.sabores : A.sabores.slice(0, 15);
+        var tabSab = !A.sabores.length ? '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum sabor com variação no período.</p>' :
+            '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Sabor</th><th class="num">Entradas (potes)</th><th class="num">Dias com entrada</th>' +
+            '<th class="num">Vendas (potes)</th><th class="num">Saídas sem venda (potes)</th></tr></thead><tbody>' +
+            vis.map(function (o) {
+                return '<tr><td>' + esc(o.nome) + '</td><td class="num">' + esc(entFmt(o.ent)) + '</td><td class="num">' + NUM.format(Object.keys(o.diasEnt).length) + '</td>' +
+                    '<td class="num">' + esc(entFmt(o.vend)) + '</td><td class="num">' + (o.sai > 0 ? esc(entFmt(o.sai)) : '—') + '</td></tr>';
+            }).join('') + '</tbody></table></div>' +
+            (A.sabores.length > 15 ? '<button type="button" class="adm-botao-fantasma mt-3" id="ent-todos">' + (ent.todos ? 'Mostrar só os 15 maiores' : 'Mostrar todos (' + NUM.format(A.sabores.length) + ')') + '</button>' : '');
+        var tabSemana = '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Semana (segunda)</th><th class="num">Dias estimados</th><th class="num">Entradas (potes)</th>' +
+            '<th class="num">Vendas (potes)</th><th class="num">Entradas − vendas</th><th class="num">Saídas sem venda</th></tr></thead><tbody>' +
+            tabSem.map(function (k) {
+                var s = A.porSemana[k], sal = s.ent - s.vend;
+                return '<tr><td>' + esc(giroFmtData(k)) + '</td><td class="num">' + NUM.format(Object.keys(s.dias).length) + '</td><td class="num">' + esc(entFmt(s.ent)) + '</td><td class="num">' + esc(entFmt(s.vend)) +
+                    '</td><td class="num">' + (sal > 0 ? '+' : '') + esc(entFmt(sal)) + '</td><td class="num">' + (s.sai > 0 ? esc(entFmt(s.sai)) : '—') + '</td></tr>';
+            }).join('') + '</tbody></table></div>';
+        var notas = [];
+        if (c.ignorados) notas.push(NUM.format(c.ignorados) + ' produto(s) com EAN repetido em outro produto ficaram sem estimativa');
+        var saldo = A.tot.ent - A.tot.vend;
+        return '<div class="adm-card p-5 mb-5">' + cab +
+            '<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">' +
+            resKpi('Entradas estimadas', entFmt(A.tot.ent), 'potes em ' + NUM.format(nDias) + ' dia(s) com estimativa') +
+            resKpi('Vendas no mesmo período', entFmt(A.tot.vend), 'potes dos mesmos produtos e dias') +
+            resKpi('Entradas − vendas', (saldo > 0 ? '+' : '') + entFmt(saldo), 'potes') +
+            resKpi('Saídas sem venda', entFmt(A.tot.sai), 'potes (ajuste/perda, fora das entradas)') + '</div>' +
+            '<p class="adm-tile-rotulo mb-2">Entradas por dia (potes)</p>' + entBarras(diario, 'Entradas de estoque por dia, em potes', ent.dias > 30 ? 7 : 3, false) +
+            '<p class="adm-tile-rotulo mt-5 mb-1">Semana: entradas x vendas (potes)</p>' +
+            '<p class="text-xs mb-2" style="color:var(--adm-tinta-3)"><span style="color:var(--adm-marca)">■</span> entradas · <span style="color:rgba(255,255,255,.55)">■</span> vendas</p>' +
+            entBarras(barSem, 'Entradas e vendas por semana, em potes', 1, true) +
+            '<div class="mt-4">' + tabSemana + '</div>' +
+            '<p class="adm-tile-rotulo mt-5 mb-2">Por sabor</p>' + tabSab +
+            (notas.length ? '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">' + esc(notas.join(' · ')) + '.</p>' : '') + '</div>';
+    }
+
+    function desenharEntradas() {
+        var alvo = $('#vitrine-entradas');
+        if (!alvo) return;
+        var cab = '<div class="flex items-center gap-2 mb-4"><span class="adm-selo" style="background:rgba(168,85,247,.14);color:#D8B4FE">ERP SOLIDCON</span><p class="font-bold">Entradas de estoque</p></div>';
+        var est = resEstado(solid, 'estoque do ERP', 'solid') || resEstado(giro, 'vendas do ERP', 'giro') || resEstado(ent, 'fotos diárias do estoque', 'ent');
+        if (est) {
+            alvo.innerHTML = cab + '<div class="adm-card p-5 mb-5">' + est + '</div>';
+            var b = alvo.querySelector('[data-res-tentar]');
+            if (b) b.addEventListener('click', function () { var f = RES_CARREGADORES[b.getAttribute('data-res-tentar')]; if (f) f(); });
+            return;
+        }
+        alvo.innerHTML = cab + entHtml();
+        alvo.querySelectorAll('[data-ent-dias]').forEach(function (b) {
+            b.addEventListener('click', function () { ent.dias = Number(b.getAttribute('data-ent-dias')); desenharEntradas(); });
+        });
+        var t = alvo.querySelector('#ent-todos');
+        if (t) t.addEventListener('click', function () { ent.todos = !ent.todos; desenharEntradas(); });
+    }
+
+    /* ===================================================================
      * Regiões — mapa de clientes do ERP por bairro (só contagens, sem dado pessoal)
      * Lê só documento/tipo/cidade/bairro/estado de solidcon_clientes (nunca nome ou telefone). O documento fica
      * em memória apenas para somar o valor comprado (cmp) por bairro; nunca é exibido nem enviado ao geocodificador.
@@ -3304,7 +3542,7 @@
         if (adm) passos.push([vend, carregarVendas]);
         passos.push([cmp, carregarCompras]);
         passos.push([scli, carregarSolidClientes]);
-        if (adm) { passos.push([solid, carregarSolidcon]); passos.push([giro, carregarGiro]); passos.push([geo, carregarGeoClientes]); }
+        if (adm) { passos.push([solid, carregarSolidcon]); passos.push([giro, carregarGiro]); passos.push([ent, carregarEntradas]); passos.push([geo, carregarGeoClientes]); }
         dash.rodando = true;
         (function prox(i) {
             if (i >= passos.length) { dash.rodando = false; return; }
@@ -3320,7 +3558,7 @@
     // Single-flight: clique repetido em "Tentar de novo" não dispara consulta enquanto a anterior roda.
     function resUma(o, fn) { return function () { if (!o.carregando) fn(); }; }
     var RES_CARREGADORES = { vend: resUma(vend, carregarVendas), cmp: resUma(cmp, carregarCompras), scli: resUma(scli, carregarSolidClientes),
-                             solid: resUma(solid, carregarSolidcon), giro: resUma(giro, carregarGiro), geo: resUma(geo, carregarGeoClientes) };
+                             solid: resUma(solid, carregarSolidcon), giro: resUma(giro, carregarGiro), ent: resUma(ent, carregarEntradas), geo: resUma(geo, carregarGeoClientes) };
 
     function resMotivo(o) {
         return o.ausente ? 'ainda não instalado' : o.erro ? 'falha ao carregar' : o.truncado ? 'histórico grande demais' : 'carregando…';
@@ -3431,10 +3669,12 @@
         if (!dashVe('vitrine')) return [];
         var est = resEstado(solid, 'estoque do ERP', 'solid') || resEstado(giro, 'vendas do ERP (giro)', 'giro');
         if (est) return [resCard('Estoque e giro', 'vitrine', 'Quanto tempo o estoque dura, produtos parados e ranking.', est, true)];
-        if (!giro.linhas.length) return [resCard('Estoque e giro', 'vitrine', null, '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhuma venda sincronizada ainda.</p>', true)];
+        // Sem vendas sincronizadas (cache válido e vazio) as entradas ainda existem: só o giro fica vazio.
+        if (!giro.linhas.length) return [resCard('Estoque e giro', 'vitrine', null, '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhuma venda sincronizada ainda.</p>', true), resCardEntradas()];
         var it = giroItensCobertura(), crit = it.filter(function (i) { return !i.semGiro && i.dias <= GIRO_CRITICO; }).length;
         var aten = it.filter(function (i) { return !i.semGiro && i.dias > GIRO_CRITICO && i.dias <= GIRO_ATENCAO; }).length;
         var par = giroItensParados(), rk = giroRankingLista(30), totRk = rk.reduce(function (a, x) { return a + x.potes; }, 0), topo = rk.slice(0, 8), mx = topo.length ? topo[0].potes : 1;
+        var cardEnt = resCardEntradas();
         return [
             resCard('Estoque acaba em quantos dias', 'vitrine', 'Cobertura por sabor, em potes · crítico ≤ ' + GIRO_CRITICO + ' dias, atenção ≤ ' + GIRO_ATENCAO,
                 '<p class="text-sm mb-3"><strong>' + NUM.format(crit) + '</strong> crítico(s) · <strong>' + NUM.format(aten) + '</strong> em atenção</p>' +
@@ -3453,8 +3693,26 @@
                     return '<div class="mb-2"><div class="flex justify-between gap-3 text-xs mb-1"><span style="color:var(--adm-tinta-2)">' + (i + 1) + '. ' + esc(x.rot) + '</span>' +
                         '<span class="font-bold">' + esc(NUM.format(Math.round(x.potes))) + ' <span class="font-normal" style="color:var(--adm-tinta-3)">' + esc(giroFmt(pct, 1) + '%') + '</span></span></div>' +
                         '<div style="height:6px;border-radius:99px;background:var(--adm-borda)"><div style="height:6px;border-radius:99px;background:var(--adm-marca);width:' + (x.potes / mx * 100).toFixed(1) + '%"></div></div></div>';
-                }).join('') : '<p class="text-sm" style="color:var(--adm-tinta-3)">Sem vendas nesse período.</p>', true)
+                }).join('') : '<p class="text-sm" style="color:var(--adm-tinta-3)">Sem vendas nesse período.</p>', true),
+            cardEnt
         ];
+    }
+
+    // Card resumido das entradas de estoque (últimos 7 dias); mesma conta e mesmo cache da Vitrine.
+    function resCardEntradas() {
+        var tit = 'Entradas de estoque (7 dias)', est = resEstado(ent, 'fotos diárias do estoque', 'ent');
+        if (est) return resCard(tit, 'vitrine', ENT_SUBTITULO, est, true);
+        var A = entAgregar(7), n = Object.keys(A.porDia).length;
+        if (!n) return resCard(tit, 'vitrine', ENT_SUBTITULO, '<p class="text-sm" style="color:var(--adm-tinta-3)">Ainda sem estimativa: são necessárias duas fotos diárias consecutivas (histórico desde ' + ENT_DESDE_TXT + ').</p>', true);
+        var top = A.sabores.slice(0, 5), saldo = A.tot.ent - A.tot.vend;
+        return resCard(tit, 'vitrine', ENT_SUBTITULO + ' · histórico desde ' + ENT_DESDE_TXT,
+            '<div class="grid grid-cols-3 gap-3 mb-3"><div><p class="adm-tile-rotulo mb-1">Entradas</p><p class="adm-tile-valor">' + esc(entFmt(A.tot.ent)) + '</p></div>' +
+            '<div><p class="adm-tile-rotulo mb-1">Vendas</p><p class="adm-tile-valor">' + esc(entFmt(A.tot.vend)) + '</p></div>' +
+            '<div><p class="adm-tile-rotulo mb-1">Saldo</p><p class="adm-tile-valor">' + (saldo > 0 ? '+' : '') + esc(entFmt(saldo)) + '</p></div></div>' +
+            '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">Potes em ' + NUM.format(n) + ' dia(s) com estimativa · ' + esc(entFmt(A.tot.sai)) + ' em saídas sem venda</p>' +
+            (top.length ? '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Sabor</th><th class="num">Entradas (potes)</th></tr></thead><tbody>' +
+                top.map(function (o) { return '<tr><td>' + esc(o.nome) + '</td><td class="num">' + esc(entFmt(o.ent)) + '</td></tr>'; }).join('') + '</tbody></table></div>'
+                : '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhuma entrada no período.</p>'), true);
     }
 
     function resCardsClientes() {
