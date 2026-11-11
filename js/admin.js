@@ -752,6 +752,9 @@
         if (qual === 'visitas' && mapaVisitas) {
             setTimeout(function () { mapaVisitas.invalidateSize(); }, 0);
         }
+        if (qual === 'regioes' && mapaClientes) {
+            setTimeout(function () { if (mapaClientes) mapaClientes.invalidateSize(); }, 0);
+        }
     }
 
     /* Cada aba só é redesenhada de fato quando é a que está na tela — as
@@ -1932,6 +1935,7 @@
         if ((qual === 'solidcon' || qual === 'vitrine') && precisa(solid)) carregarSolidcon();
         if ((qual === 'solidcon' || qual === 'pedidos' || qual === 'vendas') && precisa(vend)) carregarVendas();
         if (qual === 'clientes' && precisa(scli)) carregarSolidClientes();
+        if (qual === 'regioes' && precisa(geo)) carregarGeoClientes();
         if (qual === 'vitrine' && precisa(giro)) carregarGiro();
     }
     function recarregarErp() { carregarErpDaAba(abaAtual, true); }
@@ -2383,6 +2387,354 @@
         alvo.querySelectorAll('[data-giro-rank]').forEach(function (b) {
             b.addEventListener('click', function () { giro.rankDias = Number(b.getAttribute('data-giro-rank')); desenharGiro(); });
         });
+    }
+
+
+    /* ===================================================================
+     * Regiões — mapa de clientes do ERP por bairro (só contagens, sem dado pessoal)
+     * Lê apenas tipo/cidade/bairro/estado de solidcon_clientes (nunca nome, documento, telefone).
+     * A agregação (geoAgregar / geoClassificar) é independente do mapa, para reaproveitar
+     * numa futura sugestão de rota.
+     * =================================================================== */
+    var geo = { carregado: false, carregando: false, ausente: false, erro: null, locais: [],
+                coords: {}, rodando: false, parar: false, feitos: 0, total: 0, ajustou: false,
+                ordem: { col: 'total', dir: -1 } };
+    var mapaClientes = null, mapaClientesCamada = null;
+    var GEO_CACHE_CHAVE = 'temprio_geo_v1', GEO_RETENTAR_MS = 7 * 86400000;
+
+    function geoNorm(s) {
+        return String(s == null ? '' : s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    }
+
+    // [{chave, bairro, cidade, uf, total, cnpj, cpf}] — um por bairro+cidade+UF (grafia mais comum).
+    function geoAgregar(linhas) {
+        var mapa = {};
+        linhas.forEach(function (l) {
+            var b = String(l.bairro || '').trim(), c = String(l.cidade || '').trim(), u = String(l.estado || '').trim().toUpperCase();
+            var chave = geoNorm(b) + '|' + geoNorm(c) + '|' + u;
+            var o = mapa[chave] || (mapa[chave] = { chave: chave, bairro: b, cidade: c, uf: u, total: 0, cnpj: 0, cpf: 0, grafias: {} });
+            o.total++;
+            if (String(l.tipo).toLowerCase() === 'cnpj') o.cnpj++; else if (String(l.tipo).toLowerCase() === 'cpf') o.cpf++;
+            var g = b + '|' + c; o.grafias[g] = (o.grafias[g] || 0) + 1;
+        });
+        return Object.keys(mapa).map(function (k) {
+            var o = mapa[k], melhor = Object.keys(o.grafias).sort(function (a, b) { return o.grafias[b] - o.grafias[a]; })[0].split('|');
+            o.bairro = melhor[0]; o.cidade = melhor[1]; delete o.grafias;
+            return o;
+        });
+    }
+
+    // Municípios (fora da capital) que costumam virar região própria. Lista FIXA: o critério não
+    // depende de quais clientes foram carregados.
+    var GEO_MUNICIPIOS_PROPRIOS = ['niteroi', 'sao goncalo', 'itaborai', 'marica', 'mage', 'guapimirim', 'tangua', 'rio bonito',
+        'duque de caxias', 'nova iguacu', 'sao joao de meriti', 'belford roxo', 'nilopolis', 'mesquita', 'queimados',
+        'japeri', 'seropedica', 'itaguai', 'paracambi', 'petropolis', 'teresopolis', 'cabo frio'];
+
+    // Região de entrega do local, por NOME (sem polígono: é aproximação).
+    // UF diferente de RJ = fora. 1) cidade igual ao nome de uma região; 2) cidade listada nos bairros de uma região;
+    // 3) bairro SÓ quando cidade = Rio de Janeiro e UF = RJ, ignorando regiões cujo nome é um município próprio.
+    function geoClassificar(local) {
+        var nb = geoNorm(local.bairro), nc = geoNorm(local.cidade), uf = String(local.uf || '').toUpperCase();
+        if (uf && uf !== 'RJ') return null;
+        var regs = dados.regioes.filter(function (r) { return r.bairros && r.bairros.length; })
+            .sort(function (a, b) { return (Number(b.prioridade) || 0) - (Number(a.prioridade) || 0); });
+        function naLista(r, nome) { return r.bairros.some(function (x) { return geoNorm(x) === nome; }); }
+        if (!nc) return null;
+        var porCidade = dados.regioes.filter(function (r) { return geoNorm(r.nome) === nc; })[0] ||
+                        regs.filter(function (r) { return naLista(r, nc); })[0];
+        if (porCidade) return porCidade;
+        if (nc !== 'rio de janeiro' || uf !== 'RJ' || !nb) return null;
+        return regs.filter(function (r) { return GEO_MUNICIPIOS_PROPRIOS.indexOf(geoNorm(r.nome)) < 0 && naLista(r, nb); })[0] || null;
+    }
+
+    function geoLerCache() {
+        // Só objeto simples vale: raiz primitiva, null ou array (JSON válido porém inútil) vira cache vazio.
+        try {
+            var c = JSON.parse(localStorage.getItem(GEO_CACHE_CHAVE) || '{}');
+            return (c && typeof c === 'object' && !Array.isArray(c)) ? c : {};
+        } catch (e) { return {}; }
+    }
+    function geoGravarCache(c) {
+        try { localStorage.setItem(GEO_CACHE_CHAVE, JSON.stringify(c)); } catch (e) { /* sem cache: segue */ }
+    }
+    // Texto enviado ao Nominatim: SÓ "bairro, cidade, UF, Brasil".
+    function geoTexto(l) { return [l.bairro, l.cidade, l.uf, 'Brasil'].filter(Boolean).join(', '); }
+
+    // Coordenada utilizável: números finitos, dentro do Brasil (evita quebrar o Leaflet com lixo no cache).
+    function geoCoordValida(lat, lng) {
+        return typeof lat === 'number' && typeof lng === 'number' && isFinite(lat) && isFinite(lng) &&
+               lat >= -34 && lat <= 6 && lng >= -74 && lng <= -28;
+    }
+
+    function geoAplicarCache() {
+        var c = geoLerCache(), agora = Date.now();
+        geo.coords = {};
+        geo.locais.forEach(function (l) {
+            var e = c[l.chave];
+            if (!e || typeof e !== 'object') return;
+            if (geoCoordValida(e.lat, e.lng)) geo.coords[l.chave] = { lat: e.lat, lng: e.lng };
+            else if (e.nf === 1 && typeof e.ts === 'number' && agora - e.ts < GEO_RETENTAR_MS) geo.coords[l.chave] = null; // não encontrado (cache)
+            // qualquer outra coisa: entrada inválida, ignorada — o local fica pendente
+        });
+    }
+
+    function carregarGeoClientes() {
+        geo.carregando = true; geoRedesenhar();
+        vendPaginar(function () {
+            return sb.from('solidcon_clientes').select('tipo,cidade,bairro,estado').order('documento', { ascending: true });
+        }).then(function (r) {
+            geo.carregando = false; geo.ausente = false; geo.erro = null;
+            if (r.error) {
+                if (solidTabelaAusente(r.error)) geo.ausente = true; else geo.erro = String(r.error.message || r.error);
+                geo.carregado = false;
+            } else {
+                geo.totalClientes = (r.data || []).length;
+                geo.locais = geoAgregar(r.data || []);
+                geoAplicarCache();
+                geo.carregado = true;
+            }
+            geoRedesenhar();
+        }).catch(function (e) { geo.carregando = false; geo.erro = String(e && e.message || e); geoRedesenhar(); });
+    }
+
+    function geoRedesenhar() {
+        abasParaRedesenhar.regioes = true;
+        desenharAbaSeSuja(abaAtual);
+    }
+
+    // Geocodifica (>= 1,1 s entre requisições) só os locais ainda sem resposta; resultado vai ao cache.
+    // Cada chamada tem timeout (GEO_TIMEOUT_MS) e é abortada por "Parar"; o estado sempre é liberado.
+    var GEO_TIMEOUT_MS = 10000, GEO_INTERVALO_MS = 1100;
+
+    function geoFinalizar() {
+        geo.rodando = false; geo.parar = false;
+        if (geo.timerEspera) { clearTimeout(geo.timerEspera); geo.timerEspera = null; }
+        if (geo.abortar) { try { geo.abortar(); } catch (e) { /* já encerrada */ } geo.abortar = null; }
+        geoAtualizarMapa();
+    }
+
+    function geoParar() {
+        if (!geo.rodando) return;
+        geo.parar = true;
+        if (geo.abortar) { try { geo.abortar(); } catch (e) { /* já encerrada */ } }
+        if (geo.timerEspera) { clearTimeout(geo.timerEspera); geo.timerEspera = null; geoFinalizar(); }
+    }
+
+    function geoBuscar(url) {
+        var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        var expirou = false, timer;
+        var limite = new Promise(function (_, rejeita) {
+            timer = setTimeout(function () { expirou = true; if (ctrl) ctrl.abort(); rejeita(new Error('timeout')); }, GEO_TIMEOUT_MS);
+        });
+        geo.abortar = function () { if (ctrl) ctrl.abort(); };
+        var req = fetch(url, { headers: { 'Accept-Language': 'pt-BR' }, signal: ctrl ? ctrl.signal : undefined }).then(function (r) {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.json();
+        });
+        return Promise.race([req, limite]).then(function (v) { clearTimeout(timer); geo.abortar = null; return v; },
+                                                function (e) { clearTimeout(timer); geo.abortar = null; throw e; });
+    }
+
+    function geoLocalizar() {
+        if (geo.rodando) return;
+        var fila = geo.locais.filter(function (l) { return !(l.chave in geo.coords) && l.cidade && l.uf; });
+        if (!fila.length) return;
+        geo.rodando = true; geo.parar = false; geo.feitos = 0; geo.total = fila.length; geo.falhasSeguidas = 0;
+        geoAtualizarMapa();
+        (function proximo(i) {
+            if (geo.parar || i >= fila.length) { geoFinalizar(); return; }
+            // Throttle global: respeita o intervalo desde a ÚLTIMA requisição iniciada, mesmo após Parar/abort/reinício.
+            var espera = GEO_INTERVALO_MS - (Date.now() - (geo.ultimoInicio || 0));
+            if (espera > 0) {
+                geo.timerEspera = setTimeout(function () { geo.timerEspera = null; proximo(i); }, espera);
+                return;
+            }
+            var l = fila[i];
+            geo.ultimoInicio = Date.now();
+            var url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=' + encodeURIComponent(geoTexto(l));
+            geoBuscar(url).then(function (res) {
+                geo.falhasSeguidas = 0;
+                var c = geoLerCache();
+                var lat = res && res[0] ? Number(res[0].lat) : NaN, lng = res && res[0] ? Number(res[0].lon) : NaN;
+                if (geoCoordValida(lat, lng)) {
+                    geo.coords[l.chave] = { lat: lat, lng: lng }; c[l.chave] = { lat: lat, lng: lng, ts: Date.now() };
+                } else {
+                    geo.coords[l.chave] = null; c[l.chave] = { nf: 1, ts: Date.now() };
+                }
+                geoGravarCache(c);
+            }, function () {
+                geo.falhasSeguidas++; // rede/timeout/abort: não grava; fica pendente
+            }).then(function () {
+                geo.feitos = i + 1;
+                geoAtualizarMapa();
+                if (geo.parar || geo.falhasSeguidas >= 3) { geoFinalizar(); return; }
+                proximo(i + 1);
+            });
+        })(0);
+    }
+
+    function geoCor(reg) {
+        if (!reg) return '#C084FC';
+        return reg.ativo ? '#F28C52' : '#94A3B8';
+    }
+
+    function desenharRegioes() {
+        var alvo = $('#painel-regioes');
+        if (mapaClientes) { mapaClientes.remove(); mapaClientes = null; mapaClientesCamada = null; }
+        desenharRegioesBase();
+        alvo.insertAdjacentHTML('afterbegin', '<section id="geo-clientes" class="mb-8"></section>');
+        desenharGeoClientes();
+    }
+
+    function desenharGeoClientes() {
+        var alvo = $('#geo-clientes');
+        if (!alvo) return;
+        var cab = '<div class="flex items-center gap-2 mb-2">' + SELO_ERP + '<p class="font-bold">Clientes por região</p></div>';
+        if (geo.carregando && !geo.carregado) {
+            alvo.innerHTML = cab + '<div class="adm-card p-6 text-center text-sm" style="color:var(--adm-tinta-2)"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando cadastros do ERP…</div>';
+            return;
+        }
+        if (geo.ausente) { alvo.innerHTML = cab + cartaoVazio('Cadastros do SOLIDCON não instalados', 'A tabela solidcon_clientes não existe neste banco.'); return; }
+        if (geo.erro) {
+            alvo.innerHTML = cab + '<div class="adm-card p-6"><p class="text-sm mb-3" style="color:var(--adm-tinta-2)">Não foi possível carregar: ' + esc(geo.erro) + '</p>' +
+                '<button type="button" class="adm-botao-fantasma" id="geo-tentar">Tentar de novo</button></div>';
+            alvo.querySelector('#geo-tentar').addEventListener('click', carregarGeoClientes);
+            return;
+        }
+        if (!geo.carregado) return;
+        if (!geo.locais.length) { alvo.innerHTML = cab + cartaoVazio('Nenhum cadastro sincronizado ainda', 'Quando a rotina de clientes rodar, o mapa aparece aqui.'); return; }
+
+        alvo.innerHTML = cab +
+            '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Contagem de cadastros do ERP por bairro — sem nome, documento ou contato. ' +
+            'A região vem do <strong>nome do bairro/cidade</strong> cadastrado em cada região (não há polígono): é uma aproximação. ' +
+            'As posições são buscadas no OpenStreetMap (Nominatim) enviando só “bairro, cidade, UF”, e ficam salvas neste navegador.</p>' +
+            '<div class="adm-card p-5 mb-5"><div class="flex items-center flex-wrap gap-3 mb-3">' +
+                '<button type="button" class="adm-botao" id="geo-localizar">Localizar bairros no mapa</button>' +
+                '<button type="button" class="adm-botao-fantasma hidden" id="geo-parar">Parar</button>' +
+                '<span class="text-xs" id="geo-status" role="status" style="color:var(--adm-tinta-3)"></span></div>' +
+                '<div id="mapa-clientes" style="height:420px;border-radius:.75rem;overflow:hidden"></div>' +
+                '<div class="flex gap-4 flex-wrap text-xs mt-3" style="color:var(--adm-tinta-2)">' +
+                    '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#F28C52"></span> Dentro de região que entrega</span>' +
+                    '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#94A3B8"></span> Região sem entrega</span>' +
+                    '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#C084FC"></span> Fora das regiões</span>' +
+                    '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;border:2px solid #fff"></span> Ponto central aproximado da região</span>' +
+                '</div></div>' +
+            '<div id="geo-resumo"></div><div id="geo-tabela"></div><div id="geo-naoloc"></div>';
+
+        alvo.querySelector('#geo-localizar').addEventListener('click', geoLocalizar);
+        alvo.querySelector('#geo-parar').addEventListener('click', geoParar);
+        geoAtualizarMapa();
+    }
+
+    // Atualiza mapa, resumo por região, tabela e lista de não localizados (sem refazer a aba).
+    function geoAtualizarMapa() {
+        if (!$('#geo-clientes') || !geo.carregado) return;
+        var cls = {};
+        geo.locais.forEach(function (l) { cls[l.chave] = geoClassificar(l); });
+        var pendentes = geo.locais.filter(function (l) { return !(l.chave in geo.coords) && l.cidade && l.uf; }).length;
+
+        var st = $('#geo-status'), bl = $('#geo-localizar'), bp = $('#geo-parar');
+        if (st) st.textContent = geo.rodando ? ('Localizando ' + NUM.format(geo.feitos) + ' de ' + NUM.format(geo.total) + '…')
+            : ((geo.falhasSeguidas >= 3 ? 'Busca interrompida por falhas de rede. ' : '') + (pendentes ? NUM.format(pendentes) + ' bairro(s) ainda sem posição.' : 'Todos os bairros já foram consultados.'));
+        if (bl) { bl.disabled = geo.rodando || !pendentes; }
+        if (bp) bp.classList.toggle('hidden', !geo.rodando);
+
+        // ---- mapa ----
+        var alvoMapa = $('#mapa-clientes');
+        if (alvoMapa && typeof L !== 'undefined') {
+            if (!mapaClientes) {
+                mapaClientes = L.map('mapa-clientes', { scrollWheelZoom: false }).setView([-22.92, -43.35], 10);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap', maxZoom: 18 }).addTo(mapaClientes);
+            }
+            if (mapaClientesCamada) mapaClientes.removeLayer(mapaClientesCamada);
+            mapaClientesCamada = L.layerGroup();
+            var maior = Math.max.apply(null, geo.locais.map(function (l) { return l.total; }).concat([1]));
+            var pts = [];
+            geo.locais.forEach(function (l) {
+                var p = geo.coords[l.chave];
+                if (!p) return;
+                var reg = cls[l.chave], cor = geoCor(reg);
+                L.circleMarker([p.lat, p.lng], { radius: 5 + Math.round(Math.sqrt(l.total / maior) * 22), color: cor, weight: 1, fillColor: cor, fillOpacity: 0.5 })
+                    .bindTooltip(esc((l.bairro ? l.bairro + ', ' : '') + l.cidade + '/' + l.uf) + ': ' + NUM.format(l.total) + (l.total === 1 ? ' cliente' : ' clientes') +
+                        ' (' + NUM.format(l.cnpj) + ' CNPJ, ' + NUM.format(l.cpf) + ' CPF) · ' + esc(reg ? reg.nome : 'fora das regiões'))
+                    .addTo(mapaClientesCamada);
+                pts.push([p.lat, p.lng]);
+            });
+            dados.regioes.forEach(function (r) {
+                if (!REGIAO_COORDS[r.id]) return;
+                L.circleMarker(REGIAO_COORDS[r.id], { radius: 6, color: '#FFFFFF', weight: 2, fillOpacity: 0, dashArray: r.ativo ? null : '3 3' })
+                    .bindTooltip(esc(r.nome) + (r.ativo ? '' : ' (sem entrega)'), { permanent: true, direction: 'top', opacity: 0.85 })
+                    .addTo(mapaClientesCamada);
+            });
+            mapaClientesCamada.addTo(mapaClientes);
+            if (pts.length && !geo.ajustou) { mapaClientes.fitBounds(pts, { padding: [30, 30], maxZoom: 12 }); geo.ajustou = true; }
+            setTimeout(function () { if (mapaClientes) mapaClientes.invalidateSize(); }, 50);
+        } else if (alvoMapa) {
+            alvoMapa.innerHTML = '<p class="adm-vazio">Mapa indisponível (biblioteca não carregou).</p>';
+        }
+
+        // ---- resumo por região ----
+        var porReg = {}, fora = { total: 0, cnpj: 0, cpf: 0, locais: 0 };
+        geo.locais.forEach(function (l) {
+            var r = cls[l.chave], o = r ? (porReg[r.id] || (porReg[r.id] = { total: 0, cnpj: 0, cpf: 0, locais: 0 })) : fora;
+            o.total += l.total; o.cnpj += l.cnpj; o.cpf += l.cpf; o.locais++;
+        });
+        var linhasReg = dados.regioes.filter(function (r) { return porReg[r.id]; }).map(function (r) {
+            var o = porReg[r.id];
+            var faixas = faixasDe(r.id).map(function (f) { return formatarCep(f.cep_inicio) + ' a ' + formatarCep(f.cep_fim); }).join(' · ');
+            return '<tr><td>' + esc(r.nome) + '</td><td>' + (r.ativo ? 'Entrega' : 'Sem entrega') + '</td>' +
+                '<td class="num">' + esc(brl(r.taxa_centavos)) + '</td><td class="text-xs" style="color:var(--adm-tinta-3)">' + esc(faixas || '—') + '</td>' +
+                '<td class="num">' + NUM.format(o.total) + '</td><td class="num">' + NUM.format(o.cnpj) + '</td><td class="num">' + NUM.format(o.cpf) + '</td><td class="num">' + NUM.format(o.locais) + '</td></tr>';
+        }).join('');
+        var resumo = $('#geo-resumo');
+        if (resumo) resumo.innerHTML = '<div class="adm-card p-5 mb-5"><p class="font-bold mb-3">Clientes dentro e fora de cada região</p>' +
+            '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Região</th><th>Situação</th><th class="num">Frete</th><th>Faixas de CEP</th>' +
+            '<th class="num">Clientes</th><th class="num">CNPJ</th><th class="num">CPF</th><th class="num">Bairros</th></tr></thead><tbody>' + linhasReg +
+            '<tr><td><strong>Fora das regiões cadastradas</strong></td><td>—</td><td class="num">—</td><td class="text-xs" style="color:var(--adm-tinta-3)">sem bairro/cidade casando com nenhuma região</td>' +
+            '<td class="num">' + NUM.format(fora.total) + '</td><td class="num">' + NUM.format(fora.cnpj) + '</td><td class="num">' + NUM.format(fora.cpf) + '</td><td class="num">' + NUM.format(fora.locais) + '</td></tr>' +
+            '</tbody></table></div><p class="text-xs mt-3" style="color:var(--adm-tinta-3)">Os cadastros do ERP não trazem CEP, por isso o enquadramento é pelo nome do bairro/cidade, não pela faixa de CEP.</p></div>';
+
+        // ---- tabela ordenável por bairro ----
+        var o = geo.ordem;
+        var lista = geo.locais.slice().sort(function (a, b) {
+            var va, vb;
+            if (o.col === 'local') { va = geoNorm(a.bairro + ' ' + a.cidade); vb = geoNorm(b.bairro + ' ' + b.cidade); return va < vb ? -o.dir : va > vb ? o.dir : 0; }
+            if (o.col === 'regiao') { va = cls[a.chave] ? cls[a.chave].nome : 'zzzz'; vb = cls[b.chave] ? cls[b.chave].nome : 'zzzz'; return String(va).localeCompare(String(vb)) * o.dir; }
+            return (a[o.col] - b[o.col]) * o.dir || (b.total - a.total);
+        });
+        function th(col, rot, num) {
+            var seta = o.col === col ? (o.dir > 0 ? ' ▲' : ' ▼') : '';
+            return '<th' + (num ? ' class="num"' : '') + ' style="cursor:pointer" data-geo-ord="' + col + '" aria-sort="' + (o.col === col ? (o.dir > 0 ? 'ascending' : 'descending') : 'none') + '">' + rot + seta + '</th>';
+        }
+        var tab = $('#geo-tabela');
+        if (tab) {
+            tab.innerHTML = '<div class="adm-card p-5 mb-5"><p class="font-bold mb-3">Clientes por bairro</p>' +
+                '<div class="overflow-x-auto" style="max-height:26rem;overflow-y:auto"><table class="adm-tabela"><thead><tr>' +
+                th('local', 'Bairro / cidade') + th('regiao', 'Região') + th('total', 'Clientes', true) + th('cnpj', 'CNPJ', true) + th('cpf', 'CPF', true) + '<th>Posição</th></tr></thead><tbody>' +
+                lista.map(function (l) {
+                    var r = cls[l.chave], p = geo.coords[l.chave];
+                    return '<tr><td>' + esc(l.bairro || '(sem bairro)') + ', ' + esc(l.cidade || '—') + (l.uf ? '/' + esc(l.uf) : '') + '</td>' +
+                        '<td>' + esc(r ? r.nome : 'Fora das regiões') + '</td><td class="num">' + NUM.format(l.total) + '</td><td class="num">' + NUM.format(l.cnpj) + '</td><td class="num">' + NUM.format(l.cpf) + '</td>' +
+                        '<td class="text-xs" style="color:var(--adm-tinta-3)">' + (p ? 'no mapa' : (l.chave in geo.coords ? 'não localizado' : (l.cidade && l.uf ? 'pendente' : 'sem cidade/UF'))) + '</td></tr>';
+                }).join('') + '</tbody></table></div></div>';
+            tab.querySelectorAll('[data-geo-ord]').forEach(function (h) {
+                h.addEventListener('click', function () {
+                    var c = h.getAttribute('data-geo-ord');
+                    geo.ordem = { col: c, dir: geo.ordem.col === c ? -geo.ordem.dir : (c === 'local' || c === 'regiao' ? 1 : -1) };
+                    geoAtualizarMapa();
+                });
+            });
+        }
+
+        // ---- não localizados ----
+        var nao = geo.locais.filter(function (l) { return geo.coords[l.chave] === null || !(l.cidade && l.uf); });
+        var nl = $('#geo-naoloc');
+        if (nl) nl.innerHTML = nao.length
+            ? '<div class="adm-card p-5"><p class="font-bold mb-1">Não localizados no mapa (' + NUM.format(nao.length) + ')</p>' +
+              '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">Sem posição no OpenStreetMap ou sem cidade/UF no cadastro. Continuam contados na tabela e nos totais.</p>' +
+              '<div class="flex gap-2 flex-wrap">' + nao.map(function (l) {
+                  return '<span class="adm-selo" style="background:rgba(255,255,255,.08);color:var(--adm-tinta-2)">' + esc((l.bairro || '(sem bairro)') + ', ' + (l.cidade || '—') + (l.uf ? '/' + l.uf : '')) + ' · ' + NUM.format(l.total) + '</span>';
+              }).join('') + '</div></div>' : '';
     }
 
 
@@ -4129,7 +4481,7 @@
         return d.length === 8 ? d.slice(0, 5) + '-' + d.slice(5) : d;
     }
 
-    function desenharRegioes() {
+    function desenharRegioesBase() {
         var alvo = $('#painel-regioes');
         var lista = dados.regioes;
 
