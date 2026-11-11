@@ -53,11 +53,11 @@ conta da tarefa e administradores; não use transcrição PowerShell com segredo
 Deixe `modo="teste"`: os campos Supabase podem continuar como placeholders.
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File C:\TempRio\solidcon\sync-produtos.ps1 -Config C:\TempRio\solidcon\config.json -ArquivoEntrada C:\caminho\com-saldo.json -ArquivoEntradaSemSaldo C:\caminho\sem-saldo.json -ArquivoVendas C:\caminho\vendas-por-dia.json -ArquivoClientes C:\caminho\clientes-ficticios.json -ArquivoVendasClientes C:\caminho\vendas-clientes-ficticios.json
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File C:\TempRio\solidcon\sync-produtos.ps1 -Config C:\TempRio\solidcon\config.json -ArquivoEntrada C:\caminho\com-saldo.json -ArquivoEntradaSemSaldo C:\caminho\sem-saldo.json -ArquivoVendas C:\caminho\vendas-por-dia.json -ArquivoClientes C:\caminho\clientes-ficticios.json -ArquivoVendasClientes C:\caminho\vendas-clientes-ficticios.json -ArquivoModalidades C:\caminho\modalidades-ficticias.json
 ```
 
 Informe **os dois arquivos de estoque ou nenhum**; uso parcial é recusado sem GET.
-Para teste totalmente offline, inclua também -ArquivoVendas, -ArquivoClientes e -ArquivoVendasClientes.
+Para teste totalmente offline, inclua também -ArquivoVendas, -ArquivoClientes, -ArquivoVendasClientes e -ArquivoModalidades.
 Com arquivos locais, a ausência do arquivo do fluxo gera falha isolada, sem
 GET implícito de vendas/clientes. Informe sempre os dois arquivos de estoque.
 Sem arquivos, faz os dois GETs locais. Arquivos locais são permitidos somente
@@ -68,11 +68,12 @@ substituídas em cada sucesso; log tem rotação de 1 MiB e três arquivos antig
 Exit 0 = fluxos OK (inclui clientes e ficha ainda não devidos ou já concluídos hoje);
 exit 1 = configuração/mutex/estoque falhou; exit 3 = vendas falhou;
 exit 4 = somente clientes falhou; exit 5 = somente ficha técnica falhou;
-**exit 6 = somente histórico de vendas por cliente falhou**.
-Precedência: 1 > 3 > 4 > 5 > 6. Os logs de cada fluxo identificam as falhas quando ocorrer mais de uma.
+**exit 6 = somente histórico de vendas por cliente falhou**; exit 7 = somente insumos (estoque da fábrica);
+exit 8 = somente formas de pagamento.
+Precedência: 1 > 3 > 4 > 5 > 6 > 7 > 8. Os logs de cada fluxo identificam as falhas quando ocorrer mais de uma.
 A ficha técnica é enviada 1x/dia aproveitando dados já presentes em GetProdutos (nenhuma chamada nova ao ERP).
 Vendas por cliente executa 1 GET por ciclo cobrindo ontem e hoje; -BackfillDias divide em blocos mensais com pausa de 700ms.
-Em backfill, 0 = vendas OK, 3 = falha de vendas, 6 = falha de vendas por cliente, 1 = inicialização inválida.
+Em backfill, 0 = vendas OK, 3 = falha de vendas, 6 = falha de vendas por cliente, 8 = falha de formas de pagamento, 1 = inicialização inválida.
 A ficha só roda no ciclo normal e com o estoque confirmado no mesmo ciclo; backfill nunca roda ficha (nem reserva o dia).
 A RPC da ficha só é aceita com `encontrados` = linhas enviadas.
 Reserva diária da ficha por modo (`ficha-consulta-teste.json` / `ficha-consulta-real.json`): teste na mesma pasta e dia não bloqueia o envio real.
@@ -287,7 +288,7 @@ O limite não coordena outras máquinas ou pastas de saída independentes.
 Normalização faz **projeção explícita**, incluindo somente documento, tipo,
 nome, telefone, celular, email e `endereco.cidade/bairro/estado` (estes três
 campos ficam planos no payload). Nunca envia ou grava dtCadastro, nascimento,
-sexo, logradouro, número, complemento ou CEP. O corpo bruto fica só em memória.
+sexo; logradouro, número, complemento e CEP só para CNPJ desde a 027 (ver seção 027). O corpo bruto fica só em memória.
 Em modo real não grava arquivo com dados pessoais; log e estado contêm apenas
 metadados técnicos. Mensagens de falha são fixas, sem resposta ERP/SQLERRM.
 
@@ -372,3 +373,63 @@ Endpoint exclusivo autorizado (somente leitura):
    - Substituição atômica de intervalo com `DELETE ... WHERE` compatível com a extensão `safeupdate`.
    - Falha isolada gera código de saída **6**, preservando intactos o estoque, as vendas gerais, o cadastro de clientes e a ficha técnica (precedência `1 > 3 > 4 > 5 > 6`).
 
+## 027 — Estoque da fábrica, endereço CNPJ e formas de pagamento (NÃO IMPLANTADA)
+
+Requer a migração 027 aplicada **antes** de trocar o coletor no servidor (o RPC antigo de
+clientes recusa o payload de 13 campos e as RPCs novas não existem).
+
+### Estoque da fábrica (insumos) — exit 7
+
+- **Nenhum GET novo:** reaproveita as duas respostas de `GetProdutos` do estoque.
+- Roda a cada ciclo normal, **depois** do estoque vendável confirmado no mesmo ciclo; não roda
+  em `-BackfillDias` nem se o estoque falhou. Não altera em nada o fluxo/RPC de estoque vendável.
+- Itens = todas as linhas fora de `config.categorias` (matéria-prima, embalagens etc.).
+  Projeção: id, nome, categoria, unidade (`unid_medida`, senão `emb`), estoque bruto (negativo
+  mantido), `dtalteracao` (mesma regra de fuso do estoque).
+- Mesmo id em várias linhas (vários EANs ou nas duas consultas) só é aceito se idêntico; senão
+  o lote inteiro falha (exit 7) e repete no próximo ciclo. Zero insumos, mais de 10.000, nome
+  vazio/controle ou dados inválidos também = exit 7. Queda >50% contra o último OK local
+  (`insumos-ultimo-ok-<modo>.json`) ou remoto é rejeitada.
+- Teste: grava `insumos-normalizados.json`. Real: RPC `solidcon_receber_insumos`, conferida por
+  status/execução/linhas/coleta.
+- `coletado_em` dos insumos = **instante do mesmo GetProdutos do estoque** (não a hora do envio,
+  que vem depois de vendas/clientes/026): a foto diária cai no dia SP em que o estoque foi lido,
+  mesmo na virada da meia-noite. Sem fallback: instante ausente, fora do formato ou fora da janela
+  (-23h/+5min) = exit 7 sem RPC.
+
+### Endereço de clientes CNPJ (mesmo GET diário de clientes)
+
+- Para CNPJ, lê de `endereco`: `logradouro` (≤100), `numero` (≤30), `complemento` (≤60) e `cep`
+  (limites do `vmEndereco` do Swagger). Texto com trim; vazio vira null; tipo diferente de
+  string, controle ou acima do limite falha o lote (exit 4). CEP: só dígitos, **sem completar
+  zeros**; exatamente 8 dígitos ou null.
+- Para **CPF nunca lê nem envia** endereço (os 4 campos vão null). `cdMunicipio` e demais campos
+  continuam descartados.
+
+### Formas de pagamento — exit 8
+
+- **Única rota nova:** `GET http://localhost:5100/api/Vendas/resumo-modalidade-data?idFilial=4&data=AAAA-MM-DD`
+  (sem proxy/redirect, timeout 60s).
+- Ciclo normal: 1×/dia, primeiro ciclo após **06:00 America/Sao_Paulo**, busca **ontem**.
+  Reserva durável antes do GET em `modalidades-consulta-<modo>.json` (por modo, como a ficha):
+  pendente/erro no mesmo dia não gera novo GET e mantém exit 8; estado inválido/futuro = zero GET.
+- `-BackfillDias N`: 1 GET por dia para os N dias **até ontem** (hoje fica de fora, dia aberto),
+  pausa de 700ms entre GETs, sem reserva.
+- Projeção: `idModalidade`, `nmModalidade`, `vlModalidade` (centavos), `qtdePagamentos`.
+  `vlSangria`/`vlFundo` **nunca são lidos nem enviados**.
+- HTTP 500 num dia = dia pulado com `AVISO modalidades ERP http=500 dia=...` (dados já gravados
+  ficam); se nada foi gravado, exit 8; senão exit 0 com `AVISO modalidades dias_com_erro_erp=N dias=...`.
+  Outros status, timeout e corpo que não seja array = exit 8 (log só `http=<número>`).
+- **Suposições documentadas** (Swagger não descreve a resposta; amostra real de 2026-11-10 tinha
+  1 objeto): resposta é array JSON; `idModalidade` inteiro ≥0; `vlModalidade` ≥0 — **negativo
+  rejeita o dia (exit 8)**; `qtdePagamentos` inteiro ≥0; dia sem venda = `[]` (0 linhas, sucesso);
+  modalidade repetida no dia = exit 8. Se o ERP fugir disso, o fluxo falha fechado sem gravar.
+- Teste offline: `-ArquivoModalidades` com array de linhas no formato do ERP mais o campo `dia`
+  (cada dia precisa estar no período: ontem, ou os N dias do backfill). Exige os arquivos de
+  produtos. Grava `modalidades-AAAA-MM-DD.json` e `modalidades-resumo.json`; sem reserva/horário.
+  Em teste com qualquer arquivo local e sem `-ArquivoModalidades`, o fluxo falha (exit 8) sem GET.
+
+### Códigos de saída
+
+0 OK; 1 configuração/estoque; 3 vendas; 4 clientes; 5 ficha; 6 vendas por cliente;
+**7 somente insumos; 8 somente formas de pagamento**. Precedência **1 > 3 > 4 > 5 > 6 > 7 > 8**.

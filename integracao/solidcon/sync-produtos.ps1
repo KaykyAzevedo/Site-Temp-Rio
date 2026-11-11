@@ -7,7 +7,8 @@ param(
     [ValidateRange(1,400)][int]$BackfillDias,
     [string]$ArquivoVendas,
     [string]$ArquivoClientes,
-    [string]$ArquivoVendasClientes
+    [string]$ArquivoVendasClientes,
+    [string]$ArquivoModalidades
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -35,6 +36,9 @@ $VendasClientesFalhou = $false
 $VcHttpStatus = $null
 # Teto de GETs GetVendasResumo por execucao (blocos + divisoes por HTTP 500).
 $VendasClientesMaxGets = 60
+$InsumosFalhou = $false
+$ModalidadesFalhou = $false
+$ModHttpStatus = $null
 $EstoqueOk = $false
 $jsonComSaldo = $null
 $jsonSemSaldo = $null
@@ -165,7 +169,7 @@ function Entrar-Supabase {
 }
 
 function Chamar-Rpc([string]$Nome, $Dados) {
-    if ($Nome -notin @('solidcon_receber_produtos', 'solidcon_registrar_falha', 'solidcon_receber_vendas', 'solidcon_receber_clientes', 'solidcon_receber_ficha', 'solidcon_receber_vendas_clientes')) { throw 'RPC invalida' }
+    if ($Nome -notin @('solidcon_receber_produtos', 'solidcon_registrar_falha', 'solidcon_receber_vendas', 'solidcon_receber_clientes', 'solidcon_receber_ficha', 'solidcon_receber_vendas_clientes', 'solidcon_receber_insumos', 'solidcon_receber_vendas_modalidade')) { throw 'RPC invalida' }
     $corpo = ConvertTo-Json -InputObject $Dados -Depth 20 -Compress
     $opcoes = @{
         Uri = ($SupabaseBase + '/rest/v1/rpc/' + $Nome); Method = 'Post'
@@ -361,7 +365,7 @@ function Sincronizar-Vendas($Catalogo) {
         } catch {
             $script:VendasFalhou=$true; Log 'ERRO vendas arquivo offline invalido.'; return
         }
-    } elseif ($ArquivoEntrada -or $ArquivoEntradaSemSaldo -or $ArquivoClientes -or $ArquivoVendasClientes) {
+    } elseif ($ArquivoEntrada -or $ArquivoEntradaSemSaldo -or $ArquivoClientes -or $ArquivoVendasClientes -or $ArquivoModalidades) {
         $script:VendasFalhou=$true; Log 'ERRO vendas informe -ArquivoVendas para manter o teste totalmente offline.'; return
     }
     [decimal]$totalPeriodo=0; [decimal]$potesPeriodo=0; $linhasPeriodo=0; $diasComLinhas=0; $falhas=0
@@ -494,6 +498,20 @@ function Normalizar-Clientes([string]$Json) {
         $endereco = Campo-Cliente $l 'endereco'
         if ($null -ne $endereco -and $endereco -isnot [pscustomobject]) { throw 'endereco invalido' }
         $cidade = $null; $bairro = $null; $estado = $null
+        $logradouro = $null; $numero = $null; $complemento = $null; $cep = $null
+        if ($null -ne $endereco -and $tipo -ceq 'cnpj') {
+            # 027: endereco SO de pessoa juridica (limites do vmEndereco do ERP). CPF nunca le/envia.
+            $logradouro = Texto-Cliente (Campo-Cliente $endereco 'logradouro') 100
+            $numero = Texto-Cliente (Campo-Cliente $endereco 'numero') 30
+            $complemento = Texto-Cliente (Campo-Cliente $endereco 'complemento') 60
+            $cepBruto = Campo-Cliente $endereco 'cep'
+            if ($null -ne $cepBruto) {
+                if ($cepBruto -isnot [string]) { throw 'cep cliente invalido' }
+                # So digitos, sem completar zeros: exatamente 8 ou null.
+                $cepDig = $cepBruto -replace '[^0-9]', ''
+                if ($cepDig.Length -eq 8) { $cep = $cepDig }
+            }
+        }
         if ($null -ne $endereco) {
             $cidade = Texto-Cliente (Campo-Cliente $endereco 'cidade') 100
             $bairro = Texto-Cliente (Campo-Cliente $endereco 'bairro') 100
@@ -510,6 +528,7 @@ function Normalizar-Clientes([string]$Json) {
             celular=(Texto-Cliente (Campo-Cliente $l 'celular') 32)
             email=(Texto-Cliente (Campo-Cliente $l 'email') 254)
             cidade=$cidade; bairro=$bairro; estado=$estado
+            logradouro=$logradouro; numero=$numero; complemento=$complemento; cep=$cep
         })
     }
     $normalizados = @($itens | Sort-Object { $_.documento })
@@ -542,7 +561,7 @@ function Sincronizar-Clientes {
             $faseClientes = 'arquivo'
             $jsonClientes = Get-Content -LiteralPath $ArquivoClientes -Raw -Encoding UTF8
         } else {
-            if ($ArquivoEntrada -or $ArquivoEntradaSemSaldo -or $ArquivoVendas -or $ArquivoVendasClientes) {
+            if ($ArquivoEntrada -or $ArquivoEntradaSemSaldo -or $ArquivoVendas -or $ArquivoVendasClientes -or $ArquivoModalidades) {
                 throw 'informe ArquivoClientes para teste offline'
             }
             $agoraSP = [TimeZoneInfo]::ConvertTime([DateTimeOffset]::UtcNow, $ZonaSP)
@@ -983,7 +1002,7 @@ function Sincronizar-VendasClientes {
                     $blocos = @(Obter-BlocosMensais ([DateTime]::ParseExact($dias[0], 'yyyy-MM-dd', $Invariant)) ([DateTime]::ParseExact($dias[-1], 'yyyy-MM-dd', $Invariant)))
                 }
             }
-        } elseif ($ArquivoEntrada -or $ArquivoEntradaSemSaldo -or $ArquivoVendas -or $ArquivoClientes) {
+        } elseif ($ArquivoEntrada -or $ArquivoEntradaSemSaldo -or $ArquivoVendas -or $ArquivoClientes -or $ArquivoModalidades) {
             throw 'informe ArquivoVendasClientes para teste offline'
         }
 
@@ -1100,12 +1119,302 @@ function Sincronizar-VendasClientes {
     }
 }
 
+# ===================== 027 (A): estoque da fabrica (insumos) =====================
+# Mesmo GetProdutos do estoque (nenhum GET novo). Tudo fora das 2 categorias vendaveis.
+function Normalizar-Insumos($LinhasCom, $LinhasSem) {
+    if ($null -eq $LinhasCom -or $null -eq $LinhasSem) { throw 'linhas de produtos ausentes para insumos' }
+    $linhas = @(
+        @($LinhasCom | ForEach-Object { $_ })
+        @($LinhasSem | ForEach-Object { $_ })
+    )
+    $insumos = @{}
+    foreach ($l in $linhas) {
+        if ($null -eq $l -or $l -isnot [pscustomobject]) { throw 'linha de produto invalida' }
+        if ((Inteiro-Positivo $l.id_loja) -ne $Cfg.filialEsperada) { throw 'filial diferente da esperada' }
+        $categoria = Campo $l 'classificacao01'
+        if ($categoria -cin $Cfg.categorias) { continue }
+        $id = Inteiro-Positivo $l.id_produto
+        if ($id -gt [int]::MaxValue) { throw 'id insumo fora do limite' }
+        $nome = Campo $l 'produto'
+        if ($nome -isnot [string] -or $nome.Length -gt 1000 -or $nome -match '[\x00-\x1F\x7F]' -or
+            [string]::IsNullOrWhiteSpace($nome)) { throw 'nome insumo invalido' }
+        if ($null -ne $categoria) {
+            if ($categoria -isnot [string] -or $categoria.Length -gt 200 -or $categoria -match '[\x00-\x1F\x7F]') {
+                throw 'categoria insumo invalida'
+            }
+            $categoria = $categoria.Trim()
+            if (-not $categoria) { $categoria = $null }
+        }
+        # unidade = unid_medida; sem ela, emb.
+        $unidade = $null
+        foreach ($campoUn in @('unid_medida', 'emb')) {
+            $v = Campo $l $campoUn
+            if ($null -eq $v) { continue }
+            if ($v -isnot [string] -or $v.Length -gt 100 -or $v -match '[\x00-\x1F\x7F]') { throw 'unidade insumo invalida' }
+            if ($v.Trim()) { $unidade = $v.Trim(); break }
+        }
+        # Valor bruto do ERP, inclusive negativo.
+        $estoque = Numero-Decimal $l.qtd_produto
+        if ([Math]::Abs($estoque) -ge 1000000000000000) { throw 'estoque insumo fora do limite' }
+        $item = [ordered]@{
+            id_produto = $id; nome = $nome; categoria = $categoria; unidade = $unidade
+            estoque = $estoque; dtalteracao_erp = (Data-Erp (Campo $l 'dtalteracao'))
+        }
+        $chave = $id.ToString($Invariant)
+        if ($insumos.ContainsKey($chave)) {
+            # Varios EANs ou as duas consultas: so aceito se identico.
+            $ant = $insumos[$chave]
+            foreach ($c in @('nome', 'categoria', 'unidade', 'dtalteracao_erp')) {
+                if ($ant[$c] -cne $item[$c]) { throw 'linhas do mesmo insumo divergem' }
+            }
+            if ($ant.estoque -ne $item.estoque) { throw 'linhas do mesmo insumo divergem' }
+        } else { $insumos[$chave] = $item }
+    }
+    $itens = @($insumos.Values | Sort-Object { $_.id_produto })
+    if ($itens.Count -eq 0 -or $itens.Count -gt 10000) { throw 'quantidade de insumos invalida' }
+    return [pscustomobject]@{ itens = $itens }
+}
+
+# $Coleta = instante do GetProdutos ($ColetadoEm do estoque), nunca a hora do envio:
+# a foto diaria cai no dia SP em que os dados foram lidos, mesmo com atraso dos outros fluxos.
+function Sincronizar-Insumos($LinhasCom, $LinhasSem, [string]$Coleta) {
+    $script:InsumosFalhou = $false
+    if ($BackfillDias -gt 0) { return }
+    $faseIns = 'coleta'
+    try {
+        # Sem fallback para a hora atual: instante ausente/invalido/fora da janela = exit 7.
+        if ($Coleta -cnotmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$') { throw 'coleta insumos invalida' }
+        $instante = [DateTimeOffset]::ParseExact($Coleta, "yyyy-MM-dd'T'HH:mm:ss.fff'Z'", $Invariant, [Globalization.DateTimeStyles]::AssumeUniversal)
+        $agora = [DateTimeOffset]::UtcNow
+        if ($instante -gt $agora.AddMinutes(5) -or $instante -lt $agora.AddHours(-23)) { throw 'coleta insumos fora da janela' }
+        $faseIns = 'normalizacao'
+        $execucao = [guid]::NewGuid().ToString('D')
+        $normal = Normalizar-Insumos $LinhasCom $LinhasSem
+        $faseIns = 'sanidade'
+        $estadoPathIns = Join-Path $Pasta ('insumos-ultimo-ok-' + $Cfg.modo + '.json')
+        if (Test-Path -LiteralPath $estadoPathIns) {
+            $anterior = Get-Content -LiteralPath $estadoPathIns -Raw -Encoding UTF8 | ConvertFrom-Json
+            $qtdAnterior = Inteiro-Positivo $anterior.linhas
+            if ($normal.itens.Count -lt ($qtdAnterior * 0.5)) { throw 'queda insumos maior que 50%' }
+        }
+        if ($Real) {
+            $faseIns = 'rpc'
+            if (-not $script:Token) { $script:Token = Entrar-Supabase }
+            $r = Chamar-Rpc 'solidcon_receber_insumos' @{
+                p_itens = $normal.itens; p_coletado_em = $coleta; p_execucao_id = $execucao
+            }
+            if ($r.status -cne 'ok' -or $r.execucao_id -cne $execucao -or $r.linhas -ne $normal.itens.Count -or
+                [DateTimeOffset]::Parse($r.coletado_em, $Invariant) -ne [DateTimeOffset]::Parse($coleta, $Invariant)) {
+                throw 'insumos nao confirmados'
+            }
+        } else {
+            $faseIns = 'saida-teste'
+            Salvar-Json ([ordered]@{
+                coletado_em = $coleta; execucao_id = $execucao; linhas = $normal.itens.Count; itens = $normal.itens
+            }) (Join-Path $Pasta 'insumos-normalizados.json')
+        }
+        $faseIns = 'estado-local'
+        Salvar-Json ([ordered]@{ linhas = $normal.itens.Count; coletado_em = $coleta; execucao_id = $execucao }) $estadoPathIns
+        Log ('OK insumos modo={0} linhas={1} execucao={2} coletado_em={3}' -f $Cfg.modo, $normal.itens.Count, $execucao, $coleta)
+    } catch {
+        $script:InsumosFalhou = $true
+        if ($faseIns -ceq 'rpc') { $script:Token = $null }
+        try { Log ('ERRO insumos fase={0}; outros fluxos preservados.' -f $faseIns) } catch {}
+    }
+}
+
+# ===================== 027 (C): formas de pagamento por dia =====================
+function Ler-ModalidadesErp([string]$Dia) {
+    if ($Dia -notmatch '^\d{4}-\d{2}-\d{2}$') { throw 'dia invalido' }
+    # Unica rota de modalidades autorizada. GET, sem proxy ou redirecionamento.
+    $url = $api.GetLeftPart([UriPartial]::Authority) + '/api/Vendas/resumo-modalidade-data?idFilial=4&data=' + $Dia
+    $pedido = [Net.HttpWebRequest]::Create($url)
+    $pedido.Method = 'GET'; $pedido.Proxy = $null; $pedido.AllowAutoRedirect = $false
+    $pedido.Timeout = 60000; $pedido.ReadWriteTimeout = 60000; $pedido.Accept = 'application/json'
+    $script:ModHttpStatus = $null
+    try {
+        $resposta = $pedido.GetResponse()
+    } catch {
+        $ex = $_.Exception
+        while ($null -ne $ex -and $ex -isnot [Net.WebException]) { $ex = $ex.InnerException }
+        if ($null -eq $ex -or $null -eq $ex.Response) { throw 'ERP modalidades sem resposta' }
+        $resposta = $ex.Response
+    }
+    try {
+        $script:ModHttpStatus = [int]$resposta.StatusCode
+        $leitor = New-Object IO.StreamReader($resposta.GetResponseStream(), [Text.Encoding]::UTF8, $true)
+        try { $corpo = $leitor.ReadToEnd() } finally { $leitor.Dispose() }
+    } finally { $resposta.Dispose() }
+    return [pscustomobject]@{ status = $script:ModHttpStatus; corpo = [string]$corpo }
+}
+
+# Linhas ERP: idModalidade, nmModalidade, vlModalidade, qtdePagamentos.
+# vlSangria/vlFundo nunca sao lidos nem enviados.
+function Normalizar-Modalidades($Linhas) {
+    $itens = @{}
+    [decimal]$total = 0
+    foreach ($l in @($Linhas)) {
+        if ($null -eq $l -or $l -isnot [pscustomobject]) { throw 'modalidade invalida' }
+        $id = Inteiro-NaoNegativo (Campo $l 'idModalidade') ([int]::MaxValue)
+        $nome = Campo $l 'nmModalidade'
+        if ($null -ne $nome) {
+            if ($nome -isnot [string] -or $nome.Length -gt 100 -or $nome -match '[\x00-\x1F\x7F]') { throw 'nome modalidade invalido' }
+            $nome = $nome.Trim()
+            if (-not $nome) { $nome = $null }
+        }
+        $vl = Campo $l 'vlModalidade'
+        if ($null -eq $vl) { throw 'vlModalidade obrigatorio' }
+        $centavos = Centavos-Venda $vl # negativo rejeita o lote do dia
+        $qtde = Inteiro-NaoNegativo (Campo $l 'qtdePagamentos') ([int]::MaxValue)
+        $chave = $id.ToString($Invariant)
+        if ($itens.ContainsKey($chave)) { throw 'modalidade duplicada no dia' }
+        $itens[$chave] = [ordered]@{ id_modalidade = $id; nome = $nome; valor_centavos = $centavos; qtde_pagamentos = $qtde }
+        $total += $centavos
+    }
+    if ($itens.Count -gt 200) { throw 'modalidades fora do limite' }
+    if ($total -gt [long]::MaxValue) { throw 'total modalidades excede bigint' }
+    return [pscustomobject]@{ itens = @($itens.Values | Sort-Object { $_.id_modalidade }); valor_total_centavos = [long]$total }
+}
+
+function Linhas-JsonArray([string]$Json) {
+    if ([string]::IsNullOrEmpty($Json) -or -not $Json.TrimStart().StartsWith('[') -or $Json.Length -gt 1MB) {
+        throw 'resposta modalidades invalida'
+    }
+    $linhas = @(ConvertFrom-Json -InputObject $Json)
+    # PS 5.1 pode devolver o array inteiro como um unico objeto.
+    if ($linhas.Count -eq 1 -and $linhas[0] -is [array]) { $linhas = @($linhas[0]) }
+    return ,$linhas
+}
+
+function Sincronizar-Modalidades {
+    $script:ModalidadesFalhou = $false
+    $faseMod = 'agenda'; $reservaGravada = $false; $consulta = $null
+    # Reserva diaria separada por modo (como ficha).
+    $consultaPath = Join-Path $Pasta ('modalidades-consulta-' + $Cfg.modo + '.json')
+    try {
+        $agoraSP = [TimeZoneInfo]::ConvertTime([DateTimeOffset]::UtcNow, $ZonaSP)
+        $hoje = $agoraSP.Date
+        # Dias fechados: ciclo normal = ontem; backfill = os N dias ate ontem.
+        if ($BackfillDias -gt 0) {
+            [string[]]$dias = @(($BackfillDias..1) | ForEach-Object { $hoje.AddDays(-$_).ToString('yyyy-MM-dd', $Invariant) })
+        } else {
+            [string[]]$dias = @($hoje.AddDays(-1).ToString('yyyy-MM-dd', $Invariant))
+        }
+        $porDia = $null
+        if ($ArquivoModalidades) {
+            # Teste offline: array de linhas ERP com campo extra 'dia'; sem horario nem reserva.
+            $faseMod = 'arquivo'
+            $porDia = @{}
+            foreach ($l in (Linhas-JsonArray (Get-Content -LiteralPath $ArquivoModalidades -Raw -Encoding UTF8))) {
+                $d = Campo $l 'dia'
+                if ($d -isnot [string] -or $d -cnotin $dias) { throw 'arquivo modalidades com dia fora do periodo' }
+                if (-not $porDia.ContainsKey($d)) { $porDia[$d] = New-Object Collections.ArrayList }
+                [void]$porDia[$d].Add($l)
+            }
+        } elseif ($ArquivoEntrada -or $ArquivoEntradaSemSaldo -or $ArquivoVendas -or $ArquivoClientes -or $ArquivoVendasClientes) {
+            throw 'informe ArquivoModalidades para teste offline'
+        } elseif ($BackfillDias -le 0) {
+            if ($agoraSP.Hour -lt 6) { Log 'ADIADO modalidades antes de 06:00 America/Sao_Paulo.'; return }
+            $diaReserva = $agoraSP.ToString('yyyy-MM-dd', $Invariant)
+            if (Test-Path -LiteralPath $consultaPath) {
+                $consulta = Get-Content -LiteralPath $consultaPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ($consulta.versao -ne 1 -or $consulta.dia -isnot [string] -or
+                    $consulta.status -cnotin @('pendente','ok','erro')) { throw 'estado modalidades invalido' }
+                if ([DateTime]::ParseExact($consulta.dia, 'yyyy-MM-dd', $Invariant) -gt $hoje) { throw 'estado modalidades futuro' }
+                if ($consulta.dia -ceq $diaReserva) {
+                    if ($consulta.status -cne 'ok') { $script:ModalidadesFalhou = $true }
+                    Log ('SEM GET modalidades consulta ja reservada hoje status={0}.' -f $consulta.status)
+                    return
+                }
+            }
+            $consulta = [ordered]@{
+                versao=1; dia=$diaReserva; tentativa_em=[DateTimeOffset]::UtcNow.ToString('o'); status='pendente'
+            }
+            # Reserva duravel ANTES do GET: timeout/queda nao gera nova consulta hoje.
+            $faseMod = 'reserva'
+            Salvar-Json $consulta $consultaPath
+            $reservaGravada = $true
+        }
+
+        $gravados = 0; $gets = 0; [decimal]$totalPeriodo = 0
+        $diasComErroErp = New-Object Collections.ArrayList
+        foreach ($dia in $dias) {
+            $faseMod = 'leitura'
+            if ($null -ne $porDia) {
+                $linhas = @()
+                if ($porDia.ContainsKey($dia)) { $linhas = @($porDia[$dia] | ForEach-Object { $_ }) }
+            } else {
+                # Pausa de 700ms entre GETs ao ERP.
+                if ($gets -gt 0) { Start-Sleep -Milliseconds 700 }
+                $gets++
+                $http = Ler-ModalidadesErp $dia
+                if ($http.status -eq 500) {
+                    # Dia que quebra o ERP: pulado, sem RPC; dados ja gravados desse dia ficam.
+                    [void]$diasComErroErp.Add($dia)
+                    Log ('AVISO modalidades ERP http=500 dia={0}; dia pulado, dados existentes preservados.' -f $dia)
+                    continue
+                }
+                if ($http.status -ne 200) { throw 'status modalidades inesperado' }
+                $linhas = Linhas-JsonArray $http.corpo
+            }
+            $faseMod = 'normalizacao'
+            $normal = Normalizar-Modalidades $linhas
+            $coleta = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", $Invariant)
+            $execucao = [guid]::NewGuid().ToString('D')
+            if ($Real) {
+                $faseMod = 'rpc'
+                if (-not $script:Token) { $script:Token = Entrar-Supabase }
+                $r = Chamar-Rpc 'solidcon_receber_vendas_modalidade' @{
+                    p_dia = $dia; p_itens = @($normal.itens); p_coletado_em = $coleta; p_execucao_id = $execucao
+                }
+                if ($r.status -cne 'ok' -or $r.dia -cne $dia -or $r.execucao_id -cne $execucao -or
+                    $r.linhas -ne @($normal.itens).Count -or $r.valor_total_centavos -ne $normal.valor_total_centavos -or
+                    [DateTimeOffset]::Parse($r.coletado_em, $Invariant) -ne [DateTimeOffset]::Parse($coleta, $Invariant)) {
+                    throw 'modalidades nao confirmadas'
+                }
+            } else {
+                $faseMod = 'saida-teste'
+                Salvar-Json ([ordered]@{
+                    dia = $dia; coletado_em = $coleta; execucao_id = $execucao; linhas = @($normal.itens).Count
+                    valor_total_centavos = $normal.valor_total_centavos; itens = @($normal.itens)
+                }) (Join-Path $Pasta ('modalidades-' + $dia + '.json'))
+            }
+            $gravados++
+            $totalPeriodo += $normal.valor_total_centavos
+        }
+        if (-not $Real) {
+            $faseMod = 'saida-teste'
+            Salvar-Json ([ordered]@{
+                dias = $dias.Count; dias_gravados = $gravados; gets_erp = $gets
+                valor_total_centavos = [long]$totalPeriodo; dias_com_erro_erp = @($diasComErroErp)
+            }) (Join-Path $Pasta 'modalidades-resumo.json')
+        }
+        if ($diasComErroErp.Count -gt 0) {
+            Log ('AVISO modalidades dias_com_erro_erp={0} dias={1}' -f $diasComErroErp.Count, ($diasComErroErp -join ','))
+            # Nada gravado e so dias com erro: falha (exit 8). Com algo gravado: exit 0 com aviso.
+            if ($gravados -eq 0) { $faseMod = 'erp-500'; throw 'nenhum dia gravado' }
+        }
+        if ($reservaGravada) { $faseMod = 'estado-local'; $consulta.status = 'ok'; Salvar-Json $consulta $consultaPath }
+        Log ('OK modalidades dias={0} gravados={1} gets={2} total_centavos={3}' -f $dias.Count, $gravados, $gets, [long]$totalPeriodo)
+    } catch {
+        $script:ModalidadesFalhou = $true
+        if ($faseMod -ceq 'rpc') { $script:Token = $null }
+        if ($reservaGravada) {
+            try { $consulta.status = 'erro'; Salvar-Json $consulta $consultaPath } catch {}
+        }
+        # Mensagem fixa; so o numero do status HTTP, nunca corpo.
+        $httpLog = if ($null -ne $script:ModHttpStatus) { ' http=' + [int]$script:ModHttpStatus } else { '' }
+        try { Log ('ERRO modalidades fase={0}{1}; outros fluxos preservados.' -f $faseMod, $httpLog) } catch {}
+    }
+}
+
 try {
     $Cfg = Get-Content -LiteralPath $Config -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($Cfg.modo -cnotin @('teste', 'real')) { throw 'modo invalido' }
     $Real = $Cfg.modo -ceq 'real'
-    if ($Real -and ($ArquivoEntrada -or $ArquivoEntradaSemSaldo -or $ArquivoVendas -or $ArquivoClientes -or $ArquivoVendasClientes)) { throw 'arquivos locais so podem ser usados em teste' }
+    if ($Real -and ($ArquivoEntrada -or $ArquivoEntradaSemSaldo -or $ArquivoVendas -or $ArquivoClientes -or $ArquivoVendasClientes -or $ArquivoModalidades)) { throw 'arquivos locais so podem ser usados em teste' }
     if ([bool]$ArquivoEntrada -ne [bool]$ArquivoEntradaSemSaldo) { throw 'informar os dois arquivos ou nenhum' }
+    if ($ArquivoModalidades -and -not $ArquivoEntrada) { throw 'teste offline de modalidades exige os arquivos de produtos' }
     if ((Inteiro-Positivo $Cfg.filialEsperada) -ne 4) { throw 'filial deve ser 4' }
     if ($Cfg.categorias -isnot [array] -or $Cfg.categorias.Count -ne 2) { throw 'categorias invalidas' }
     foreach ($categoria in $CategoriasPermitidas) {
@@ -1342,7 +1651,14 @@ try {
     }
     try { Sincronizar-VendasClientes }
     catch { $VendasClientesFalhou=$true; try { Log 'ERRO vendas-clientes falha local; estoque, vendas, clientes e ficha preservados.' } catch {} }
-    $CodigoSaida = if (-not $EstoqueOk) { 1 } elseif ($VendasFalhou) { 3 } elseif ($ClientesFalhou) { 4 } elseif ($FichaFalhou) { 5 } elseif ($VendasClientesFalhou) { 6 } else { 0 }
+    # 027: insumos (mesmo GetProdutos) so no ciclo normal e com estoque vendavel OK neste ciclo.
+    if ($EstoqueOk -and $BackfillDias -le 0) {
+        try { Sincronizar-Insumos $linhasComSaldo $linhasSemSaldo $ColetadoEm }
+        catch { $InsumosFalhou=$true; try { Log 'ERRO insumos falha local; outros fluxos preservados.' } catch {} }
+    }
+    try { Sincronizar-Modalidades }
+    catch { $ModalidadesFalhou=$true; try { Log 'ERRO modalidades falha local; outros fluxos preservados.' } catch {} }
+    $CodigoSaida = if (-not $EstoqueOk) { 1 } elseif ($VendasFalhou) { 3 } elseif ($ClientesFalhou) { 4 } elseif ($FichaFalhou) { 5 } elseif ($VendasClientesFalhou) { 6 } elseif ($InsumosFalhou) { 7 } elseif ($ModalidadesFalhou) { 8 } else { 0 }
 } catch {
     # Configuracao/mutex invalidos impedem ambos os fluxos, sem chamadas extras.
     try { Log ('ERRO fase=' + $Fase + ': ' + $Mensagem) } catch {}

@@ -22,6 +22,7 @@ separação eh_equipe/eh_admin por papel. Consulte MERGE_DECISOES.md.
 | 024_solidcon_publico.sql | Disponibilidade e ranking públicos, vínculo codigo_erp | APLICADA (2026-11-11) |
 | 025_solidcon_ficha.sql | Ficha técnica pública dos sabores | APLICADA (2026-11-11) |
 | 026_solidcon_vendas_clientes.sql | Histórico de compras por cliente | APLICADA (2026-11-11) |
+| 027_solidcon_fabrica_financeiro.sql | Estoque da fábrica, endereço CNPJ, formas de pagamento | APLICADA (2026-11-11) |
 
 019/020 são nomes de organização do repositório. Os objetos SQL, RPCs e a
 assinatura chamada pelo script continuam iguais. 017/018 não são reutilizados
@@ -729,3 +730,86 @@ Migração candidata para análise de compras por cliente no painel da Vitral (`
 3. **Controle de Acesso:** RLS habilitada; somente equipe autenticada (`eh_equipe()`) tem acesso de leitura (`SELECT`). Escrita restrita à RPC com token de integração autorizado.
 4. **Descarte:** Histórico limitado a 400 dias com expurgo automático garantido no banco.
 
+## 027_solidcon_fabrica_financeiro.sql — Estoque da fábrica, endereço CNPJ e formas de pagamento (APLICADA em 2026-11-11)
+
+Pré-requisitos: 019/023 completas e `eh_equipe()`/`eh_admin()`. Não altera
+`solidcon_receber_produtos` nem o espelho vendável. Reaplicável (idempotente;
+validada aplicando duas vezes, inclusive com clientes já gravados pela 023).
+Locks: insumos (5100,27), modalidades (5100,28), clientes (5100,23).
+Leitura de todas as tabelas novas: somente `authenticated` com `eh_equipe()`;
+anon sem grant algum; escrita só pelas RPCs SECURITY DEFINER
+(`search_path=pg_catalog`, exige `integracoes_autorizadas`). Todo DELETE/UPDATE
+tem WHERE (safeupdate). Logs `*_sync` guardam só metadados técnicos.
+
+### (A) Estoque da fábrica — `solidcon_insumos`, `solidcon_insumos_diario`
+
+- `solidcon_insumos(id_produto int PK, nome, categoria, unidade, estoque numeric, presente, dtalteracao_erp, atualizado_em)`:
+  todos os itens do GetProdutos **fora** das 2 categorias vendáveis. `estoque` é o
+  valor bruto do ERP (pode ser negativo). `unidade` = `unid_medida`, ou `emb` se vazia.
+  `atualizado_em` = coleta do último snapshot que tocou a linha.
+- `solidcon_insumos_diario(dia, id_produto, estoque)`, PK `(dia,id_produto)`: foto do dia
+  (America/Sao_Paulo) = última coleta aceita do dia, só itens presentes; retenção 400 dias.
+- `solidcon_insumos_sync`: log técnico (status, linhas, coletado_em, execucao_id, motivo).
+- RPC `solidcon_receber_insumos(p_itens jsonb, p_coletado_em timestamptz, p_execucao_id uuid)`:
+  whitelist exata (`id_produto,nome,categoria,unidade,estoque,dtalteracao_erp`), 1..10.000 itens/8 MiB,
+  id inteiro 1..2^31-1 sem duplicata, data ERP com fuso. Rejeita `categoria_vendavel` (as 2
+  categorias) e `produto_vendavel` (id presente em `solidcon_produtos`). Guardas padrão:
+  `coleta_fora_da_janela`, `snapshot_antigo`, `execucao_repetida`, `snapshot_vazio`,
+  `queda_superior_50_porcento` (linhas×2 < presentes). Aceito: upsert, ausentes viram
+  `presente=false` (estoque fica com o último valor visto), foto do dia substituída.
+  Retorno: `{status, linhas, dia, coletado_em, execucao_id}`.
+
+### (B) Endereço de clientes CNPJ — colunas em `solidcon_clientes`
+
+- Novas colunas nullable: `logradouro` (≤100), `numero` (≤30), `complemento` (≤60), `cep` (exatamente 8 dígitos)
+  — limites do `vmEndereco` do ERP.
+- Constraint `solidcon_clientes_027_endereco_cpf`: `tipo='cpf'` ⇒ os 4 campos são null.
+- `solidcon_receber_clientes` (mesma assinatura/retorno da 023) aceita o payload antigo
+  (9 campos; endereço fica null) **e** o novo (13 campos; os 4 juntos). CPF com qualquer
+  campo de endereço rejeita o lote (`endereco_cpf`); CEP fora do padrão = `cep_invalido`;
+  campo extra (ex.: `cdMunicipio`) continua `campos_invalidos`. Na gravação, endereço só
+  entra se `tipo='cnpj'`.
+
+### (C) Formas de pagamento — `solidcon_vendas_modalidade`
+
+- `solidcon_vendas_modalidade(dia, id_modalidade int, nome, valor_centavos bigint ≥0, qtde_pagamentos int ≥0, coletado_em)`,
+  PK `(dia,id_modalidade)`. **Não guarda sangria nem fundo de caixa.**
+- `solidcon_vendas_modalidade_sync`: log técnico por dia.
+- RPC `solidcon_receber_vendas_modalidade(p_dia date, p_itens jsonb, p_coletado_em, p_execucao_id)`:
+  dia entre hoje-400 e hoje (SP), 0..200 itens (`[]` = dia sem venda, substitui por 0 linhas),
+  whitelist exata, inteiros sem fração, valor negativo rejeitado, modalidade duplicada rejeitada,
+  `snapshot_antigo` se já houver envio OK do mesmo dia com coleta igual ou mais nova.
+  Substitui o dia (`DELETE ... WHERE dia=p_dia` + INSERT). Retorno:
+  `{status, dia, linhas, valor_total_centavos, coletado_em, execucao_id}`.
+
+### Validação local da 027 (PG 17 isolado, imagem Supabase)
+
+Aplicada 2× sobre 004–026; casos: aceite, queda 50% (exatos 50% passam), snapshot antigo,
+execução repetida, categoria/produto vendável, campos extras, ids inválidos, data sem fuso,
+retenção 400/401 dias, foto do dia; clientes v1 e v2, CPF com endereço (RPC e constraint),
+limites 100/30/60/8; modalidades com substituição do dia, negativo, fração, duplicada, sangria
+extra, dia futuro/h-401, nome null; anon sem SELECT/EXECUTE, autenticado fora da equipe
+vê 0 linhas, não-autorizado recebe 42501. Payloads gerados pelo coletor aceitos pelas 3 RPCs.
+
+### Como desfazer a 027 (somente mediante decisão)
+
+Reaplicar o corpo da RPC da 023 (o coletor novo passa a ser recusado com `campos_invalidos`
+e precisa voltar à versão anterior), remover as 4 colunas/constraints `solidcon_clientes_027_*`
+e dropar `solidcon_insumos*`, `solidcon_vendas_modalidade*` e as duas RPCs novas.
+
+### Texto LGPD proposto (027) — para a Política de Privacidade
+
+Proposta para o dono/Vitral publicarem em `privacidade.html` (nova versão da política;
+não editado nesta tarefa):
+
+> **Dados vindos do nosso sistema de gestão (ERP).** Para atender clientes que já compram
+> conosco, nossa equipe interna consulta no painel administrativo uma cópia resumida do
+> cadastro do sistema de gestão: nome, documento (CPF ou CNPJ), telefone, e-mail, cidade,
+> bairro e UF e, **somente para empresas (CNPJ)**, o endereço comercial (logradouro, número,
+> complemento e CEP), usado para logística de entrega e atendimento comercial. Endereço de
+> pessoa física (CPF) não é copiado. Também guardamos o histórico de compras por cliente por
+> até 400 dias. Totais diários por forma de pagamento e o estoque da fábrica são dados da
+> empresa, sem informação pessoal. Base legal: execução de contrato e legítimo interesse
+> (art. 7º, V e IX). Acesso restrito à equipe autenticada; nada é público nem repassado a
+> terceiros. O cadastro é substituído a cada atualização diária: o que for excluído ou
+> corrigido no sistema de gestão some ou é corrigido aqui na atualização seguinte.

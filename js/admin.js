@@ -1178,6 +1178,7 @@
             '<div id="vitrine-vinculo"></div>' +
             '<div id="vitrine-giro"></div>' +
             '<div id="vitrine-entradas"></div>' +
+            '<div id="vitrine-insumos"></div>' +
             '<div class="adm-card p-5 mb-5"><p class="font-bold mb-3">Produtos do site e estoque correspondente</p>' + solidTabelaPorProduto() +
             '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">O vínculo usa só o código ERP confirmado (família de 12 dígitos, id ou EAN). Estoque em caixas; o total soma as caixas convertidas em potes.</p></div>' +
             '<details class="mb-2"' + (solid.listaAberta ? ' open' : '') + '><summary class="text-sm font-bold cursor-pointer mb-3">Todos os produtos do ERP (' + NUM.format(solid.produtos.length) + ')</summary>' +
@@ -1207,6 +1208,7 @@
         desenharVinculo();
         desenharGiro();
         desenharEntradas();
+        desenharInsumos();
     }
 
     /* ---- Vincular ao SOLIDCON: o admin confirma a família ERP de cada produto do site ---- */
@@ -2105,6 +2107,8 @@
         if (qual === 'regioes' && precisa(geo)) carregarGeoClientes();
         if (qual === 'vitrine' && precisa(giro)) carregarGiro();
         if (qual === 'vitrine' && precisa(ent)) carregarEntradas();
+        if (qual === 'vitrine' && precisa(ins)) carregarInsumos();
+        if (qual === 'vendas' && precisa(pag)) carregarPagamentos();
         if (qual === 'dashboard') dashCarregarProgressivo(forcar);
     }
     function recarregarErp() { carregarErpDaAba(abaAtual, true); }
@@ -2190,14 +2194,25 @@
             '<section class="mt-12 pt-8" style="border-top:1px solid var(--adm-borda)"><div class="flex items-center gap-2 mb-1">' + SELO_ERP +
                 '<p class="font-bold text-lg">Vendas no ERP</p></div>' +
                 '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Total de todas as vendas registradas no SOLIDCON (inclui o que não veio pelo site).</p><div id="vendas-erp"></div></section>' +
-            '<section id="vendas-clientes" class="mt-12 pt-8" style="border-top:1px solid var(--adm-borda)"></section>';
+            '<section id="vendas-clientes" class="mt-12 pt-8" style="border-top:1px solid var(--adm-borda)"></section>' +
+            '<section id="vendas-pagamentos" class="mt-12 pt-8" style="border-top:1px solid var(--adm-borda)"></section>';
         desenharVendasBase();
         desenharVendasErp();
         desenharVendasClientes();
+        desenharVendasPagamentos();
     }
 
     // ---- Clientes: cadastros no ERP (tabela solidcon_clientes, ainda a instalar) ----
-    var scli = { carregado: false, carregando: false, ausente: false, erro: null, lista: [], docs: null, busca: '', mostrar: 50 };
+    var scli = { carregado: false, carregando: false, ausente: false, erro: null, lista: [], docs: null, busca: '', mostrar: 50, semEndereco: false };
+    var SCLI_COLS = 'documento,tipo,nome,telefone,celular,email,cidade,bairro,estado,coletado_em';
+    // Erro de coluna inexistente (migração 027 ainda não aplicada): NÃO é tabela ausente.
+    function scliColunaAusente(e) {
+        return !!e && (String(e.code || '') === '42703' || String(e.code || '') === 'PGRST204' ||
+            /column .*(logradouro|numero|complemento|cep)|(logradouro|complemento|cep).*(does not exist|schema cache)/i.test(String(e.message || '')));
+    }
+    function scliConsulta(cols) {
+        return vendPaginar(function () { return sb.from('solidcon_clientes').select(cols).order('nome', { ascending: true }); });
+    }
 
     function docDigitos(s) { return String(s == null ? '' : s).replace(/\D/g, ''); }
 
@@ -2215,10 +2230,11 @@
     function carregarSolidClientes() {
         scli.carregando = true;
         scliRedesenhar();
-        return vendPaginar(function () {
-            return sb.from('solidcon_clientes')
-                .select('documento,tipo,nome,telefone,celular,email,cidade,bairro,estado,coletado_em')
-                .order('nome', { ascending: true });
+        // Com endereço completo (027); se as colunas ainda não existem, repete sem elas (lista segue funcionando).
+        return scliConsulta(SCLI_COLS + ',logradouro,numero,complemento,cep').then(function (r) {
+            if (r.error && scliColunaAusente(r.error)) { scli.semEndereco = true; return scliConsulta(SCLI_COLS); }
+            scli.semEndereco = false;
+            return r;
         }).then(function (r) {
             scli.carregando = false;
             scli.ausente = false; scli.erro = null;
@@ -2291,6 +2307,20 @@
         desenharScliLista();
     }
 
+    // Endereço completo só de CNPJ (CPF nunca é exibido, mesmo que a coluna venha preenchida). Só texto: sem geocodificação.
+    function scliCep(v) {
+        var d = docDigitos(v);
+        return d.length === 8 ? d.slice(0, 5) + '-' + d.slice(5) : String(v || '').trim();
+    }
+    function scliEndereco(c) {
+        if (String(c.tipo || '').toLowerCase() !== 'cnpj') return '—';
+        var rua = [String(c.logradouro || '').trim(), String(c.numero || '').trim()].filter(Boolean).join(', ');
+        var partes = [rua, String(c.complemento || '').trim()].filter(Boolean).join(' — ');
+        var cep = scliCep(c.cep);
+        if (!partes && !cep) return scli.semEndereco ? '<span class="text-xs" style="color:var(--adm-tinta-3)">ainda não instalado</span>' : '—';
+        return esc(partes || '—') + (cep ? '<br><span class="text-xs" style="color:var(--adm-tinta-3)">CEP ' + esc(cep) + '</span>' : '');
+    }
+
     function desenharScliLista() {
         var alvo = $('#scli-lista');
         if (!alvo) return;
@@ -2304,7 +2334,7 @@
         listaClientesCombinada().forEach(function (c) { var d = docNorm(c.cnpj || c.cpf, c.cnpj ? 'cnpj' : 'cpf'); if (d) siteDocs[d] = true; });
         var parte = lista.slice(0, scli.mostrar);
         alvo.innerHTML = '<div class="adm-card p-5"><div class="overflow-x-auto"><table class="adm-tabela"><thead><tr>' +
-            '<th>Nome</th><th>Documento</th><th>Contato</th><th>Local</th><th>Coletado</th></tr></thead><tbody>' +
+            '<th>Nome</th><th>Documento</th><th>Contato</th><th>Local</th><th>Endereço (CNPJ)</th><th>Coletado</th></tr></thead><tbody>' +
             parte.map(function (c) {
                 var tipo = String(c.tipo || '').toUpperCase();
                 var contato = [c.telefone, c.celular].filter(Boolean).join(' / ');
@@ -2315,6 +2345,7 @@
                     '<td>' + (tipo ? '<span class="text-xs" style="color:var(--adm-tinta-3)">' + esc(tipo) + '</span> ' : '') + esc(c.documento || '—') + '</td>' +
                     '<td>' + esc(contato || '—') + (c.email ? '<br><span class="text-xs" style="color:var(--adm-tinta-3)">' + esc(c.email) + '</span>' : '') + '</td>' +
                     '<td>' + esc(local || '—') + '</td>' +
+                    '<td>' + scliEndereco(c) + '</td>' +
                     '<td>' + esc(c.coletado_em ? dataHora(c.coletado_em) : '—') + '</td></tr>';
             }).join('') + '</tbody></table></div>' +
             '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">' + NUM.format(parte.length) + ' de ' + NUM.format(lista.length) + ' cadastros</p>' +
@@ -3079,6 +3110,344 @@
     }
 
     /* ===================================================================
+     * Vitrine — Estoque da fábrica (matéria-prima e embalagens) — migração 027, SOMENTE LEITURA
+     * Fontes: solidcon_insumos (saldo atual, pode ser negativo) e solidcon_insumos_diario (foto diária).
+     * Consumo médio diário = soma das QUEDAS entre fotos de dias consecutivos ÷ nº de pares de dias,
+     * nos últimos INS_JANELA_CONSUMO dias (aumento = compra/ajuste, ignorado). Sem 027: "ainda não instalado".
+     * =================================================================== */
+    var INS_LIMITE = 80000, INS_PRODUTOS_LIMITE = 5000, INS_JANELA = 120, INS_JANELA_CONSUMO = 30, INS_MIN_PARES = 3;
+    var ins = { carregado: false, carregando: false, ausente: false, erro: null, produtos: [], diario: [], truncado: false,
+                busca: '', categoria: 'todas', soAlerta: false, todos: false, memo: null };
+
+    function carregarInsumos() {
+        ins.carregando = true;
+        insRedesenhar();
+        var d = new Date(Date.now() - INS_JANELA * 86400000);
+        var desde = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        return Promise.all([
+            vendPaginar(function () {
+                return sb.from('solidcon_insumos').select('id_produto,nome,categoria,unidade,estoque,presente,dtalteracao_erp,atualizado_em')
+                    .order('nome', { ascending: true }).order('id_produto', { ascending: true });
+            }, INS_PRODUTOS_LIMITE),
+            vendPaginar(function () {
+                return sb.from('solidcon_insumos_diario').select('dia,id_produto,estoque')
+                    .gte('dia', desde).order('dia', { ascending: true }).order('id_produto', { ascending: true });
+            }, INS_LIMITE)
+        ]).then(function (rs) {
+            ins.carregando = false;
+            var falha = rs.filter(function (r) { return r.error; })[0];
+            ins.ausente = false; ins.erro = null;
+            if (falha) {
+                if (solidTabelaAusente(falha.error)) ins.ausente = true; else ins.erro = String(falha.error.message || falha.error);
+                ins.carregado = false;
+            } else {
+                ins.produtos = rs[0].data || []; ins.diario = rs[1].data || [];
+                // Exatamente no teto não prova completude: nada é calculado.
+                ins.truncado = ins.produtos.length >= INS_PRODUTOS_LIMITE || ins.diario.length >= INS_LIMITE;
+                ins.memo = null;
+                ins.carregado = true;
+            }
+            insRedesenhar();
+        }).catch(function (e) {
+            ins.carregando = false; ins.erro = String(e && e.message || e); ins.carregado = false; insRedesenhar();
+        });
+    }
+
+    function insRedesenhar() {
+        dashAtualizarResumo();
+        abasParaRedesenhar.vitrine = true;
+        desenharAbaSeSuja(abaAtual);
+    }
+
+    function insFmt(n) { return Number(n).toLocaleString('pt-BR', { maximumFractionDigits: 2 }); }
+
+    // Por insumo: {pares, consumo} nos últimos INS_JANELA_CONSUMO dias. Memoizado pela referência do diário.
+    function insConsumos() {
+        if (ins.memo && ins.memo.d === ins.diario) return ins.memo.r;
+        var foto = {};
+        ins.diario.forEach(function (l) { foto[String(l.id_produto) + '|' + l.dia] = Number(l.estoque); });
+        var r = {};
+        ins.diario.forEach(function (l) {
+            if (giroDiasAtras(l.dia) >= INS_JANELA_CONSUMO) return;
+            var id = String(l.id_produto), ant = foto[id + '|' + entDiaAnterior(l.dia)], cur = Number(l.estoque);
+            if (ant == null || !isFinite(ant) || !isFinite(cur)) return;
+            var o = r[id] || (r[id] = { pares: 0, consumo: 0 });
+            o.pares++;
+            if (ant > cur) o.consumo += ant - cur;
+        });
+        ins.memo = { d: ins.diario, r: r };
+        return r;
+    }
+
+    // Itens com situação: negativo, zerado, critico (<=7 dias), atencao (<=15), ok, sem-consumo, sem-historico, fora (fora da lista).
+    function insItens() {
+        var cons = insConsumos();
+        return ins.produtos.map(function (p) {
+            var est = Number(p.estoque) || 0, c = cons[String(p.id_produto)];
+            var media = c && c.pares >= INS_MIN_PARES ? c.consumo / c.pares : null;
+            var dias = media != null && media > 0 && est > 0 ? est / media : null;
+            var sit = p.presente === false ? 'fora' : est < 0 ? 'negativo' : est === 0 ? 'zerado' :
+                media == null ? 'sem-historico' : media <= 0 ? 'sem-consumo' :
+                dias <= GIRO_CRITICO ? 'critico' : dias <= GIRO_ATENCAO ? 'atencao' : 'ok';
+            return { p: p, est: est, media: media, dias: dias, sit: sit };
+        });
+    }
+    var INS_ORDEM = { negativo: 0, zerado: 1, critico: 2, atencao: 3, ok: 4, 'sem-consumo': 5, 'sem-historico': 6, fora: 7 };
+    function insOrdenar(itens) {
+        return itens.slice().sort(function (a, b) {
+            return INS_ORDEM[a.sit] - INS_ORDEM[b.sit] || (a.dias == null ? 1e9 : a.dias) - (b.dias == null ? 1e9 : b.dias) ||
+                String(a.p.nome).localeCompare(String(b.p.nome));
+        });
+    }
+    function insEhAlerta(i) { return i.sit === 'negativo' || i.sit === 'zerado' || i.sit === 'critico' || i.sit === 'atencao'; }
+
+    function insSelo(sit) {
+        var m = {
+            negativo: ['adm-selo-cancelado', 'fa-circle-minus', 'Negativo'], zerado: ['adm-selo-cancelado', 'fa-ban', 'Zerado'],
+            critico: ['adm-selo-cancelado', 'fa-triangle-exclamation', 'Crítico'], atencao: ['adm-selo-aguardando', 'fa-arrow-down', 'Atenção'],
+            ok: ['adm-selo-confirmado', 'fa-check', 'Ok']
+        }[sit];
+        if (m) return '<span class="adm-selo ' + m[0] + '"><i class="fa-solid ' + m[1] + '"></i>' + m[2] + '</span>';
+        var rot = sit === 'fora' ? 'Fora da lista' : sit === 'sem-consumo' ? 'Sem consumo' : 'Sem histórico';
+        return '<span class="adm-selo" style="background:rgba(255,255,255,.08);color:var(--adm-tinta-2)"><i class="fa-solid fa-hourglass-half"></i>' + rot + '</span>';
+    }
+
+    function insContagens(itens) {
+        var n = { negativo: 0, zerado: 0, critico: 0, atencao: 0 };
+        itens.forEach(function (i) { if (n[i.sit] != null) n[i.sit]++; });
+        return n;
+    }
+
+    function insLinhas(lista) {
+        return lista.map(function (i) {
+            return '<tr><td>' + esc(i.p.nome) + '</td><td>' + esc(i.p.categoria || '—') + '</td><td>' + esc(i.p.unidade || '—') + '</td>' +
+                '<td class="num"' + (i.est < 0 ? ' style="color:#FCA5A5"' : '') + '>' + esc(insFmt(i.est)) + '</td>' +
+                '<td class="num">' + (i.media == null ? '—' : esc(insFmt(i.media))) + '</td>' +
+                '<td class="num">' + (i.dias == null ? '—' : esc(giroFmt(i.dias, 0) + ' dias')) + '</td>' +
+                '<td>' + insSelo(i.sit) + '</td></tr>';
+        }).join('');
+    }
+
+    function desenharInsumos() {
+        var alvo = $('#vitrine-insumos');
+        if (!alvo) return;
+        var cab = '<div class="flex items-center gap-2 mb-1"><span class="adm-selo" style="background:rgba(168,85,247,.14);color:#D8B4FE">ERP SOLIDCON</span><p class="font-bold">Estoque da fábrica</p></div>' +
+            '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Matéria-prima e embalagens (somente leitura).</p>';
+        var est = resEstado(ins, 'estoque da fábrica', 'ins');
+        if (est) {
+            alvo.innerHTML = cab + '<div class="adm-card p-5 mb-5">' + (ins.ausente ? '<p class="text-sm" style="color:var(--adm-tinta-3)">Estoque da fábrica: ainda não instalado neste banco (migração 027).</p>' : est) + '</div>';
+            var b = alvo.querySelector('[data-res-tentar]');
+            if (b) b.addEventListener('click', function () { var f = RES_CARREGADORES[b.getAttribute('data-res-tentar')]; if (f) f(); });
+            return;
+        }
+        var itens = insItens(), n = insContagens(itens);
+        var cats = {}; ins.produtos.forEach(function (p) { if (p.categoria) cats[p.categoria] = true; });
+        var catLista = Object.keys(cats).sort();
+        if (ins.categoria !== 'todas' && !cats[ins.categoria]) ins.categoria = 'todas';
+        var cons = insConsumos(), comHist = Object.keys(cons).some(function (k) { return cons[k].pares >= INS_MIN_PARES; });
+        alvo.innerHTML = cab + '<div class="adm-card p-5 mb-5">' +
+            '<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">' +
+            resKpi('Negativos', NUM.format(n.negativo), 'saldo abaixo de zero') + resKpi('Zerados', NUM.format(n.zerado), 'sem saldo') +
+            resKpi('Críticos', NUM.format(n.critico), 'acabam em até ' + GIRO_CRITICO + ' dias') + resKpi('Em atenção', NUM.format(n.atencao), 'acabam em até ' + GIRO_ATENCAO + ' dias') + '</div>' +
+            '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Consumo médio = quedas de saldo entre dias consecutivos nos últimos ' + INS_JANELA_CONSUMO + ' dias (compras e aumentos de saldo são ignorados). ' +
+            'O histórico diário começa na instalação' + (comHist ? '' : ': ainda não há dias suficientes (mínimo ' + INS_MIN_PARES + ') para calcular o consumo e o “acaba em”') + '.</p>' +
+            '<div class="flex items-center flex-wrap gap-3 mb-4">' +
+                '<input type="search" id="ins-busca" class="adm-input" style="max-width:16rem;padding:.55rem .7rem" placeholder="Buscar insumo" aria-label="Buscar insumo" value="' + esc(ins.busca) + '">' +
+                '<select id="ins-cat" class="adm-input" style="max-width:14rem;padding:.55rem .7rem" aria-label="Filtrar por categoria"><option value="todas">Todas as categorias</option>' +
+                    catLista.map(function (c) { return '<option value="' + esc(c) + '"' + (ins.categoria === c ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('') + '</select>' +
+                '<button type="button" class="adm-chip' + (ins.soAlerta ? ' is-ativo' : '') + '" id="ins-alerta">Só alertas</button></div>' +
+            '<div id="ins-lista"></div></div>';
+        $('#ins-busca').addEventListener('input', function (ev) { ins.busca = ev.target.value; desenharInsLista(); });
+        $('#ins-cat').addEventListener('change', function (ev) { ins.categoria = ev.target.value; desenharInsLista(); });
+        $('#ins-alerta').addEventListener('click', function () { ins.soAlerta = !ins.soAlerta; desenharInsumos(); });
+        desenharInsLista();
+    }
+
+    function desenharInsLista() {
+        var alvo = $('#ins-lista');
+        if (!alvo) return;
+        if (!ins.produtos.length) { alvo.innerHTML = '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum insumo sincronizado ainda.</p>'; return; }
+        var q = ins.busca.trim().toLowerCase();
+        var lista = insOrdenar(insItens()).filter(function (i) {
+            if (ins.soAlerta && !insEhAlerta(i)) return false;
+            if (ins.categoria !== 'todas' && i.p.categoria !== ins.categoria) return false;
+            return !q || String(i.p.nome || '').toLowerCase().indexOf(q) >= 0 || String(i.p.categoria || '').toLowerCase().indexOf(q) >= 0;
+        });
+        if (!lista.length) { alvo.innerHTML = '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum insumo com esses filtros.</p>'; return; }
+        var vis = ins.todos ? lista : lista.slice(0, 25);
+        alvo.innerHTML = '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Insumo</th><th>Categoria</th><th>Unidade</th><th class="num">Estoque</th>' +
+            '<th class="num">Consumo médio/dia</th><th class="num">Acaba em</th><th>Situação</th></tr></thead><tbody>' + insLinhas(vis) + '</tbody></table></div>' +
+            '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">' + NUM.format(vis.length) + ' de ' + NUM.format(lista.length) + ' insumos</p>' +
+            (lista.length > 25 ? '<button type="button" class="adm-botao-fantasma mt-3" id="ins-todos">' + (ins.todos ? 'Mostrar só os 25 primeiros' : 'Mostrar todos') + '</button>' : '');
+        var t = alvo.querySelector('#ins-todos');
+        if (t) t.addEventListener('click', function () { ins.todos = !ins.todos; desenharInsLista(); });
+    }
+
+    // Card do Resumão: contagens e os itens mais urgentes (mesma conta da Vitrine).
+    function resCardInsumos() {
+        if (!dashVe('vitrine')) return [];
+        var tit = 'Estoque da fábrica', est = resEstado(ins, 'estoque da fábrica', 'ins');
+        if (est) return [resCard(tit, 'vitrine', 'Matéria-prima e embalagens.', est)];
+        var itens = insItens(), n = insContagens(itens), al = insOrdenar(itens).filter(insEhAlerta).slice(0, 6);
+        return [resCard(tit, 'vitrine', 'Matéria-prima e embalagens · histórico diário começa na instalação',
+            '<p class="text-sm mb-3"><strong>' + NUM.format(n.negativo) + '</strong> negativo(s) · <strong>' + NUM.format(n.zerado) + '</strong> zerado(s) · <strong>' + NUM.format(n.critico) +
+            '</strong> crítico(s) · <strong>' + NUM.format(n.atencao) + '</strong> em atenção</p>' +
+            (al.length ? '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Insumo</th><th class="num">Estoque</th><th class="num">Acaba em</th><th>Situação</th></tr></thead><tbody>' +
+                al.map(function (i) {
+                    return '<tr><td>' + esc(i.p.nome) + '</td><td class="num">' + esc(insFmt(i.est)) + ' ' + esc(i.p.unidade || '') + '</td><td class="num">' + (i.dias == null ? '—' : esc(giroFmt(i.dias, 0) + ' dias')) + '</td><td>' + insSelo(i.sit) + '</td></tr>';
+                }).join('') + '</tbody></table></div>'
+                : '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum insumo em alerta.</p>'))];
+    }
+
+    /* ===================================================================
+     * Dashboard de vendas (ERP) — Formas de pagamento (solidcon_vendas_modalidade, migração 027)
+     * Valor e quantidade de pagamentos por forma e por mês (barras empilhadas) e % do total.
+     * Só leitura; admin (como o resto do ERP financeiro). Sem 027: "ainda não instalado".
+     * =================================================================== */
+    var PAG_LIMITE = 40000, PAG_LEITURA_MESES = 18, PAG_TOPO = 6;
+    var PAG_CORES = ['#F28C4B', '#60A5FA', '#34D399', '#FBBF24', '#A78BFA', '#F472B6', '#94A3B8'];
+    var pag = { carregado: false, carregando: false, ausente: false, erro: null, linhas: [], truncado: false, metrica: 'valor', memo: null };
+
+    function carregarPagamentos() {
+        pag.carregando = true;
+        pagRedesenhar();
+        var h = new Date(), d = new Date(h.getFullYear(), h.getMonth() - (PAG_LEITURA_MESES - 1), 1);
+        var desde = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-01';
+        return vendPaginar(function () {
+            return sb.from('solidcon_vendas_modalidade').select('dia,id_modalidade,nome,valor_centavos,qtde_pagamentos')
+                .gte('dia', desde).order('dia', { ascending: true }).order('id_modalidade', { ascending: true });
+        }, PAG_LIMITE).then(function (r) {
+            pag.carregando = false; pag.ausente = false; pag.erro = null;
+            if (r.error) {
+                if (solidTabelaAusente(r.error)) pag.ausente = true; else pag.erro = String(r.error.message || r.error);
+                pag.carregado = false;
+            } else {
+                pag.linhas = r.data || [];
+                pag.truncado = pag.linhas.length >= PAG_LIMITE;
+                pag.memo = null;
+                pag.carregado = true;
+            }
+            pagRedesenhar();
+        }).catch(function (e) {
+            pag.carregando = false; pag.erro = String(e && e.message || e); pag.carregado = false; pagRedesenhar();
+        });
+    }
+
+    function pagRedesenhar() {
+        dashAtualizarResumo();
+        if (abaAtual === 'vendas' && $('#vendas-pagamentos')) desenharVendasPagamentos();
+        else abasParaRedesenhar.vendas = true;
+        desenharAbaSeSuja(abaAtual);
+    }
+
+    // Janela de n meses consecutivos terminando no último mês com dado; séries = top PAG_TOPO por valor + "Outras".
+    function pagDados(n) {
+        if (pag.memo && pag.memo.l === pag.linhas && pag.memo.n === n) return pag.memo.r;
+        var meses = {}, por = {};
+        pag.linhas.forEach(function (l) {
+            var m = String(l.dia).slice(0, 7) + '-01';
+            meses[m] = true;
+            var k = String(l.id_modalidade), s = por[k] || (por[k] = { k: k, nome: l.nome, ultimo: l.dia, v: {}, q: {}, tv: 0, tq: 0 });
+            if (l.dia >= s.ultimo && l.nome) { s.nome = l.nome; s.ultimo = l.dia; }
+            s.v[m] = (s.v[m] || 0) + vendNum(l.valor_centavos); s.q[m] = (s.q[m] || 0) + vendNum(l.qtde_pagamentos);
+        });
+        var cols = vendJanela(Object.keys(meses).sort(), n), set = {}; cols.forEach(function (c) { set[c] = true; });
+        var lista = Object.keys(por).map(function (k) {
+            var s = por[k]; cols.forEach(function (c) { s.tv += s.v[c] || 0; s.tq += s.q[c] || 0; });
+            return s;
+        }).filter(function (s) { return s.tv > 0 || s.tq > 0; }).sort(function (a, b) { return b.tv - a.tv || b.tq - a.tq; });
+        var topo = lista.slice(0, PAG_TOPO), resto = lista.slice(PAG_TOPO);
+        if (resto.length) {
+            var o = { k: 'outras', nome: 'Outras formas', v: {}, q: {}, tv: 0, tq: 0 };
+            resto.forEach(function (s) { cols.forEach(function (c) { o.v[c] = (o.v[c] || 0) + (s.v[c] || 0); o.q[c] = (o.q[c] || 0) + (s.q[c] || 0); }); o.tv += s.tv; o.tq += s.tq; });
+            topo.push(o);
+        }
+        topo.forEach(function (s, i) { s.cor = PAG_CORES[Math.min(i, PAG_CORES.length - 1)]; });
+        var r = { cols: cols, series: topo, totV: topo.reduce(function (a, s) { return a + s.tv; }, 0), totQ: topo.reduce(function (a, s) { return a + s.tq; }, 0) };
+        pag.memo = { l: pag.linhas, n: n, r: r };
+        return r;
+    }
+
+    // Barras empilhadas em SVG; m = 'v' (valor) ou 'q' (quantidade).
+    function pagBarras(D, m) {
+        if (!D.cols.length) return '<p class="text-sm" style="color:var(--adm-tinta-3)">Sem dados.</p>';
+        var W = 640, H = 200, pl = 46, pr = 8, pt = 8, pb = 22, atual = vendMesAtual();
+        var tot = D.cols.map(function (c) { return D.series.reduce(function (a, s) { return a + (s[m][c] || 0); }, 0); });
+        var max = Math.max.apply(null, tot.concat([1]));
+        var slot = (W - pl - pr) / D.cols.length, bw = Math.max(2, slot * 0.7);
+        var y = function (v) { return pt + (H - pt - pb) * (1 - v / max); };
+        var fmtv = function (v) { return m === 'v' ? brl(v) : NUM.format(Math.round(v)); };
+        var out = '<svg viewBox="0 0 ' + W + ' ' + H + '" style="width:100%;height:auto" role="img" aria-label="' + esc(m === 'v' ? 'Valor por forma de pagamento e mês' : 'Quantidade de pagamentos por forma e mês') + '">' +
+            '<line x1="' + pl + '" y1="' + y(0) + '" x2="' + (W - pr) + '" y2="' + y(0) + '" stroke="var(--adm-borda-forte)"/>' +
+            '<line x1="' + pl + '" y1="' + y(max) + '" x2="' + (W - pr) + '" y2="' + y(max) + '" stroke="var(--adm-borda)" stroke-dasharray="3 3"/>' +
+            '<text x="' + (pl - 5) + '" y="' + (y(max) + 4) + '" text-anchor="end" font-size="10" fill="var(--adm-tinta-3)">' + esc(m === 'v' ? brlCurto(max) : NUM.format(Math.round(max))) + '</text>' +
+            '<text x="' + (pl - 5) + '" y="' + (y(0) + 4) + '" text-anchor="end" font-size="10" fill="var(--adm-tinta-3)">0</text>';
+        D.cols.forEach(function (c, i) {
+            var x = pl + i * slot + (slot - bw) / 2, base = 0;
+            D.series.forEach(function (s) {
+                var v = s[m][c] || 0;
+                if (v <= 0) return;
+                var y1 = y(base + v), y0 = y(base);
+                out += '<rect x="' + x.toFixed(1) + '" y="' + y1.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(0, y0 - y1).toFixed(1) + '" fill="' + s.cor + '"' +
+                    (c === atual ? ' fill-opacity=".6"' : '') + '><title>' + esc(vendMesRotulo(c) + (c === atual ? ' (parcial)' : '') + ' · ' + s.nome + ': ' + fmtv(v)) + '</title></rect>';
+                base += v;
+            });
+            out += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="10" fill="var(--adm-tinta-3)">' + esc(vendMesRotulo(c)) + '</text>';
+        });
+        return out + '</svg>';
+    }
+
+    function pagLegenda(D) {
+        return '<p class="text-xs mb-2 flex flex-wrap gap-x-4 gap-y-1" style="color:var(--adm-tinta-2)">' + D.series.map(function (s) {
+            return '<span><span style="color:' + s.cor + '">■</span> ' + esc(s.nome) + '</span>';
+        }).join('') + '</p>';
+    }
+
+    function pagTabela(D, max) {
+        var linhas = D.series.slice(0, max || D.series.length);
+        return '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Forma</th><th class="num">Valor</th><th class="num">% do valor</th><th class="num">Pagamentos</th><th class="num">% dos pagamentos</th><th class="num">Valor médio</th></tr></thead><tbody>' +
+            linhas.map(function (s) {
+                return '<tr><td><span style="color:' + s.cor + '">■</span> ' + esc(s.nome) + '</td><td class="num">' + esc(brl(s.tv)) + '</td>' +
+                    '<td class="num">' + esc(D.totV > 0 ? giroFmt(s.tv / D.totV * 100, 1) + '%' : '—') + '</td><td class="num">' + esc(NUM.format(Math.round(s.tq))) + '</td>' +
+                    '<td class="num">' + esc(D.totQ > 0 ? giroFmt(s.tq / D.totQ * 100, 1) + '%' : '—') + '</td><td class="num">' + (s.tq > 0 ? esc(brl(Math.round(s.tv / s.tq))) : '—') + '</td></tr>';
+            }).join('') + '</tbody></table></div>';
+    }
+
+    function pagPeriodoTxt(D) { return D.cols.length ? vendMesRotulo(D.cols[0]) + ' a ' + vendMesRotulo(D.cols[D.cols.length - 1]) : ''; }
+
+    function desenharVendasPagamentos() {
+        var alvo = $('#vendas-pagamentos');
+        if (!alvo) return;
+        var cab = '<div class="flex items-center gap-2 mb-1">' + SELO_ERP + '<p class="font-bold text-lg">Formas de pagamento</p></div>';
+        var est = resEstado(pag, 'formas de pagamento', 'pag');
+        if (est) {
+            alvo.innerHTML = cab + '<div class="adm-card p-5 mt-3">' + (pag.ausente ? '<p class="text-sm" style="color:var(--adm-tinta-3)">Formas de pagamento: ainda não instalado neste banco (migração 027).</p>' : est) + '</div>';
+            var b = alvo.querySelector('[data-res-tentar]');
+            if (b) b.addEventListener('click', function () { var f = RES_CARREGADORES[b.getAttribute('data-res-tentar')]; if (f) f(); });
+            return;
+        }
+        var D = pagDados(12);
+        if (!D.series.length) { alvo.innerHTML = cab + '<div class="adm-card p-5 mt-3"><p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum pagamento sincronizado ainda.</p></div>'; return; }
+        var m = pag.metrica === 'qtde' ? 'q' : 'v';
+        alvo.innerHTML = cab + '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Por forma de pagamento no ERP, ' + esc(pagPeriodoTxt(D)) + ' (mês corrente parcial, mais claro). Uma venda pode usar mais de uma forma.</p>' +
+            '<div class="adm-card p-5"><div class="flex items-center justify-between flex-wrap gap-3 mb-3"><p class="adm-tile-rotulo">' + (m === 'v' ? 'Valor por mês' : 'Pagamentos por mês') + '</p>' +
+            '<select id="pag-metrica" class="adm-input" style="max-width:12rem;padding:.45rem .6rem" aria-label="Métrica"><option value="valor"' + (m === 'v' ? ' selected' : '') + '>Valor (R$)</option><option value="qtde"' + (m === 'q' ? ' selected' : '') + '>Quantidade</option></select></div>' +
+            pagLegenda(D) + pagBarras(D, m) + '<div class="mt-5">' + pagTabela(D) + '</div></div>';
+        $('#pag-metrica').addEventListener('change', function (ev) { pag.metrica = ev.target.value === 'qtde' ? 'qtde' : 'valor'; desenharVendasPagamentos(); });
+    }
+
+    // Card do Resumão: últimos 6 meses (valor) e principais formas.
+    function resCardPagamentos() {
+        if (!dashVe('vendas')) return [];
+        var tit = 'Formas de pagamento', est = resEstado(pag, 'formas de pagamento', 'pag');
+        if (est) return [resCard(tit, 'vendas', 'Valor e quantidade por forma e por mês.', est, true)];
+        var D = pagDados(6);
+        if (!D.series.length) return [resCard(tit, 'vendas', null, '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum pagamento sincronizado ainda.</p>', true)];
+        return [resCard(tit, 'vendas', 'ERP · ' + pagPeriodoTxt(D) + ' · valor por mês (mês corrente parcial)',
+            pagLegenda(D) + pagBarras(D, 'v') + '<div class="mt-4">' + pagTabela(D, 5) + '</div>', true)];
+    }
+
+    /* ===================================================================
      * Regiões — mapa de clientes do ERP por bairro (só contagens, sem dado pessoal)
      * Lê só documento/tipo/cidade/bairro/estado de solidcon_clientes (nunca nome ou telefone). O documento fica
      * em memória apenas para somar o valor comprado (cmp) por bairro; nunca é exibido nem enviado ao geocodificador.
@@ -3539,10 +3908,10 @@
         if (dash.rodando) return;
         var adm = papel === 'admin';
         var passos = [];
-        if (adm) passos.push([vend, carregarVendas]);
+        if (adm) { passos.push([vend, carregarVendas]); passos.push([pag, carregarPagamentos]); }
         passos.push([cmp, carregarCompras]);
         passos.push([scli, carregarSolidClientes]);
-        if (adm) { passos.push([solid, carregarSolidcon]); passos.push([giro, carregarGiro]); passos.push([ent, carregarEntradas]); passos.push([geo, carregarGeoClientes]); }
+        if (adm) { passos.push([solid, carregarSolidcon]); passos.push([giro, carregarGiro]); passos.push([ent, carregarEntradas]); passos.push([ins, carregarInsumos]); passos.push([geo, carregarGeoClientes]); }
         dash.rodando = true;
         (function prox(i) {
             if (i >= passos.length) { dash.rodando = false; return; }
@@ -3558,7 +3927,7 @@
     // Single-flight: clique repetido em "Tentar de novo" não dispara consulta enquanto a anterior roda.
     function resUma(o, fn) { return function () { if (!o.carregando) fn(); }; }
     var RES_CARREGADORES = { vend: resUma(vend, carregarVendas), cmp: resUma(cmp, carregarCompras), scli: resUma(scli, carregarSolidClientes),
-                             solid: resUma(solid, carregarSolidcon), giro: resUma(giro, carregarGiro), ent: resUma(ent, carregarEntradas), geo: resUma(geo, carregarGeoClientes) };
+                             solid: resUma(solid, carregarSolidcon), giro: resUma(giro, carregarGiro), ent: resUma(ent, carregarEntradas), ins: resUma(ins, carregarInsumos), pag: resUma(pag, carregarPagamentos), geo: resUma(geo, carregarGeoClientes) };
 
     function resMotivo(o) {
         return o.ausente ? 'ainda não instalado' : o.erro ? 'falha ao carregar' : o.truncado ? 'histórico grande demais' : 'carregando…';
@@ -3801,8 +4170,8 @@
             '<div class="mb-4"><p class="font-bold text-xl">Resumão</p>' +
             '<p class="text-xs" style="color:var(--adm-tinta-3)">Os principais números em um só lugar. Cada bloco aparece quando seus dados chegam; “ver detalhes” abre a aba de origem.</p></div>' +
             '<div class="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-8">' + (Array.isArray(kpis) ? kpis.join('') : kpis) + '</div>' +
-            resSecao('fa-chart-line', 'Vendas', toArr(resSeguro(resCardsVendas))) +
-            resSecao('fa-boxes-stacked', 'Estoque', toArr(resSeguro(resCardsEstoque))) +
+            resSecao('fa-chart-line', 'Vendas', toArr(resSeguro(resCardsVendas)).concat(toArr(resSeguro(resCardPagamentos)))) +
+            resSecao('fa-boxes-stacked', 'Estoque', toArr(resSeguro(resCardsEstoque)).concat(toArr(resSeguro(resCardInsumos)))) +
             resSecao('fa-users', 'Clientes', toArr(resSeguro(resCardsClientes))) +
             resSecao('fa-clipboard-list', 'Pedidos e site', toArr(resSeguro(resCardsPedidos)));
         var met = alvo.querySelector('#res-metrica');
