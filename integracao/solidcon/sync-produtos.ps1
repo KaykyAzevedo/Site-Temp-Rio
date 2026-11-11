@@ -5,7 +5,8 @@ param(
     [string]$ArquivoEntrada,
     [string]$ArquivoEntradaSemSaldo,
     [ValidateRange(1,400)][int]$BackfillDias,
-    [string]$ArquivoVendas
+    [string]$ArquivoVendas,
+    [string]$ArquivoClientes
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -27,6 +28,7 @@ $SupabasePronto = $false
 $Real = $false
 $CodigoSaida = 1
 $VendasFalhou = $false
+$ClientesFalhou = $false
 $EstoqueOk = $false
 $jsonComSaldo = $null
 $jsonSemSaldo = $null
@@ -155,7 +157,7 @@ function Entrar-Supabase {
 }
 
 function Chamar-Rpc([string]$Nome, $Dados) {
-    if ($Nome -notin @('solidcon_receber_produtos', 'solidcon_registrar_falha', 'solidcon_receber_vendas')) { throw 'RPC invalida' }
+    if ($Nome -notin @('solidcon_receber_produtos', 'solidcon_registrar_falha', 'solidcon_receber_vendas', 'solidcon_receber_clientes')) { throw 'RPC invalida' }
     $corpo = ConvertTo-Json -InputObject $Dados -Depth 20 -Compress
     $opcoes = @{
         Uri = ($SupabaseBase + '/rest/v1/rpc/' + $Nome); Method = 'Post'
@@ -351,7 +353,7 @@ function Sincronizar-Vendas($Catalogo) {
         } catch {
             $script:VendasFalhou=$true; Log 'ERRO vendas arquivo offline invalido.'; return
         }
-    } elseif ($ArquivoEntrada -or $ArquivoEntradaSemSaldo) {
+    } elseif ($ArquivoEntrada -or $ArquivoEntradaSemSaldo -or $ArquivoClientes) {
         $script:VendasFalhou=$true; Log 'ERRO vendas informe -ArquivoVendas para manter o teste totalmente offline.'; return
     }
     [decimal]$totalPeriodo=0; [decimal]$potesPeriodo=0; $linhasPeriodo=0; $diasComLinhas=0; $falhas=0
@@ -411,11 +413,205 @@ function Sincronizar-Vendas($Catalogo) {
     }
 }
 
+function Campo-Cliente($Objeto, [string]$Nome) {
+    $p = $Objeto.PSObject.Properties[$Nome]
+    if ($null -eq $p) { return $null }
+    # Nao permitir que o pipeline converta [] em null ou [valor] em escalar.
+    return ,$p.Value
+}
+
+function Texto-Cliente($Valor, [int]$Limite, [bool]$Obrigatorio = $false) {
+    if ($null -eq $Valor) {
+        if ($Obrigatorio) { throw 'campo cliente obrigatorio' }
+        return $null
+    }
+    if ($Valor -isnot [string] -or $Valor.Length -gt $Limite -or $Valor -match '[\x00-\x1F\x7F]') {
+        throw 'campo cliente invalido'
+    }
+    $texto = $Valor.Trim()
+    if (-not $texto) {
+        if ($Obrigatorio) { throw 'campo cliente obrigatorio' }
+        return $null
+    }
+    return $texto
+}
+
+function Normalizar-Clientes([string]$Json) {
+    if (-not $Json.TrimStart().StartsWith('[') -or $Json.Length -gt 32MB) { throw 'resposta clientes invalida' }
+    # PS 5.1 pode devolver um unico objeto que e o array inteiro. Desembrulhar.
+    $linhas = @(ConvertFrom-Json -InputObject $Json)
+    if ($linhas.Count -eq 1 -and $linhas[0] -is [array]) { $linhas = @($linhas[0]) }
+    if ($linhas.Count -eq 0 -or $linhas.Count -gt 10000) { throw 'quantidade clientes invalida' }
+    $vistos = @{}; $itens = New-Object Collections.ArrayList
+    # Digitos verificadores (modulo 11) de CPF/CNPJ: p1/p2 sao os pesos dos 2 DVs.
+    $DvValido = {
+        param([string]$d, [int[]]$p1, [int[]]$p2)
+        if ($d -match '^(\d)\1+$') { return $false }
+        foreach ($pesos in $p1, $p2) {
+            $k = $pesos.Count; $s = 0
+            for ($i = 0; $i -lt $k; $i++) { $s += [int][string]$d[$i] * $pesos[$i] }
+            $r = $s % 11; $dv = if ($r -lt 2) { 0 } else { 11 - $r }
+            if ($dv -ne [int][string]$d[$k]) { return $false }
+        }
+        return $true
+    }
+    foreach ($l in $linhas) {
+        if ($null -eq $l -or $l -isnot [pscustomobject]) { throw 'cliente invalido' }
+        $cpf = Campo-Cliente $l 'cpf'
+        if ($null -eq $cpf -or ($cpf -isnot [string] -and $cpf -isnot [int] -and $cpf -isnot [long])) {
+            throw 'documento ausente ou impreciso'
+        }
+        $texto = if ($cpf -is [IFormattable]) { $cpf.ToString($null, $Invariant) } else { [string]$cpf }
+        if ($texto -notmatch '^[0-9./ -]{1,32}$') { throw 'documento invalido' }
+        $digitos = $texto -replace '[^0-9]', ''
+        if ($digitos.Length -notin 1..14) { throw 'documento invalido' }
+        # ERP usa cpf Int64 para ambos. tipo explicito opcional resolve zeros ambiguos.
+        $tipo = Campo-Cliente $l 'tipo'
+        if ($null -ne $tipo) {
+            if ($tipo -isnot [string] -or $tipo -cnotin @('cpf','cnpj')) { throw 'tipo cliente invalido' }
+        } elseif ($digitos.Length -gt 11) {
+            $tipo = 'cnpj'
+        } else {
+            # Ate 11 digitos: um CNPJ com zeros a esquerda perdidos fica igual a um CPF.
+            # Desempata pelos digitos verificadores; se ambos ou nenhum baterem, CPF.
+            $cpfOk = & $DvValido $digitos.PadLeft(11, [char]'0') @(10..2) @(11..2)
+            $cnpjOk = & $DvValido $digitos.PadLeft(14, [char]'0') @(5,4,3,2,9,8,7,6,5,4,3,2) @(6,5,4,3,2,9,8,7,6,5,4,3,2)
+            $tipo = if ($cnpjOk -and -not $cpfOk) { 'cnpj' } else { 'cpf' }
+        }
+        $tamanho = if ($tipo -ceq 'cnpj') { 14 } else { 11 }
+        if ($digitos.Length -gt $tamanho) { throw 'tipo e documento divergentes' }
+        $documento = $digitos.PadLeft($tamanho, [char]'0')
+        if ($vistos.ContainsKey($documento)) { throw 'documento duplicado' }
+        $vistos[$documento] = $true
+        $endereco = Campo-Cliente $l 'endereco'
+        if ($null -ne $endereco -and $endereco -isnot [pscustomobject]) { throw 'endereco invalido' }
+        $cidade = $null; $bairro = $null; $estado = $null
+        if ($null -ne $endereco) {
+            $cidade = Texto-Cliente (Campo-Cliente $endereco 'cidade') 100
+            $bairro = Texto-Cliente (Campo-Cliente $endereco 'bairro') 100
+            $estado = Texto-Cliente (Campo-Cliente $endereco 'estado') 2
+            if ($null -ne $estado) {
+                $estado = $estado.ToUpperInvariant()
+                if ($estado -cnotmatch '^[A-Z]{2}$') { throw 'estado cliente invalido' }
+            }
+        }
+        # Projecao explicita: nenhum outro campo da resposta ERP e enviado/gravado.
+        [void]$itens.Add([ordered]@{
+            documento=$documento; tipo=$tipo; nome=(Texto-Cliente (Campo-Cliente $l 'nome') 150 $true)
+            telefone=(Texto-Cliente (Campo-Cliente $l 'telefone') 32)
+            celular=(Texto-Cliente (Campo-Cliente $l 'celular') 32)
+            email=(Texto-Cliente (Campo-Cliente $l 'email') 254)
+            cidade=$cidade; bairro=$bairro; estado=$estado
+        })
+    }
+    $normalizados = @($itens | Sort-Object { $_.documento })
+    if ([Text.Encoding]::UTF8.GetByteCount((ConvertTo-Json -InputObject $normalizados -Depth 5 -Compress)) -gt 16MB) {
+        throw 'payload clientes fora do limite'
+    }
+    return [pscustomobject]@{ itens=$normalizados }
+}
+
+function Ler-ClientesErp {
+    # Unica rota de CLIENTES autorizada. Sem retry, proxy, redirect ou URL livre.
+    $pedido = [Net.HttpWebRequest]::Create('http://localhost:5100/api/Cliente/GetClientes')
+    $pedido.Method = 'GET'; $pedido.Proxy = $null; $pedido.AllowAutoRedirect = $false
+    $pedido.Timeout = 120000; $pedido.ReadWriteTimeout = 120000; $pedido.Accept = 'application/json'
+    $resposta = $pedido.GetResponse()
+    try {
+        if ([int]$resposta.StatusCode -ne 200) { throw 'status clientes inesperado' }
+        $leitor = New-Object IO.StreamReader($resposta.GetResponseStream(), [Text.Encoding]::UTF8, $true)
+        try { return $leitor.ReadToEnd() } finally { $leitor.Dispose() }
+    } finally { $resposta.Dispose() }
+}
+
+function Sincronizar-Clientes {
+    $script:ClientesFalhou = $false
+    if ($BackfillDias -gt 0) { return } # Backfill continua exclusivo de vendas.
+    $faseClientes = 'agenda'; $reservaGravada = $false; $consulta = $null
+    $consultaPath = Join-Path $Pasta 'clientes-consulta.json'
+    try {
+        if ($ArquivoClientes) {
+            $faseClientes = 'arquivo'
+            $jsonClientes = Get-Content -LiteralPath $ArquivoClientes -Raw -Encoding UTF8
+        } else {
+            if ($ArquivoEntrada -or $ArquivoEntradaSemSaldo -or $ArquivoVendas) {
+                throw 'informe ArquivoClientes para teste offline'
+            }
+            $agoraSP = [TimeZoneInfo]::ConvertTime([DateTimeOffset]::UtcNow, $ZonaSP)
+            $dia = $agoraSP.ToString('yyyy-MM-dd')
+            if ($agoraSP.Hour -lt 6) { Log 'ADIADO clientes antes de 06:00 America/Sao_Paulo.'; return }
+            if (Test-Path -LiteralPath $consultaPath) {
+                $consulta = Get-Content -LiteralPath $consultaPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ($consulta.versao -ne 1 -or $consulta.dia -isnot [string] -or
+                    $consulta.status -cnotin @('pendente','ok','erro')) { throw 'estado clientes invalido' }
+                $diaAnterior = [DateTime]::ParseExact($consulta.dia, 'yyyy-MM-dd', $Invariant)
+                if ($diaAnterior -gt $agoraSP.Date) { throw 'estado clientes futuro' }
+                if ($consulta.dia -ceq $dia) {
+                    if ($consulta.status -cne 'ok') { $script:ClientesFalhou = $true }
+                    Log ('SEM GET clientes consulta ja reservada hoje status={0}.' -f $consulta.status)
+                    return
+                }
+            }
+            $consulta = [ordered]@{
+                versao=1; dia=$dia; tentativa_em=[DateTimeOffset]::UtcNow.ToString('o'); status='pendente'
+            }
+            # Reserva duravel ANTES do GET. Timeout/queda do processo nao gera nova consulta hoje.
+            # Compartilhada entre teste e real; pastaSaida deve ser unica e persistente.
+            $faseClientes = 'reserva'
+            Salvar-Json $consulta $consultaPath
+            $reservaGravada = $true
+            $faseClientes = 'leitura'
+            $jsonClientes = Ler-ClientesErp
+        }
+        $coleta = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", $Invariant)
+        $execucao = [guid]::NewGuid().ToString('D')
+        $faseClientes = 'normalizacao'
+        $normal = Normalizar-Clientes $jsonClientes
+        $jsonClientes = $null
+        $estadoPathClientes = Join-Path $Pasta ('clientes-ultimo-ok-' + $Cfg.modo + '.json')
+        if (Test-Path -LiteralPath $estadoPathClientes) {
+            $anterior = Get-Content -LiteralPath $estadoPathClientes -Raw -Encoding UTF8 | ConvertFrom-Json
+            $qtdAnterior = Inteiro-Positivo $anterior.linhas
+            if ($normal.itens.Count -lt ($qtdAnterior * 0.5)) { throw 'queda clientes maior que 50%' }
+        }
+        if ($Real) {
+            $faseClientes = 'rpc'
+            if (-not $script:Token) { $script:Token = Entrar-Supabase }
+            $r = Chamar-Rpc 'solidcon_receber_clientes' @{
+                p_itens=$normal.itens; p_coletado_em=$coleta; p_execucao_id=$execucao
+            }
+            if ($r.status -cne 'ok' -or $r.execucao_id -cne $execucao -or $r.linhas -ne $normal.itens.Count -or
+                [DateTimeOffset]::Parse($r.coletado_em,$Invariant) -ne [DateTimeOffset]::Parse($coleta,$Invariant)) {
+                throw 'clientes nao confirmados'
+            }
+        } else {
+            $faseClientes = 'saida-teste'
+            Salvar-Json ([ordered]@{
+                coletado_em=$coleta; execucao_id=$execucao; linhas=$normal.itens.Count; itens=$normal.itens
+            }) (Join-Path $Pasta 'clientes-normalizados.json')
+        }
+        $faseClientes = 'estado-local'
+        Salvar-Json ([ordered]@{
+            linhas=$normal.itens.Count; coletado_em=$coleta; execucao_id=$execucao
+        }) $estadoPathClientes
+        if ($reservaGravada) { $consulta.status='ok'; Salvar-Json $consulta $consultaPath }
+        Log ('OK clientes modo={0} linhas={1} execucao={2} coletado_em={3}' -f $Cfg.modo,$normal.itens.Count,$execucao,$coleta)
+    } catch {
+        $script:ClientesFalhou = $true
+        if ($faseClientes -ceq 'rpc') { $script:Token = $null }
+        if ($reservaGravada) {
+            try { $consulta.status='erro'; Salvar-Json $consulta $consultaPath } catch {}
+        }
+        # Nunca corpo ERP/erro bruto: pode conter dado pessoal ou credencial.
+        try { Log ('ERRO clientes fase={0}; estoque e vendas preservados; sem novo GET hoje.' -f $faseClientes) } catch {}
+    }
+}
+
 try {
     $Cfg = Get-Content -LiteralPath $Config -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($Cfg.modo -cnotin @('teste', 'real')) { throw 'modo invalido' }
     $Real = $Cfg.modo -ceq 'real'
-    if ($Real -and ($ArquivoEntrada -or $ArquivoEntradaSemSaldo -or $ArquivoVendas)) { throw 'arquivos locais so podem ser usados em teste' }
+    if ($Real -and ($ArquivoEntrada -or $ArquivoEntradaSemSaldo -or $ArquivoVendas -or $ArquivoClientes)) { throw 'arquivos locais so podem ser usados em teste' }
     if ([bool]$ArquivoEntrada -ne [bool]$ArquivoEntradaSemSaldo) { throw 'informar os dois arquivos ou nenhum' }
     if ((Inteiro-Positivo $Cfg.filialEsperada) -ne 4) { throw 'filial deve ser 4' }
     if ($Cfg.categorias -isnot [array] -or $Cfg.categorias.Count -ne 2) { throw 'categorias invalidas' }
@@ -643,7 +839,9 @@ try {
     catch { Log 'AVISO vendas catalogo indisponivel; nomes/categorias nulos e formato outro.' }
     try { Sincronizar-Vendas $catalogoVendas }
     catch { $VendasFalhou=$true; Log 'ERRO vendas falha local; estoque preservado.' }
-    $CodigoSaida = if (-not $EstoqueOk) { 1 } elseif ($VendasFalhou) { 3 } else { 0 }
+    try { Sincronizar-Clientes }
+    catch { $ClientesFalhou=$true; try { Log 'ERRO clientes falha local; estoque e vendas preservados.' } catch {} }
+    $CodigoSaida = if (-not $EstoqueOk) { 1 } elseif ($VendasFalhou) { 3 } elseif ($ClientesFalhou) { 4 } else { 0 }
 } catch {
     # Configuracao/mutex invalidos impedem ambos os fluxos, sem chamadas extras.
     try { Log ('ERRO fase=' + $Fase + ': ' + $Mensagem) } catch {}

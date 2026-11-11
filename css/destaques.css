@@ -192,7 +192,8 @@
     text-align: left;
 }
 
-#destaques-hero #dest-lote[hidden] {
+#destaques-hero #dest-lote[hidden],
+#destaques-hero #dest-espera[hidden] {
     display: none;
 }
 

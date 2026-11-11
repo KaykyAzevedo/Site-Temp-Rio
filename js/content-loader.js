@@ -47,7 +47,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Fita no canto da própria foto — mesmo lugar onde qualquer loja grande
     // põe "mais vendido", não empurrando o nome do produto lá embaixo.
     const seloPodio = (prod) => {
-        const s = SELO_PODIO[prod.rankingVendas];
+        const s = SELO_PODIO[window.SolidconPublico ? SolidconPublico.posicao(prod.id) : null];
         if (!s) return '';
         return `
                         <div class="absolute top-3 left-3 z-20 flex items-center gap-1.5 pl-2 pr-3 py-1.5 rounded-lg shadow-lg"
@@ -57,15 +57,12 @@ document.addEventListener('DOMContentLoaded', () => {
                         </div>`;
     };
 
-    // rankingVendas só existe nos 49 primeiros (ver data/produtos.js); quem
-    // não tem o campo fica sem posição, sempre depois dos 49, na ordem em
-    // que já estava no arquivo — sort() é estável, então isso já sai de
-    // graça, sem precisar tratar o "resto" à parte.
-    const ordenarPorVendas = (lista) => lista.slice().sort((a, b) => {
-        const rA = a.rankingVendas || Infinity;
-        const rB = b.rankingVendas || Infinity;
-        return rA - rB;
-    });
+    // Sem projecao valida, preserva a ordem editorial do arquivo estatico.
+    const ordenarPorVendas = (lista) => window.SolidconPublico ? SolidconPublico.ordenar(lista) : lista.slice();
+    const acaoProduto = (prod) => window.SolidconPublico && SolidconPublico.esgotado(prod.id)
+        ? `<p class="text-sm font-bold text-primary-400 mb-2" role="status">Esgotado</p>
+           <a href="${SolidconPublico.esperaURL(prod.id)}" data-lista-espera class="mt-auto w-full py-2.5 text-center rounded-xl border border-primary-500/40 text-primary-400 text-xs font-bold uppercase tracking-widest">Entrar na lista de espera</a>`
+        : `<button type="button" class="cart-add-btn mt-auto w-full py-2.5 rounded-xl border border-primary-500/40 text-primary-400 text-xs font-bold uppercase tracking-widest hover:bg-primary-500 hover:text-white transition-all" data-id="${prod.id}">Adicionar</button>`;
 
     const loadCatalog = () => {
         const container = document.getElementById('catalogGrid');
@@ -77,9 +74,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     <div class="p-6 pt-4 bg-[#1A1A1A] relative z-10 flex flex-col flex-1 border-t border-white/5">
                         <h4 class="text-lg font-bold text-white uppercase tracking-wide mb-1 leading-tight">${prod.nome}</h4>
                         <p class="text-primary-500 text-xs font-bold tracking-widest uppercase mb-3">100% Natural</p>
-                        <button type="button" class="cart-add-btn mt-auto w-full py-2.5 rounded-xl border border-primary-500/40 text-primary-400 text-xs font-bold uppercase tracking-widest hover:bg-primary-500 hover:text-white transition-all" data-id="${prod.id}">
-                            Adicionar
-                        </button>
+                        ${acaoProduto(prod)}
                     </div>
                 </div>
             `).join('');
@@ -90,17 +85,18 @@ document.addEventListener('DOMContentLoaded', () => {
             if (window.initAnimations) window.initAnimations();
         };
 
-        renderCatalog(ordenarPorVendas(produtos));
-
         const searchInput = document.getElementById('searchInput');
         const avisoOrdenacao = document.getElementById('ordenacao-aviso');
+        const normalize = (str) => str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+        const atualizar = () => {
+            const termo = normalize(searchInput ? searchInput.value : '');
+            if (avisoOrdenacao) avisoOrdenacao.hidden = termo.length > 0 || !produtos.some(p => window.SolidconPublico && SolidconPublico.posicao(p.id));
+            renderCatalog(ordenarPorVendas(produtos.filter(p => normalize(p.nome).includes(termo))));
+        };
+        atualizar();
+        document.addEventListener('solidcon:publico', atualizar);
         if (searchInput) {
-            const normalize = (str) => str.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-            searchInput.addEventListener('input', (e) => {
-                const termo = normalize(e.target.value);
-                if (avisoOrdenacao) avisoOrdenacao.hidden = termo.length > 0;
-                renderCatalog(ordenarPorVendas(produtos.filter(p => normalize(p.nome).includes(termo))));
-            });
+            searchInput.addEventListener('input', atualizar);
         }
     };
 

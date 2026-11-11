@@ -26,6 +26,8 @@
 
     <!-- Carrinho: estado e persistencia (sem DOM). Precisa de config.js e produtos.js. -->
     <script src="./js/cart.js"></script>
+    <script src="./js/solidcon-publico.js"></script>
+    <style>#ordenacao-aviso[hidden] { display: none; }</style>
 
     <!-- Registro de pedidos e visitas no painel. So insere; nunca le. -->
     <script src="./js/db.js"></script>
@@ -113,7 +115,7 @@
                 <!-- Some com a busca ativa: a ordem só faz sentido pro catálogo
                      completo, não pra um resultado filtrado. -->
                 <p id="ordenacao-aviso" class="text-xs uppercase tracking-widest font-bold text-primary-500 mb-6 flex items-center gap-2 fade-in">
-                    <i class="fa-solid fa-ranking-star"></i> Ordenado pelos 50 temperos mais vendidos
+                    <i class="fa-solid fa-ranking-star"></i> Mais vendidos nos últimos 90 dias
                 </p>
 
                 <!-- Carregado via JS -->

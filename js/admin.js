@@ -858,9 +858,11 @@
 
     // Produtos do site (para casar com o ERP). Tenta com codigo_erp (021); sem a coluna, cai para id/nome.
     function carregarCatalogoSite() {
+        solid.semColuna = false;
         return sb.from('catalogo_produtos').select('id,nome,codigo_erp').order('nome', { ascending: true }).limit(1000)
             .then(function (r) {
                 if (!r.error) { solid.catalogo = r.data || []; return; }
+                solid.semColuna = /codigo_erp|42703|PGRST204/i.test(String((r.error.message || '') + ' ' + (r.error.code || '')));
                 return sb.from('catalogo_produtos').select('id,nome').order('nome', { ascending: true }).limit(1000)
                     .then(function (r2) { solid.catalogo = r2.error ? null : (r2.data || []); });
             }, function () { solid.catalogo = null; });
@@ -1033,14 +1035,83 @@
     // Casa produto do site com itens do ERP SOMENTE por código explícito do catálogo
     // (codigo_erp = id_produto ou EAN). Sem inferência por nome: SKUs do mesmo sabor
     // (pesos/caixas diferentes) trocariam o estoque.
+    // Família ERP (12 dígitos) de um item: EAN14 (caixa) -> substring(2, 12); EAN13 (pote) -> left(12).
+    // Famílias ERP (12 dígitos) de um item: EAN14 -> substr(2,12); EAN13 -> left(12). Pode haver mais de uma (ambíguo).
+    function solidFamiliasDe(p) {
+        var set = {};
+        (p.eans || []).map(String).forEach(function (e) {
+            if (/^\d{14}$/.test(e)) set[e.slice(1, 13)] = true;
+            else if (/^\d{13}$/.test(e)) set[e.slice(0, 12)] = true;
+        });
+        return Object.keys(set);
+    }
+    // Família única do item; item com 0 ou 2+ famílias distintas fica sem família (fail-open, igual ao SQL).
+    function solidFamiliaDe(p) {
+        var f = solidFamiliasDe(p);
+        return f.length === 1 ? f[0] : null;
+    }
+    // Código de 12/13/14 dígitos -> família (12 = ela mesma, 13 = left 12, 14 = substr 2,12); senão null.
+    function solidCodigoFamilia(cod) {
+        cod = String(cod == null ? '' : cod).trim();
+        if (/^\d{12}$/.test(cod)) return cod;
+        if (/^\d{13}$/.test(cod)) return cod.slice(0, 12);
+        if (/^\d{14}$/.test(cod)) return cod.slice(1, 13);
+        return null;
+    }
+
+    function solidNorm(s) {
+        return String(s == null ? '' : s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+            .replace(/\bem conserva\b/g, ' ').replace(/\btemper(?:i)?o\b/g, ' ').replace(/\bind\b/g, ' ')
+            .replace(/\bcx\.?\s*\d+\b/g, ' ').replace(/\b\d+([.,]\d+)?\s*(kg|g|gr|grs|ml|l)\b/g, ' ')
+            .replace(/[^a-z0-9]+/g, ' ').trim();
+    }
+
+    // Itens do ERP agrupados por família (caixas 24/48 do mesmo sabor); item sem família fica sozinho.
+    function solidGrupos() {
+        var mapa = {}, ordem = [];
+        solid.produtos.forEach(function (p) {
+            var f = solidFamiliaDe(p), k = f || ('id:' + p.id_produto);
+            var g = mapa[k];
+            if (!g) { g = mapa[k] = { chave: k, familia: f, itens: [] }; ordem.push(g); }
+            g.itens.push(p);
+        });
+        ordem.forEach(function (g) {
+            g.nome = vendLimparNome(g.itens[0].nome).replace(/\bEm Conserva\b/gi, '').replace(/\s{2,}/g, ' ').trim() || String(g.itens[0].nome);
+            g.chaveNome = solidNorm(g.nome);
+        });
+        return ordem;
+    }
+
+    // Potes em estoque de um conjunto de itens (caixa 24/48 convertida em potes).
+    function solidPotes(itens) {
+        return itens.reduce(function (a, p) {
+            return a + (solidEsgotado(p) ? 0 : (Number(p.estoque_disponivel) || 0) * (solidCaixa(p) || 1));
+        }, 0);
+    }
+
+    // Casa produto do site com itens do ERP SOMENTE por codigo_erp confirmado.
+    // 12 dígitos = família (preferencial). Código curto/id/EAN: acha o(s) item(ns) e resolve a família
+    // pelos EANs deles, expandindo para todas as caixas (CX24 + CX48). Famílias distintas = ambíguo.
     function solidCasar(prod) {
         var cod = prod.codigo_erp ? String(prod.codigo_erp).trim() : '';
-        if (!cod) return { itens: [], via: '', motivo: 'sem código ERP' };
-        var itens = solid.produtos.filter(function (p) {
+        if (!cod) return { itens: [], via: '', motivo: 'sem vínculo confirmado', familia: null };
+        var fam = solidCodigoFamilia(cod);
+        if (fam) {
+            var porFam = solid.produtos.filter(function (p) { return solidFamiliaDe(p) === fam; });
+            if (porFam.length) return { itens: porFam, via: 'família', motivo: '', familia: fam };
+        }
+        var diretos = solid.produtos.filter(function (p) {
             return String(p.id_produto) === cod || (p.eans || []).map(String).indexOf(cod) >= 0;
         });
-        return itens.length ? { itens: itens, via: 'código', motivo: '' }
-                            : { itens: [], via: '', motivo: 'código ' + cod + ' não encontrado no ERP' };
+        if (!diretos.length) return { itens: [], via: '', motivo: 'código ' + cod + ' não encontrado no ERP', familia: null };
+        var uniao = {};
+        diretos.forEach(function (p) { solidFamiliasDe(p).forEach(function (f) { uniao[f] = true; }); });
+        var lista = Object.keys(uniao);
+        if (lista.length > 1) return { itens: [], via: '', motivo: 'código ambíguo: aponta para ' + lista.length + ' famílias', familia: null, ambiguo: true };
+        if (lista.length === 1) {
+            return { itens: solid.produtos.filter(function (p) { return solidFamiliaDe(p) === lista[0]; }), via: 'código → família', motivo: '', familia: lista[0] };
+        }
+        return { itens: diretos, via: 'código', motivo: '', familia: null };
     }
 
     function solidSeloSituacao(itens) {
@@ -1064,7 +1135,8 @@
                 return '<span class="text-xs mr-3" style="white-space:nowrap;color:var(--adm-tinta-2)">' + (cx ? 'CX ' + cx : 'Pote') + ': <strong>' +
                        esc(NUM.format(esg ? 0 : Number(p.estoque_disponivel) || 0)) + '</strong> cx</span>';
             }).join('');
-            return '<tr><td>' + esc(prod.nome) + '</td><td>' + (chips || '<span class="text-xs" style="color:var(--adm-tinta-3)">—</span>') + '</td>' +
+            var potes = c.itens.length ? '<span class="text-xs" style="color:var(--adm-tinta-3)">= ' + esc(NUM.format(solidPotes(c.itens))) + ' potes</span>' : '';
+            return '<tr><td>' + esc(prod.nome) + '</td><td>' + (chips ? chips + potes : '<span class="text-xs" style="color:var(--adm-tinta-3)">—</span>') + '</td>' +
                    '<td>' + solidSeloSituacao(c.itens) + '</td>' +
                    '<td class="text-xs" style="color:var(--adm-tinta-3)">' + esc(c.via ? 'por ' + c.via : c.motivo) + '</td></tr>';
         }).join('');
@@ -1099,8 +1171,10 @@
             }).join('');
         }
         alvo.innerHTML = cab + solidCabecalho() + solidBlocoAtencao() +
+            '<div id="vitrine-vinculo"></div>' +
+            '<div id="vitrine-giro"></div>' +
             '<div class="adm-card p-5 mb-5"><p class="font-bold mb-3">Produtos do site e estoque correspondente</p>' + solidTabelaPorProduto() +
-            '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">O vínculo usa só o código ERP do catálogo (id ou EAN do produto no SOLIDCON); sem código válido, o produto fica sem vínculo. Estoque em caixas.</p></div>' +
+            '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">O vínculo usa só o código ERP confirmado (família de 12 dígitos, id ou EAN). Estoque em caixas; o total soma as caixas convertidas em potes.</p></div>' +
             '<details class="mb-2"' + (solid.listaAberta ? ' open' : '') + '><summary class="text-sm font-bold cursor-pointer mb-3">Todos os produtos do ERP (' + NUM.format(solid.produtos.length) + ')</summary>' +
             solidContadores() +
             '<div class="flex items-center flex-wrap gap-3 mb-4">' +
@@ -1125,7 +1199,214 @@
             b.addEventListener('click', function () { solid.caixa = b.getAttribute('data-solid-cx'); solid.listaAberta = true; desenharVitrineErp(); });
         });
         desenharSolidLista();
+        desenharVinculo();
+        desenharGiro();
     }
+
+    /* ---- Vincular ao SOLIDCON: o admin confirma a família ERP de cada produto do site ---- */
+    var vinc = { confirmarTodas: false, msg: '', ocupado: false, linhaMsg: {}, confirmarLinha: null };
+
+    function vincFamilias() {
+        return solidGrupos().filter(function (g) { return g.familia; })
+            .sort(function (a, b) { return String(a.nome).localeCompare(String(b.nome)); });
+    }
+
+    // Sugestão por nome normalizado; só vale como sugestão — nada é gravado sem confirmação.
+    function vincSugestao(prod, fams) {
+        var kn = solidNorm(prod.nome);
+        if (!kn) return { tipo: 'nenhuma' };
+        var exatas = fams.filter(function (f) { return f.chaveNome === kn; });
+        if (exatas.length === 1) return { tipo: 'exata', f: exatas[0] };
+        if (exatas.length > 1) return { tipo: 'ambigua' };
+        var parc = fams.filter(function (f) { return f.chaveNome && (f.chaveNome.indexOf(kn) >= 0 || kn.indexOf(f.chaveNome) >= 0); });
+        if (parc.length === 1) return { tipo: 'aproximada', f: parc[0] };
+        return parc.length > 1 ? { tipo: 'ambigua' } : { tipo: 'nenhuma' };
+    }
+
+    function vincPodeEditar() { return papel === 'admin' && !solid.semColuna; }
+
+    // Grava codigo_erp (null = remover). RLS é quem decide; resposta vazia = sem permissão.
+    function vincGravar(prodId, codigo) {
+        var dono = codigo ? vincColisao(prodId, codigo) : null;
+        if (dono) return Promise.resolve({ ok: false, msg: 'Essa família já está vinculada a "' + dono + '".' });
+        return sb.from('catalogo_produtos').update({ codigo_erp: codigo }).eq('id', prodId).select('id,codigo_erp')
+            .then(function (r) {
+                if (r.error) {
+                    if (r.error.code === '23505') return { ok: false, msg: 'Esse código já está vinculado a outro produto.' };
+                    if (r.error.code === '42501') return { ok: false, msg: 'Sem permissão: somente admin vincula.' };
+                    return { ok: false, msg: 'Não foi possível gravar: ' + (r.error.message || '') };
+                }
+                if (!r.data || !r.data.length) return { ok: false, msg: 'Não gravou (sem permissão ou produto não encontrado).' };
+                var prod = solid.catalogo.filter(function (x) { return x.id === prodId; })[0];
+                if (prod) prod.codigo_erp = r.data[0].codigo_erp;
+                return { ok: true };
+            }, function (e) { return { ok: false, msg: 'Falha de rede: ' + (e && e.message || e) }; });
+    }
+
+    // Família canônica de um código (12/13/14 dígitos, ou id/EAN resolvido pelo espelho).
+    function vincFamiliaCanonica(cod) {
+        var c = solidCasar({ codigo_erp: cod });
+        return c.familia || solidCodigoFamilia(cod);
+    }
+
+    // Outro produto já vinculado à mesma família (mesmo com alias diferente)? Devolve o nome dele.
+    function vincColisao(prodId, cod) {
+        var fam = vincFamiliaCanonica(cod), lit = String(cod).trim(), achou = null;
+        solid.catalogo.forEach(function (p) {
+            if (achou || p.id === prodId || !p.codigo_erp) return;
+            var pc = String(p.codigo_erp).trim();
+            if (pc === lit || (fam && vincFamiliaCanonica(pc) === fam)) achou = p.nome;
+        });
+        return achou;
+    }
+
+    function vincSalvarUm(prodId, codigo) {
+        if (vinc.ocupado) return;
+        vinc.ocupado = true; vinc.msg = ''; vinc.confirmarLinha = null;
+        vincGravar(prodId, codigo || null).then(function (r) {
+            vinc.ocupado = false;
+            vinc.linhaMsg = {};
+            if (!r.ok) vinc.linhaMsg[prodId] = r.msg;
+            desenharVitrineErp();
+        });
+    }
+
+    function vincExatasPendentes() {
+        var fams = vincFamilias();
+        var usados = {};
+        // Reserva o código literal E a família canônica de quem já está vinculado (alias não escapa).
+        solid.catalogo.forEach(function (p) {
+            if (!p.codigo_erp) return;
+            var c = String(p.codigo_erp).trim();
+            usados[c] = true;
+            var f = vincFamiliaCanonica(c);
+            if (f) usados[f] = true;
+        });
+        var lista = [];
+        solid.catalogo.forEach(function (prod) {
+            if (prod.codigo_erp) return;
+            var s = vincSugestao(prod, fams);
+            if (s.tipo !== 'exata' || usados[s.f.familia]) return;
+            usados[s.f.familia] = true;
+            lista.push({ prod: prod, f: s.f });
+        });
+        return lista;
+    }
+
+    function vincAceitarTodas() {
+        var lista = vincExatasPendentes();
+        if (!lista.length || vinc.ocupado) return;
+        vinc.ocupado = true;
+        var ok = 0, falhas = [];
+        lista.reduce(function (cadeia, it) {
+            return cadeia.then(function () {
+                return vincGravar(it.prod.id, it.f.familia).then(function (r) { if (r.ok) ok++; else falhas.push(it.prod.nome + ': ' + r.msg); });
+            });
+        }, Promise.resolve()).then(function () {
+            vinc.ocupado = false; vinc.confirmarTodas = false; vinc.linhaMsg = {};
+            vinc.msg = NUM.format(ok) + ' vínculo(s) gravado(s)' + (falhas.length ? '; ' + falhas.length + ' falhou: ' + falhas.slice(0, 3).join(' | ') : '.');
+            desenharVitrineErp();
+        });
+    }
+
+    function desenharVinculo() {
+        var alvo = $('#vitrine-vinculo');
+        if (!alvo) return;
+        var cab = '<p class="font-bold">Vincular produtos do site ao SOLIDCON</p>';
+        if (solid.catalogo == null) {
+            alvo.innerHTML = '<div class="adm-card p-5 mb-5">' + cab + '<p class="text-sm mt-2" style="color:var(--adm-tinta-3)">Não foi possível ler o catálogo do site.</p></div>';
+            return;
+        }
+        if (solid.semColuna) {
+            alvo.innerHTML = '<div class="adm-card p-5 mb-5" style="border-color:rgba(245,158,11,.45)">' + cab +
+                '<p class="text-sm mt-2" style="color:var(--adm-tinta-2)"><i class="fa-solid fa-circle-info mr-2"></i>' +
+                'A coluna <strong>codigo_erp</strong> ainda não existe no catálogo (migração 024 pendente). Enquanto isso o estoque por produto não liga e o vínculo fica indisponível.</p></div>';
+            return;
+        }
+        var fams = vincFamilias();
+        var podeEditar = vincPodeEditar();
+        var pend = podeEditar ? vincExatasPendentes() : [];
+        var linhas = solid.catalogo.map(function (prod) {
+            var atual = prod.codigo_erp ? String(prod.codigo_erp) : '';
+            var cz = atual ? solidCasar(prod) : null;
+            var famAtual = atual && cz && cz.familia ? fams.filter(function (f) { return f.familia === cz.familia; })[0] : null;
+            var s = atual ? null : vincSugestao(prod, fams);
+            var estado;
+            if (atual) {
+                estado = famAtual
+                    ? '<span class="adm-selo adm-selo-confirmado"><i class="fa-solid fa-link"></i>' + esc(famAtual.nome) + '</span>'
+                    : '<span class="adm-selo adm-selo-aguardando"><i class="fa-solid fa-link"></i>' + esc(atual) + '</span> <span class="text-xs" style="color:var(--adm-tinta-3)">(' + esc(cz && cz.motivo ? cz.motivo : 'sem família no ERP') + ')</span>';
+            } else if (s.tipo === 'exata' || s.tipo === 'aproximada') {
+                estado = '<span class="text-xs" style="color:var(--adm-tinta-2)">Sugestão (' + (s.tipo === 'exata' ? 'exata' : 'aproximada') + '): <strong>' + esc(s.f.nome) + '</strong></span>' +
+                    (podeEditar ? ' <button type="button" class="adm-botao-fantasma" data-vinc-aceitar="' + esc(prod.id) + '" data-codigo="' + esc(s.f.familia) + '">Aceitar</button>' : '');
+            } else {
+                estado = '<span class="text-xs" style="color:var(--adm-tinta-3)">' + (s.tipo === 'ambigua' ? 'Várias candidatas — escolha na lista' : 'Sem sugestão — escolha na lista') + '</span>';
+            }
+            var seletor = podeEditar
+                ? '<div class="flex items-center gap-2 flex-wrap"><select class="adm-input" style="width:auto;max-width:16rem;padding:.35rem .5rem" data-vinc-sel="' + esc(prod.id) + '" aria-label="Família ERP de ' + esc(prod.nome) + '">' +
+                  '<option value="">— sem vínculo —</option>' +
+                  (atual && !famAtual ? '<option value="' + esc(atual) + '" selected>Atual: ' + esc(atual) + '</option>' : '') +
+                  fams.map(function (f) {
+                      return '<option value="' + esc(f.familia) + '"' + (famAtual && f.familia === famAtual.familia ? ' selected' : '') + '>' + esc(f.nome) + ' (' + esc(f.familia) + ')</option>';
+                  }).join('') + '</select>' +
+                  '<button type="button" class="adm-botao-fantasma" data-vinc-salvar="' + esc(prod.id) + '">Gravar</button></div>'
+                : '<span class="text-xs" style="color:var(--adm-tinta-3)">somente admin</span>';
+            var conf = vinc.confirmarLinha && vinc.confirmarLinha.id === prod.id
+                ? '<div class="text-xs mt-2" role="alert" style="color:var(--adm-tinta-2)">' +
+                  (vinc.confirmarLinha.novo ? 'Trocar o vínculo atual (' + esc(atual) + ') por ' + esc(vinc.confirmarLinha.novo) + '?' : 'Remover o vínculo atual (' + esc(atual) + ')?') +
+                  ' <button type="button" class="adm-botao" data-vinc-confirmar="' + esc(prod.id) + '">Confirmar</button>' +
+                  ' <button type="button" class="adm-botao-fantasma" data-vinc-cancelar="1">Cancelar</button></div>'
+                : '';
+            return '<tr><td>' + esc(prod.nome) + '</td><td>' + estado + '</td><td>' + seletor + conf +
+                (vinc.linhaMsg[prod.id] ? '<p class="text-xs mt-1" role="alert" style="color:#FCA5A5">' + esc(vinc.linhaMsg[prod.id]) + '</p>' : '') + '</td></tr>';
+        }).join('');
+        var vinculados = solid.catalogo.filter(function (p) { return p.codigo_erp; }).length;
+        var acao = '';
+        if (podeEditar && pend.length) {
+            acao = vinc.confirmarTodas
+                ? '<span class="text-sm">Gravar ' + NUM.format(pend.length) + ' vínculo(s) exato(s)?</span> ' +
+                  '<button type="button" class="adm-botao" id="vinc-todas-sim">Sim, gravar</button> <button type="button" class="adm-botao-fantasma" id="vinc-todas-nao">Cancelar</button>'
+                : '<button type="button" class="adm-botao" id="vinc-todas">Aceitar todas as sugestões exatas (' + NUM.format(pend.length) + ')</button>';
+        }
+        alvo.innerHTML = '<div class="adm-card p-5 mb-5">' + cab +
+            '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">Nada liga sozinho: a sugestão compara o nome do site com o sabor no ERP e só vale depois de confirmada. ' +
+            'Grava a família ERP (12 dígitos) em <code>codigo_erp</code>. ' + NUM.format(vinculados) + ' de ' + NUM.format(solid.catalogo.length) + ' produtos vinculados.</p>' +
+            (acao ? '<div class="flex items-center gap-3 flex-wrap mb-3">' + acao + '</div>' : '') +
+            (vinc.msg ? '<p class="text-sm mb-3" role="status" style="color:var(--adm-tinta-2)">' + esc(vinc.msg) + '</p>' : '') +
+            (solid.catalogo.length
+                ? '<div class="overflow-x-auto" style="max-height:28rem;overflow-y:auto"><table class="adm-tabela"><thead><tr><th>Produto do site</th><th>Vínculo / sugestão</th><th>Família ERP</th></tr></thead><tbody>' + linhas + '</tbody></table></div>'
+                : '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum produto no catálogo do site.</p>') + '</div>';
+
+        alvo.querySelectorAll('[data-vinc-aceitar]').forEach(function (b) {
+            b.addEventListener('click', function () { vincSalvarUm(b.getAttribute('data-vinc-aceitar'), b.getAttribute('data-codigo')); });
+        });
+        alvo.querySelectorAll('[data-vinc-salvar]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                var id = b.getAttribute('data-vinc-salvar');
+                var sel = Array.prototype.filter.call(alvo.querySelectorAll('[data-vinc-sel]'), function (x) { return x.getAttribute('data-vinc-sel') === id; })[0];
+                var novo = sel ? sel.value : '';
+                var prod = solid.catalogo.filter(function (p) { return p.id === id; })[0];
+                var atual = prod && prod.codigo_erp ? String(prod.codigo_erp) : '';
+                vinc.linhaMsg = {}; vinc.msg = '';
+                if (novo === atual) { vinc.confirmarLinha = null; vinc.linhaMsg[id] = 'Sem alteração.'; desenharVinculo(); return; }
+                if (atual) { vinc.confirmarLinha = { id: id, novo: novo }; desenharVinculo(); return; } // troca/remoção pede confirmação
+                vincSalvarUm(id, novo);
+            });
+        });
+        alvo.querySelectorAll('[data-vinc-confirmar]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                var c = vinc.confirmarLinha;
+                if (c && c.id === b.getAttribute('data-vinc-confirmar')) vincSalvarUm(c.id, c.novo);
+            });
+        });
+        alvo.querySelectorAll('[data-vinc-cancelar]').forEach(function (b) {
+            b.addEventListener('click', function () { vinc.confirmarLinha = null; desenharVinculo(); });
+        });
+        var t = alvo.querySelector('#vinc-todas'); if (t) t.addEventListener('click', function () { vinc.confirmarTodas = true; vinc.msg = ''; desenharVinculo(); });
+        var n = alvo.querySelector('#vinc-todas-nao'); if (n) n.addEventListener('click', function () { vinc.confirmarTodas = false; desenharVinculo(); });
+        var s = alvo.querySelector('#vinc-todas-sim'); if (s) s.addEventListener('click', vincAceitarTodas);
+    }
+
 
     function desenharVitrine() {
         var alvo = $('#painel-vitrine');
@@ -1210,9 +1491,11 @@
 
     function solidBlocoAtencao() {
         var lim = solid.limite;
-        var esg = solid.produtos.filter(solidEsgotado);
-        var baixo = solid.produtos.filter(function (p) {
-            var e = Number(p.estoque_disponivel); return !solidEsgotado(p) && e > 0 && e <= lim;
+        var grupos = solidGrupos();
+        var esg = grupos.filter(function (g) { return g.itens.every(solidEsgotado); });
+        var baixo = grupos.filter(function (g) {
+            var vivos = g.itens.filter(function (p) { return !solidEsgotado(p); });
+            return vivos.length && vivos.every(function (p) { return Number(p.estoque_disponivel) <= lim; });
         });
 
         function lista(itens, fn) {
@@ -1225,17 +1508,22 @@
             return '<div><p class="adm-tile-rotulo mb-1">' + titulo + '</p><p class="adm-tile-valor mb-2">' +
                    NUM.format(n) + '</p>' + corpo + '</div>';
         }
-        function prod(p) { return '<li>' + esc(p.nome) + ' <span style="color:var(--adm-tinta-3)">(' + esc(p.id_produto) + ')</span></li>'; }
+        function detalhe(g) {
+            return g.itens.map(function (p) {
+                var cx = solidCaixa(p);
+                return (cx ? 'CX ' + cx : 'Pote') + ' ' + NUM.format(solidEsgotado(p) ? 0 : Number(p.estoque_disponivel) || 0);
+            }).join(' · ');
+        }
 
         return '<div class="adm-card p-5 mb-5"><p class="font-bold mb-4"><i class="fa-solid fa-bell mr-2" style="color:var(--adm-marca)"></i>Alertas de estoque</p>' +
             '<div class="grid sm:grid-cols-2 gap-5">' +
-            col('Esgotados', esg.length, lista(esg, prod)) +
-            col('Estoque baixo (≤ ' + NUM.format(lim) + ')', baixo.length,
-                lista(baixo, function (p) {
-                    return '<li>' + esc(p.nome) + ' <span style="color:var(--adm-tinta-3)">— ' + esc(NUM.format(Number(p.estoque_disponivel))) + ' cx</span></li>';
+            col('Esgotados (todas as caixas)', esg.length, lista(esg, function (g) { return '<li>' + esc(g.nome) + '</li>'; })) +
+            col('Estoque baixo (≤ ' + NUM.format(lim) + ' cx)', baixo.length,
+                lista(baixo, function (g) {
+                    return '<li>' + esc(g.nome) + ' <span style="color:var(--adm-tinta-3)">— ' + esc(detalhe(g)) + '</span></li>';
                 })) +
             '</div><p class="text-xs mt-4 pt-3" style="border-top:1px solid var(--adm-borda);color:var(--adm-tinta-3)">' +
-            'Limite de estoque baixo: <strong>' + esc(NUM.format(lim)) + '</strong> caixas. O ajuste fica na aba Integração.</p></div>';
+            'Por sabor (família ERP): só esgota se todas as caixas zerarem. Limite: <strong>' + esc(NUM.format(lim)) + '</strong> caixas. O ajuste fica na aba Integração.</p></div>';
     }
 
     function solidControleLimite() {
@@ -1363,13 +1651,13 @@
     var VEND_FORMATOS = [['pote', 'Pote avulso'], ['cx24', 'Caixa 24'], ['cx48', 'Caixa 48'], ['outro', 'Outros']];
 
     // Supabase corta em 1000 linhas por requisição: busca em páginas.
-    function vendPaginar(consulta) {
+    function vendPaginar(consulta, max) {
         var todos = [];
         function pagina(ini) {
             return consulta().range(ini, ini + 999).then(function (r) {
                 if (r.error) return { error: r.error };
                 todos = todos.concat(r.data || []);
-                if ((r.data || []).length === 1000 && todos.length < 20000) return pagina(ini + 1000);
+                if ((r.data || []).length === 1000 && todos.length < (max || 20000)) return pagina(ini + 1000);
                 return { data: todos };
             });
         }
@@ -1644,6 +1932,7 @@
         if ((qual === 'solidcon' || qual === 'vitrine') && precisa(solid)) carregarSolidcon();
         if ((qual === 'solidcon' || qual === 'pedidos' || qual === 'vendas') && precisa(vend)) carregarVendas();
         if (qual === 'clientes' && precisa(scli)) carregarSolidClientes();
+        if (qual === 'vitrine' && precisa(giro)) carregarGiro();
     }
     function recarregarErp() { carregarErpDaAba(abaAtual, true); }
 
@@ -1843,6 +2132,257 @@
             (lista.length > parte.length ? '<button type="button" class="adm-botao-fantasma mt-3" id="scli-mais">Mostrar mais</button>' : '') + '</div>';
         var mais = $('#scli-mais');
         if (mais) mais.addEventListener('click', function () { scli.mostrar += 50; desenharScliLista(); });
+    }
+
+
+    /* ===================================================================
+     * Vitrine — giro de estoque (cobertura, parados, ranking real)
+     * Uma única consulta (solidcon_vendas_dia, 180 dias, só leitura), feita
+     * sob demanda e guardada em cache; os três blocos são calculados em memória.
+     * =================================================================== */
+    var GIRO_LIMITE = 80000, GIRO_JANELA = 180, GIRO_DIAS_UTEIS = 30, GIRO_PARADO = 60, GIRO_CRITICO = 7, GIRO_ATENCAO = 15, GIRO_HORIZONTE = 30;
+    var giro = { carregado: false, carregando: false, ausente: false, erro: null, linhas: [], truncado: false,
+                 porEan: null, rankDias: 90, todos: false, parados: false };
+
+    function giroIsoHoje() {
+        var d = new Date();
+        return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }
+    function giroDiaUtc(iso) { var q = String(iso).split('-'); return Date.UTC(Number(q[0]), Number(q[1]) - 1, Number(q[2])); }
+    function giroDiasAtras(iso) { return Math.floor((giroDiaUtc(giroIsoHoje()) - giroDiaUtc(iso)) / 86400000); }
+
+    function carregarGiro() {
+        giro.carregando = true;
+        giroRedesenhar();
+        var d = new Date(Date.now() - GIRO_JANELA * 86400000);
+        var desde = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+        vendPaginar(function () {
+            return sb.from('solidcon_vendas_dia')
+                .select('dia,ean,nome,formato,potes_por_unidade,familia,qtd')
+                .gte('dia', desde).order('dia', { ascending: true }).order('ean', { ascending: true });
+        }, GIRO_LIMITE).then(function (r) {
+            giro.carregando = false;
+            giro.ausente = false; giro.erro = null;
+            if (r.error) {
+                if (solidTabelaAusente(r.error)) giro.ausente = true; else giro.erro = String(r.error.message || r.error);
+                giro.carregado = false;
+            } else {
+                giro.linhas = r.data || [];
+                giro.truncado = giro.linhas.length >= GIRO_LIMITE; // exatamente no teto = não dá para provar completude
+                giroAgregar();
+                giro.carregado = true;
+            }
+            giroRedesenhar();
+        }).catch(function (e) {
+            giro.carregando = false; giro.erro = String(e && e.message || e); giroRedesenhar();
+        });
+    }
+
+    function giroRedesenhar() {
+        abasParaRedesenhar.vitrine = true;
+        desenharAbaSeSuja(abaAtual);
+    }
+
+    // Por EAN: soma dos últimos 30 dias úteis com venda e data da última venda.
+    function giroAgregar() {
+        var porDia = {};
+        giro.linhas.forEach(function (l) {
+            if (Number(l.qtd) > 0) porDia[l.dia] = true;
+        });
+        var uteis = Object.keys(porDia).filter(function (d) {
+            var w = new Date(giroDiaUtc(d)).getUTCDay(); return w >= 1 && w <= 5;
+        }).sort().slice(-GIRO_DIAS_UTEIS);
+        var set = {}; uteis.forEach(function (d) { set[d] = true; });
+        var m = {}, f = {};
+        giro.linhas.forEach(function (l) {
+            var q = Number(l.qtd) || 0;
+            if (q <= 0) return;
+            var p = q * (Number(l.potes_por_unidade) || 0), dentro = !!set[l.dia];
+            var o = m[l.ean] || (m[l.ean] = { p30: 0, ultimo: null });
+            if (dentro) o.p30 += p;
+            if (!o.ultimo || l.dia > o.ultimo) o.ultimo = l.dia;
+            // Por família (pote + cx24 + cx48): família da linha ou derivada do EAN (13 -> left 12, 14 -> substr 2,12).
+            var fam = (/^\d{12}$/.test(String(l.familia || '')) ? String(l.familia) : null) || solidCodigoFamilia(l.ean);
+            if (fam) {
+                var of = f[fam] || (f[fam] = { p30: 0, ultimo: null });
+                if (dentro) of.p30 += p;
+                if (!of.ultimo || l.dia > of.ultimo) of.ultimo = l.dia;
+            }
+        });
+        giro.porEan = m;
+        giro.porFamilia = f;
+        giro.diasUteisUsados = uteis.length;
+    }
+
+    // Estoque do produto ERP x vendas dos seus EANs (mesma unidade: a do próprio EAN).
+    // Vendas dos EANs de um conjunto de itens (família), em potes, e data da última venda.
+    // Vendas em potes de um sabor: por família (pote + cx24 + cx48, mesmo sem o pote estar no espelho);
+    // sem família, cai para os EANs do item, deduplicados.
+    function giroDoGrupo(itens, familia) {
+        var p30 = 0, ultimo = null;
+        if (familia) {
+            var o = giro.porFamilia[familia];
+            if (o) { p30 = o.p30; ultimo = o.ultimo; }
+        } else {
+            var vistos = {};
+            itens.forEach(function (p) {
+                (p.eans || []).forEach(function (e) {
+                    e = String(e);
+                    if (vistos[e]) return;
+                    vistos[e] = true;
+                    var o = giro.porEan[e];
+                    if (!o) return;
+                    p30 += o.p30;
+                    if (!ultimo || o.ultimo > ultimo) ultimo = o.ultimo;
+                });
+            });
+        }
+        var media = giro.diasUteisUsados ? p30 / GIRO_DIAS_UTEIS : 0;
+        return { media: media, ultimo: ultimo };
+    }
+
+    function giroFmt(n, casas) { return Number(n).toLocaleString('pt-BR', { maximumFractionDigits: casas == null ? 1 : casas }); }
+    function giroFmtData(iso) { var q = String(iso).split('-'); return q[2] + '/' + q[1] + '/' + q[0]; }
+
+    function giroSeloCobertura(dias, semGiro) {
+        if (semGiro) return '<span class="adm-selo" style="background:rgba(255,255,255,.08);color:var(--adm-tinta-2)"><i class="fa-solid fa-hourglass-half"></i>Sem giro</span>';
+        if (dias <= GIRO_CRITICO) return '<span class="adm-selo adm-selo-cancelado"><i class="fa-solid fa-triangle-exclamation"></i>Crítico</span>';
+        if (dias <= GIRO_ATENCAO) return '<span class="adm-selo adm-selo-aguardando"><i class="fa-solid fa-arrow-down"></i>Atenção</span>';
+        return '<span class="adm-selo adm-selo-confirmado"><i class="fa-solid fa-check"></i>Ok</span>';
+    }
+
+    function giroHtmlCobertura() {
+        var itens = [];
+        solidGrupos().forEach(function (gr) {
+            var est = solidPotes(gr.itens);
+            var g = giroDoGrupo(gr.itens, gr.familia);
+            if (est <= 0 && g.media <= 0) return;
+            var semGiro = g.media <= 0;
+            itens.push({ gr: gr, est: est, media: g.media, semGiro: semGiro,
+                         dias: semGiro ? Infinity : est / g.media,
+                         sug: semGiro ? 0 : Math.max(0, Math.ceil(g.media * GIRO_HORIZONTE - est)) });
+        });
+        itens.sort(function (a, b) { return a.dias - b.dias || String(a.gr.nome).localeCompare(String(b.gr.nome)); });
+        var criticos = itens.filter(function (i) { return !i.semGiro && i.dias <= GIRO_CRITICO; }).length;
+        var atencao = itens.filter(function (i) { return !i.semGiro && i.dias > GIRO_CRITICO && i.dias <= GIRO_ATENCAO; }).length;
+        var vis = giro.todos ? itens : itens.slice(0, 15);
+        var corpo = !itens.length
+            ? '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum sabor com estoque ou giro no período.</p>'
+            : '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Sabor</th><th class="num">Estoque (potes)</th><th class="num">Média potes/dia útil</th>' +
+              '<th class="num">Acaba em</th><th>Situação</th><th class="num">Repor p/ ' + GIRO_HORIZONTE + ' dias (potes)</th></tr></thead><tbody>' +
+              vis.map(function (i) {
+                  return '<tr><td>' + esc(i.gr.nome) + '</td><td class="num">' + esc(NUM.format(i.est)) + '</td>' +
+                      '<td class="num">' + (i.semGiro ? '—' : esc(giroFmt(i.media, 1))) + '</td>' +
+                      '<td class="num">' + (i.semGiro ? '—' : esc(giroFmt(i.dias, 0) + ' dias')) + '</td>' +
+                      '<td>' + giroSeloCobertura(i.dias, i.semGiro) + '</td>' +
+                      '<td class="num">' + (i.semGiro ? '—' : esc(NUM.format(i.sug))) + '</td></tr>';
+              }).join('') + '</tbody></table></div>' +
+              (itens.length > 15 ? '<button type="button" class="adm-botao-fantasma mt-3" id="giro-todos">' +
+                  (giro.todos ? 'Mostrar só os 15 mais urgentes' : 'Mostrar todos (' + NUM.format(itens.length) + ')') + '</button>' : '');
+        return '<div class="adm-card p-5 mb-5"><p class="font-bold">Estoque acaba em quantos dias</p>' +
+            '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">Por sabor (família ERP), em potes: caixas 24 e 48 somadas. Cobertura = estoque ÷ média diária das vendas nos últimos ' + GIRO_DIAS_UTEIS +
+            ' dias úteis com venda (' + NUM.format(giro.diasUteisUsados || 0) + ' usados). Crítico ≤ ' + GIRO_CRITICO + ' dias, atenção ≤ ' + GIRO_ATENCAO +
+            '. Sugestão = média × ' + GIRO_HORIZONTE + ' − estoque.</p>' +
+            '<p class="text-sm mb-3"><strong>' + NUM.format(criticos) + '</strong> crítico(s) · <strong>' + NUM.format(atencao) + '</strong> em atenção</p>' + corpo + '</div>';
+    }
+
+    function giroHtmlParados() {
+        var itens = [];
+        solidGrupos().forEach(function (gr) {
+            var est = solidPotes(gr.itens);
+            if (est <= 0) return;
+            var g = giroDoGrupo(gr.itens, gr.familia);
+            var dias = g.ultimo ? giroDiasAtras(g.ultimo) : null;
+            if (dias != null && dias < GIRO_PARADO) return;
+            itens.push({ gr: gr, est: est, ultimo: g.ultimo, dias: dias });
+        });
+        itens.sort(function (a, b) {
+            return (b.dias == null ? 1e9 : b.dias) - (a.dias == null ? 1e9 : a.dias) || String(a.gr.nome).localeCompare(String(b.gr.nome));
+        });
+        var vis = giro.parados ? itens : itens.slice(0, 10);
+        var corpo = !itens.length
+            ? '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum produto parado com estoque.</p>'
+            : '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Sabor</th><th class="num">Estoque (potes)</th><th>Última venda</th><th class="num">Sem venda há</th></tr></thead><tbody>' +
+              vis.map(function (i) {
+                  return '<tr><td>' + esc(i.gr.nome) + '</td><td class="num">' + esc(NUM.format(i.est)) + '</td>' +
+                      '<td>' + (i.ultimo ? esc(giroFmtData(i.ultimo)) : 'nenhuma nos últimos ' + GIRO_JANELA + ' dias') + '</td>' +
+                      '<td class="num">' + (i.dias == null ? '—' : esc(NUM.format(i.dias) + ' dias')) + '</td></tr>';
+              }).join('') + '</tbody></table></div>' +
+              (itens.length > 10 ? '<button type="button" class="adm-botao-fantasma mt-3" id="giro-parados">' +
+                  (giro.parados ? 'Mostrar só os 10 mais antigos' : 'Mostrar todos (' + NUM.format(itens.length) + ')') + '</button>' : '');
+        return '<div class="adm-card p-5 mb-5"><p class="font-bold">Produtos parados</p>' +
+            '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">Sabores com estoque e sem venda há ' + GIRO_PARADO + ' dias ou mais (histórico lido: ' + GIRO_JANELA + ' dias).</p>' + corpo + '</div>';
+    }
+
+    // Ranking real: potes vendidos por família (pote + cx24 + cx48 somados), janela escolhida.
+    function giroHtmlRanking() {
+        var corte = giro.rankDias, fam = {};
+        giro.linhas.forEach(function (l) {
+            if (giroDiasAtras(l.dia) >= corte) return;
+            var q = Number(l.qtd) || 0, pu = Number(l.potes_por_unidade) || 0;
+            if (q <= 0 || pu <= 0) return;
+            var k = l.familia || ('ean:' + l.ean);
+            var o = fam[k] || (fam[k] = { nome: null, alt: l.nome, potes: 0 });
+            o.potes += q * pu;
+            if (l.formato === 'pote' && l.nome) o.nome = l.nome;
+        });
+        var lista = Object.keys(fam).map(function (k) { return { rot: vendLimparNome(fam[k].nome || fam[k].alt), potes: fam[k].potes }; })
+            .filter(function (x) { return x.potes > 0; }).sort(function (a, b) { return b.potes - a.potes; });
+        var total = lista.reduce(function (a, x) { return a + x.potes; }, 0);
+        var topo = lista.slice(0, 30);
+        var max = topo.length ? topo[0].potes : 1;
+        var chips = [30, 90, 180].map(function (d) {
+            return '<button type="button" class="adm-chip' + (giro.rankDias === d ? ' is-ativo' : '') + '" data-giro-rank="' + d + '">' + d + ' dias</button>';
+        }).join('');
+        var corpo = !topo.length
+            ? '<p class="text-sm" style="color:var(--adm-tinta-3)">Sem vendas nesse período.</p>'
+            : '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th class="num">#</th><th>Sabor</th><th class="num">Potes</th><th>Participação</th></tr></thead><tbody>' +
+              topo.map(function (x, i) {
+                  var pct = total > 0 ? x.potes / total * 100 : 0;
+                  return '<tr><td class="num">' + (i + 1) + '</td><td>' + esc(x.rot) + '</td><td class="num">' + esc(NUM.format(Math.round(x.potes))) + '</td>' +
+                      '<td><div style="display:flex;align-items:center;gap:.5rem"><div style="flex:1;min-width:4rem;height:6px;border-radius:99px;background:var(--adm-borda)">' +
+                      '<div style="height:6px;border-radius:99px;background:var(--adm-marca);width:' + (x.potes / max * 100).toFixed(1) + '%"></div></div>' +
+                      '<span class="text-xs" style="color:var(--adm-tinta-3);white-space:nowrap">' + esc(giroFmt(pct, 1) + '%') + '</span></div></td></tr>';
+              }).join('') + '</tbody></table></div>' +
+              (lista.length > 30 ? '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">Top 30 de ' + NUM.format(lista.length) + ' sabores.</p>' : '');
+        return '<div class="adm-card p-5 mb-5"><div class="flex items-center justify-between flex-wrap gap-3 mb-1"><p class="font-bold">Ranking real de vendas</p>' +
+            '<div class="flex gap-1 flex-wrap">' + chips + '</div></div>' +
+            '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">Potes vendidos no ERP nos últimos ' + giro.rankDias + ' dias, somando pote avulso, caixa 24 e caixa 48 do mesmo sabor. Só no painel por enquanto.</p>' + corpo + '</div>';
+    }
+
+    function desenharGiro() {
+        var alvo = $('#vitrine-giro');
+        if (!alvo) return;
+        var cab = '<div class="flex items-center gap-2 mb-4"><span class="adm-selo" style="background:rgba(168,85,247,.14);color:#D8B4FE">ERP SOLIDCON</span><p class="font-bold">Giro de estoque</p></div>';
+        if (giro.ausente) { alvo.innerHTML = cab + cartaoVazio('Vendas do ERP ainda não instaladas', 'A tabela solidcon_vendas_dia não existe neste banco.'); return; }
+        if (giro.erro) {
+            alvo.innerHTML = cab + '<div class="adm-card p-6 mb-5"><p class="text-sm mb-3" style="color:var(--adm-tinta-2)">Não foi possível carregar as vendas: ' + esc(giro.erro) + '</p>' +
+                '<button type="button" class="adm-botao-fantasma" id="giro-tentar">Tentar de novo</button></div>';
+            alvo.querySelector('#giro-tentar').addEventListener('click', carregarGiro);
+            return;
+        }
+        if (!giro.carregado) {
+            alvo.innerHTML = cab + '<div class="adm-card p-6 mb-5 text-center text-sm" style="color:var(--adm-tinta-2)"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando vendas dos últimos ' + GIRO_JANELA + ' dias…</div>';
+            return;
+        }
+        if (giro.truncado) {
+            // Limite atingido: as linhas lidas podem não cobrir os 180 dias; nada é calculado nem recomendado.
+            alvo.innerHTML = cab + '<div class="adm-card p-6 mb-5" role="alert" style="border-color:rgba(239,68,68,.45)">' +
+                '<p class="font-bold mb-2"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:#FCA5A5"></i>Giro indisponível: limite de ' + NUM.format(GIRO_LIMITE) + ' linhas atingido</p>' +
+                '<p class="text-sm" style="color:var(--adm-tinta-2)">O histórico de vendas dos últimos ' + GIRO_JANELA + ' dias é maior do que o painel consegue ler de uma vez, ' +
+                'então cobertura, reposição, produtos parados e ranking não são exibidos para não induzir decisão errada.</p></div>';
+            return;
+        }
+        if (!giro.linhas.length) { alvo.innerHTML = cab + cartaoVazio('Nenhuma venda sincronizada ainda', 'Quando a rotina de vendas rodar, o giro aparece aqui.'); return; }
+        alvo.innerHTML = cab +
+            giroHtmlCobertura() + giroHtmlParados() + giroHtmlRanking();
+        var t = alvo.querySelector('#giro-todos');
+        if (t) t.addEventListener('click', function () { giro.todos = !giro.todos; desenharGiro(); });
+        var pa = alvo.querySelector('#giro-parados');
+        if (pa) pa.addEventListener('click', function () { giro.parados = !giro.parados; desenharGiro(); });
+        alvo.querySelectorAll('[data-giro-rank]').forEach(function (b) {
+            b.addEventListener('click', function () { giro.rankDias = Number(b.getAttribute('data-giro-rank')); desenharGiro(); });
+        });
     }
 
 

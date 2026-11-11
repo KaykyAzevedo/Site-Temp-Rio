@@ -338,6 +338,7 @@
         },
 
         adicionar: function (id, nome, potes) {
+            if (window.SolidconPublico && SolidconPublico.esgotado(id)) return false;
             potes = ajustarAoPasso(potes);
             var i = indiceDe(id);
             if (i === -1) {
@@ -358,6 +359,7 @@
             // Qualquer valor positivo abaixo de uma caixa e engano de digitacao:
             // sobe para a caixa minima em vez de apagar a linha.
             var bruto = Number(potes);
+            if (window.SolidconPublico && SolidconPublico.esgotado(id) && bruto > itens[i].potes) return false;
             if (!isFinite(bruto) || bruto <= 0) {
                 itens.splice(i, 1);
             } else {

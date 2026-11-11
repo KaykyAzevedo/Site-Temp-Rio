@@ -26,6 +26,7 @@
 
     <!-- Carrinho: estado e persistencia (sem DOM). Precisa de config.js e produtos.js. -->
     <script src="./js/cart.js"></script>
+    <script src="./js/solidcon-publico.js"></script>
 
     <!-- Registro de pedidos e visitas no painel. So insere; nunca le. -->
     <script src="./js/db.js"></script>
@@ -370,6 +371,7 @@
                                     Explorar sabores <span class="arr" aria-hidden="true">→</span>
                                 </a>
                                 <button type="button" id="dest-lote" class="cart-quick-add dest-link-more" hidden></button>
+                                <a id="dest-espera" class="dest-link-more" hidden></a>
                             </div>
 
                             <div class="dest-stats">
@@ -391,7 +393,7 @@
                             <div class="dest-feat">
                                 <small>Conheça um dos favoritos</small>
                                 <span class="dest-mask"><span class="dest-feat-name" id="dest-fname">Lemon Pepper</span></span>
-                                <div class="dest-feat-meta" id="dest-fmeta">1º mais vendido · pote 70g</div>
+                                <div class="dest-feat-meta" id="dest-fmeta">pote 70g</div>
                             </div>
 
                             <div class="dest-seal" aria-label="100% natural, zero glutamato">

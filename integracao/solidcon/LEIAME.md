@@ -2,13 +2,14 @@
 
 O espelho e o histórico já estão instalados como 012 e 017 de A. Os arquivos
 foram renumerados para 019 e 020 no repositório unificado. A 022 de vendas está
-aprovada e ainda não foi aplicada. Este coletor é a versão candidata para
-estoque e vendas. A implantação da 022 precede a atualização do servidor.
+aplicada desde 2026-11-11 (registro em admin/migracoes/LEIAME.md). A 023 de
+clientes ainda NÃO foi aplicada. Este coletor é a versão candidata com
+clientes; a implantação futura da 023 precede sua atualização no servidor.
 
 Reaplicar a 019 substitui a RPC `solidcon_receber_produtos` pela versão
 anterior à 020 e interrompe a atualização do histórico e dos eventos.
 
-# Espelho SOLIDCON: produtos e vendas
+# Espelho SOLIDCON: produtos, vendas e clientes
 
 Windows PowerShell **5.1**, sem instalar módulos. No servidor interno, faz
 estes dois GETs de estoque a cada 30 minutos, nesta ordem:
@@ -17,7 +18,8 @@ estes dois GETs de estoque a cada 30 minutos, nesta ordem:
 2. `http://localhost:5100/api/Produto/GetProdutos?ativo=true&estoque=false`
 
 Após o estoque, tenta vendas de hoje e ontem no endpoint resumo-produtos-data,
-com filial 4 e data gerada pelo script (seção 022 abaixo).
+com filial 4 e data gerada pelo script (seção 022 abaixo). Depois, quando
+devidos, tenta clientes uma única vez por dia após 06:00 (seção 023).
 As queries são fixas no código. Aceita também `127.0.0.1`, sempre porta 5100,
 sem proxy nem redirecionamentos. Não envia nada ao ERP nem modifica o site.
 `estoque=true` filtra saldo >0; `estoque=false` filtra saldo <=0.
@@ -51,19 +53,22 @@ conta da tarefa e administradores; não use transcrição PowerShell com segredo
 Deixe `modo="teste"`: os campos Supabase podem continuar como placeholders.
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File C:\TempRio\solidcon\sync-produtos.ps1 -Config C:\TempRio\solidcon\config.json -ArquivoEntrada C:\caminho\com-saldo.json -ArquivoEntradaSemSaldo C:\caminho\sem-saldo.json -ArquivoVendas C:\caminho\vendas-por-dia.json
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File C:\TempRio\solidcon\sync-produtos.ps1 -Config C:\TempRio\solidcon\config.json -ArquivoEntrada C:\caminho\com-saldo.json -ArquivoEntradaSemSaldo C:\caminho\sem-saldo.json -ArquivoVendas C:\caminho\vendas-por-dia.json -ArquivoClientes C:\caminho\clientes-ficticios.json
 ```
 
 Informe **os dois arquivos de estoque ou nenhum**; uso parcial é recusado sem GET.
-Para teste totalmente offline, inclua também -ArquivoVendas; sem ele, as vendas
-são marcadas como falha quando há arquivos de estoque (não faz GET implícito).
+Para teste totalmente offline, inclua também -ArquivoVendas e -ArquivoClientes.
+Com arquivos locais, a ausência do arquivo do fluxo gera falha isolada, sem
+GET implícito de vendas/clientes. Informe sempre os dois arquivos de estoque.
 Sem arquivos, faz os dois GETs locais. Arquivos locais são permitidos somente
 em modo teste. Em teste **não faz nenhuma chamada ao Supabase**, nem login nem
 log de falha. Produz `produtos-normalizados.json`,
 `resumo.json` e `ultimo-ok-teste.json` em `pastaSaida`. Saídas de teste são
 substituídas em cada sucesso; log tem rotação de 1 MiB e três arquivos antigos.
-Exit 0 = estoque e vendas OK; exit 1 = configuração/mutex/estoque falhou;
-exit 3 = estoque OK e vendas falhou. Se ambos falharem, prevalece 1.
+Exit 0 = fluxos OK (inclui clientes ainda não devidos ou já concluídos hoje);
+exit 1 = configuração/mutex/estoque falhou; exit 3 = vendas falhou;
+**exit 4 = somente clientes falhou**. Precedência: 1 > 3 > 4. Os logs de
+cada fluxo identificam as falhas quando ocorrer mais de uma.
 Em backfill, 0 = vendas OK, 3 = falha de vendas, 1 = inicialização inválida.
 Não há senha/token nos logs.
 
@@ -239,3 +244,91 @@ Troca de coleta antiga/UUID repetido também é recusada. SQL/logs não dependem
 do estado local de estoque. DDL/rollback completos: seção 022 de
 admin/migracoes/LEIAME.md. Ao desfazer 022, restaurar também o script pré-022;
 caso contrário, estoque continua e vendas sinalizam exit 3.
+
+
+## 023 — Clientes: no máximo um GET por dia (NÃO IMPLANTADA)
+
+Finalidade aprovada: atendimento B2B e conferência de cadastro. A migração 023
+é candidata e **não deve ser aplicada nesta entrega**. Revisar e instalar
+manualmente no futuro antes de trocar o coletor do servidor. Não alterar o
+script operacional sendo implantado para vendas até a liberação dessa versão.
+
+Depois de estoque e vendas, o primeiro ciclo a partir de **06:00 em
+America/Sao_Paulo** tenta somente:
+
+`GET http://localhost:5100/api/Cliente/GetClientes`
+
+Sem parâmetros, proxy, redirecionamento ou retry. Não consulta outras rotas de
+clientes, não faz POST/PUT no ERP. As rotas existentes de estoque e vendas
+continuam iguais. `-BackfillDias` continua somente vendas: não lê arquivo,
+estado nem ERP de clientes e não executa a RPC de clientes.
+
+Antes do GET grava atomicamente `clientes-consulta.json` na pasta de saída,
+com dia local, horário, versão e status pendente. A reserva vale mesmo se o
+GET der timeout, o processo morrer ou normalização/login/RPC falharem. Status
+final ok/erro; pendente ou erro no mesmo dia não gera novo GET e mantém falha
+de clientes nos ciclos seguintes. Uma execução concluída é ignorada até o
+próximo dia. Antes das 06h apenas adia. Estado inválido/futuro ou falha ao
+gravar reserva falha fechado: **zero GET**, exit 4 se os outros fluxos OK.
+
+O mesmo arquivo controla consultas reais ao ERP em modo teste e real; testar
+com ERP consome a consulta daquele dia e não permite reenviar em modo real no
+mesmo dia. Use uma única instalação, máquina, tarefa e `pastaSaida` persistente;
+preserve a pasta nas atualizações, não apague o estado para forçar repetição e
+não altere o relógio. O mutex global já existente impede execução simultânea.
+O limite não coordena outras máquinas ou pastas de saída independentes.
+
+Normalização faz **projeção explícita**, incluindo somente documento, tipo,
+nome, telefone, celular, email e `endereco.cidade/bairro/estado` (estes três
+campos ficam planos no payload). Nunca envia ou grava dtCadastro, nascimento,
+sexo, logradouro, número, complemento ou CEP. O corpo bruto fica só em memória.
+Em modo real não grava arquivo com dados pessoais; log e estado contêm apenas
+metadados técnicos. Mensagens de falha são fixas, sem resposta ERP/SQLERRM.
+
+O ERP chama de `cpf` o documento de ambos os tipos. Valores inteiros/textuais
+são mantidos como texto, removendo apenas máscara e completando zeros para
+11/14 posições; float/bool, duplicatas ou documento inválido abortam o lote.
+Sem `tipo` explícito, mais de 11 dígitos indica CNPJ. Com até 11 dígitos, o
+coletor confere os dígitos verificadores: se só o CNPJ (completado a 14) for
+válido, grava CNPJ; nos demais casos, CPF. **Limitação residual:** quando os
+dois são válidos (raro), fica CPF. `tipo` explícito cpf/cnpj, se fornecido
+na origem, é respeitado; não se inventa dígito nem se valida titularidade pelo
+documento. Conferir essa limitação com a TI antes da implantação.
+
+Nome obrigatório até 150 caracteres; telefone/celular 32 cada, email 254,
+cidade/bairro 100 cada, UF 2 letras normalizadas para maiúsculas; opcionais
+vazios viram NULL, tipos inesperados/controles/tamanhos excessivos abortam o
+lote, sem truncar ou descartar clientes silenciosamente. Resposta máxima
+32 MiB de texto, payload 10.000 clientes/16 MiB; vazio sempre rejeitado.
+Queda >50% contra último OK local ou remoto é rejeitada. Não lê outros campos
+do endereço. PS 5.1 desembrulha explicitamente o array de ConvertFrom-Json.
+
+`clientes-ultimo-ok-teste.json` / `clientes-ultimo-ok-real.json` são referências
+separadas só de contagem/coleta/UUID. A confirmação da RPC exige status, linhas,
+coleta e UUID coincidentes; timeout/retorno divergente não promove estado OK.
+O espelho remoto anterior permanece em rejeições e falhas transacionais; se
+houve timeout de confirmação, o remoto pode ter concluído. Em ambos os casos,
+não repete GET hoje: nova tentativa somente no dia seguinte após 06h.
+
+Falha de clientes não cancela estoque/vendas concluídos nem chama a RPC de
+falha de estoque. Códigos: 0 OK/adiado/já OK; 1 inicialização/estoque; 3 vendas;
+4 somente clientes. Se vendas e clientes falharem, sai 3 e loga ambos; se
+estoque também falhar, sai 1. Não há nova configuração ou segredo.
+
+### Teste totalmente offline
+
+Use modo teste e os quatro arquivos locais no comando da seção Configuração.
+`-ArquivoClientes` aceita array bruto no formato do ERP (`cpf`, `nome`, contatos,
+`endereco`), com **dados exclusivamente fictícios**. Testa independentemente do
+horário, sem consumir/gravar a reserva diária e sem chamar ERP/Supabase para
+clientes. Grava só a projeção permitida em `clientes-normalizados.json` (envelope
+com linhas/coleta/UUID/itens), substituída a cada sucesso. Qualquer arquivo de
+entrada, inclusive este, é recusado em modo real antes de rede. Em backfill o
+arquivo de clientes é ignorado, pois o fluxo é exclusivo de vendas.
+
+Não salvar amostras reais, saídas pessoais, credenciais ou estado neste repo
+público. Entradas e pasta de saída ficam fora dele, com ACL local restrita à
+conta da tarefa e administradores. O espelho é substituído diariamente, sem
+histórico pessoal; se a coleta falhar, conserva o último espelho válido até a
+próxima coleta válida. Acesso no painel apenas pela equipe via RLS; o cadastro
+ERP não é sincronizado com autenticação nem autoriza acesso por CNPJ/CPF.

@@ -1524,7 +1524,8 @@ window.setupModal = function() {
             card.classList.add('cursor-pointer', 'modal-bound');
             
             // On click anywhere on card (or the button), open modal
-            card.addEventListener('click', () => {
+            card.addEventListener('click', (e) => {
+                if (e.target.closest('[data-lista-espera]')) return;
                 openModalFromCard(card);
             });
             

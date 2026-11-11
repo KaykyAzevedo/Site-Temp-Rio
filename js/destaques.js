@@ -4,20 +4,20 @@
    painel, a cor da secao (--d-accent), o adjetivo da headline e o
    nome do produto mudam juntos.
    Produtos: os que tem destaque:true em data/produtos.js, do maior
-   para o menor ranking de vendas (rankingVendas crescente).
+   para o menor ranking publico de vendas dos ultimos 90 dias.
    ============================================================ */
 (function () {
     'use strict';
 
     var PRODUCTS = [
-        { img: 'lemon-pepper',       nome: 'Lemon Pepper',     rank: 1,  peso: '70g', palavra: 'cítrico',   accent: '#D9A81C', soft: '#F5DC6A', thumbPos: '51% 74%' },
-        { img: 'chimichurri',        nome: 'Chimichurri',      rank: 2,  peso: '50g', palavra: 'intenso',   accent: '#D95B2A', soft: '#F7A768', thumbPos: '47% 71%' },
-        { img: 'paprica-picante',    nome: 'Páprica Picante',  rank: 6,  peso: '60g', palavra: 'picante',   accent: '#B8402A', soft: '#EE9878', thumbPos: '48% 47%' },
-        { img: 'paprica-defumada',   nome: 'Páprica Defumada', rank: 7,  peso: '60g', palavra: 'defumado',  accent: '#A8461F', soft: '#E89A6E', thumbPos: '49% 72%' },
-        { img: 'edu',                nome: 'Edu',               rank: 13, peso: '60g', palavra: 'especial',  accent: '#C99A3A', soft: '#EAC97E', thumbPos: '50% 52%' },
-        { img: 'curcuma',            nome: 'Cúrcuma',           rank: 20, peso: '40g', palavra: 'dourado',   accent: '#E0901A', soft: '#F7C066', thumbPos: '47% 67%' },
-        { img: 'curry',              nome: 'Curry',             rank: 23, peso: '50g', palavra: 'exótico',   accent: '#B8A22E', soft: '#DDCB77', thumbPos: '46% 83%' },
-        { img: 'alho-frito',         nome: 'Alho Frito',        rank: 27, peso: '40g', palavra: 'crocante',  accent: '#C07A28', soft: '#E8B36E', thumbPos: '50% 80%' }
+        { img: 'lemon-pepper',       nome: 'Lemon Pepper',     peso: '70g', palavra: 'cítrico',   accent: '#D9A81C', soft: '#F5DC6A', thumbPos: '51% 74%' },
+        { img: 'chimichurri',        nome: 'Chimichurri',      peso: '50g', palavra: 'intenso',   accent: '#D95B2A', soft: '#F7A768', thumbPos: '47% 71%' },
+        { img: 'paprica-picante',    nome: 'Páprica Picante',  peso: '60g', palavra: 'picante',   accent: '#B8402A', soft: '#EE9878', thumbPos: '48% 47%' },
+        { img: 'paprica-defumada',   nome: 'Páprica Defumada', peso: '60g', palavra: 'defumado',  accent: '#A8461F', soft: '#E89A6E', thumbPos: '49% 72%' },
+        { img: 'edu',                nome: 'Edu',               peso: '60g', palavra: 'especial',  accent: '#C99A3A', soft: '#EAC97E', thumbPos: '50% 52%' },
+        { img: 'curcuma',            nome: 'Cúrcuma',           peso: '40g', palavra: 'dourado',   accent: '#E0901A', soft: '#F7C066', thumbPos: '47% 67%' },
+        { img: 'curry',              nome: 'Curry',             peso: '50g', palavra: 'exótico',   accent: '#B8A22E', soft: '#DDCB77', thumbPos: '46% 83%' },
+        { img: 'alho-frito',         nome: 'Alho Frito',        peso: '40g', palavra: 'crocante',  accent: '#C07A28', soft: '#E8B36E', thumbPos: '50% 80%' }
     ];
 
     var BASE = './assets/images/hero/';
@@ -66,10 +66,10 @@
         b.type = 'button';
         b.style.setProperty('--dwell', DWELL + 'ms');
         b.title = p.nome;
-        b.setAttribute('aria-label', p.nome + ', ' + p.rank + 'º mais vendido');
+        b.setAttribute('aria-label', p.nome);
         b.innerHTML = '<span class="pic" style="background-image:url(\'' + THUMB_BASE + p.img + '.jpg\');background-position:' + p.thumbPos + '"></span>' +
                       '<span class="prog"></span>';
-        b.addEventListener('click', function () { go(i, true); });
+        b.addEventListener('click', function () { go(PRODUCTS.indexOf(p), true); });
         thumbsWrap.appendChild(b);
         return b;
     });
@@ -86,6 +86,14 @@
         var preco = Cart.formatarBRL(Cart.precoDePotes(Cart.PASSO));
         botaoLote.dataset.id = item.id;
         botaoLote.dataset.nome = item.nome;
+        var esgotado = window.SolidconPublico && SolidconPublico.esgotado(item.id);
+        var espera = section.querySelector('#dest-espera');
+        botaoLote.hidden = esgotado;
+        if (espera) {
+            espera.hidden = !esgotado;
+            espera.href = window.SolidconPublico ? SolidconPublico.esperaURL(item.id) : '#';
+            espera.textContent = 'Esgotado · Entrar na lista de espera';
+        }
         botaoLote.textContent = 'Adicionar ' + Cart.PASSO + ' potes de ' + item.nome + ' · ' + preco;
     }
 
@@ -134,7 +142,8 @@
 
     function atualizarNomeELote(p) {
         fname.textContent = p.nome;
-        fmeta.textContent = p.rank + 'º mais vendido · pote ' + p.peso;
+        var posicao = window.SolidconPublico && SolidconPublico.posicao(p.img);
+        fmeta.textContent = (posicao ? posicao + 'º mais vendido · ' : '') + 'pote ' + p.peso;
         atualizarLote(p);
     }
 
@@ -246,6 +255,24 @@
     }
 
     /* ---------- boot ---------- */
+    document.addEventListener('solidcon:publico', function () {
+        clearTimeout(timerNome);
+        var atual = PRODUCTS[idx];
+        var ordem = PRODUCTS.map(function (p, i) { return { p: p, shot: shots[i], thumb: thumbs[i] }; });
+        ordem.sort(function (a, b) {
+            var ra = window.SolidconPublico && SolidconPublico.posicao(a.p.img);
+            var rb = window.SolidconPublico && SolidconPublico.posicao(b.p.img);
+            return (ra || Infinity) - (rb || Infinity);
+        });
+        ordem.forEach(function (o, i) {
+            PRODUCTS[i] = o.p; shots[i] = o.shot; thumbs[i] = o.thumb;
+            var rank = window.SolidconPublico && SolidconPublico.posicao(o.p.img);
+            o.thumb.setAttribute('aria-label', o.p.nome + (rank ? ', ' + rank + 'º mais vendido' : ''));
+            thumbsWrap.appendChild(o.thumb);
+        });
+        go(PRODUCTS.indexOf(atual), true);
+        atualizarNomeELote(atual);
+    });
     atualizarNomeELote(PRODUCTS[idx]);
     resize();
     window.addEventListener('resize', resize);

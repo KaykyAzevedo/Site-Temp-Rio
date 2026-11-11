@@ -511,3 +511,28 @@ O mapa usa Leaflet, incluído no head de admin.html.
 Lançamento manual/total servidor é código da 021 NÃO aplicada. Não muda o fluxo
 publicado até revisão futura. Nenhuma ação administrativa foi feita no banco
 durante os testes; o servidor de QA usa dados fictícios e bloqueia conexão externa.
+
+
+## Cadastros ERP SOLIDCON — registro LGPD e dependência 023
+
+O painel poderá ler `solidcon_clientes` para a equipe autenticada após a
+instalação futura da 023; a tabela é independente dos clientes/cadastros do
+site. Esta entrega não aplica migrações nem publica o painel. Sem a 023, a
+origem ERP deve indicar integração não instalada, preservando o restante da
+tela. Dados de contato/documento não ficam disponíveis ao público; RLS usa
+`eh_equipe()`, incluindo vendedor, sem escrita direta.
+
+Texto curto para o registro de tratamento na aba LGPD (aprovação do dono;
+registro documental, sem criar consentimento ou registro de titular):
+
+> Cadastros ERP SOLIDCON: atendimento B2B e conferência de cadastro. Base:
+> execução de contrato / legítimo interesse, conforme a relação com o cliente.
+> Dados: nome, CPF/CNPJ, telefone, celular, email, cidade, bairro e estado.
+> Acesso: equipe autenticada. Retenção: espelho substituído diariamente, sem
+> histórico de cadastros; em falha, último espelho válido até nova coleta válida.
+> Não são copiados data de cadastro/nascimento, sexo ou endereço completo.
+
+O ERP permanece a fonte de cadastro: corrigir/remover o dado na origem para
+evitar reaparecimento no próximo espelho. Logs da integração têm só status,
+contagens, horários, UUID e motivos técnicos, sem valores pessoais. Não usar
+este texto para alterar os fluxos LGPD/consentimento existentes do site.

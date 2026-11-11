@@ -183,6 +183,7 @@
      * Linha do carrinho
      * =================================================================== */
     function linhaHTML(item) {
+        var esgotado = window.SolidconPublico && SolidconPublico.esgotado(item.id);
         return '' +
         '<div class="cart-line p-3 flex gap-3' + (item.stale ? ' is-stale' : '') + '">' +
             (item.imagem
@@ -192,6 +193,7 @@
             '<div class="flex-1 min-w-0">' +
                 // <p>, nunca <h4>: ver o comentário em css/cart.css
                 '<p class="font-bold text-white text-sm uppercase tracking-wide truncate">' + esc(item.nome) + '</p>' +
+                (esgotado ? '<p class="text-xs text-primary-400 font-bold">Esgotado · <a class="underline" href="' + esc(SolidconPublico.esperaURL(item.id)) + '">Lista de espera</a></p>' : '') +
 
                 (item.stale
                     ? '<p class="text-[0.65rem] text-primary-400 font-bold mt-0.5">Saiu do catálogo — confirme com o vendedor</p>'
@@ -208,12 +210,12 @@
                             '<i class="fa-solid fa-minus text-xs"></i></button>' +
                         '<div class="relative">' +
                             '<input type="number" inputmode="numeric" min="' + PASSO + '" step="' + PASSO + '" value="' + item.potes + '"' +
-                                ' data-acao="potes" data-id="' + esc(item.id) + '"' +
+                                ' data-acao="potes" data-id="' + esc(item.id) + '"' + (esgotado ? ' max="' + item.potes + '"' : '') +
                                 ' aria-label="Quantidade de potes"' +
                                 ' class="w-20 text-center bg-[#111111] border border-borderSubtle rounded-lg text-white text-sm py-1 pr-9 outline-none focus:border-primary-500">' +
                             '<span class="absolute right-2 top-1/2 -translate-y-1/2 text-[0.6rem] text-textSecondary pointer-events-none">potes</span>' +
                         '</div>' +
-                        '<button type="button" data-acao="mais" data-id="' + esc(item.id) + '"' +
+                        '<button type="button" data-acao="mais" data-id="' + esc(item.id) + '"' + (esgotado ? ' disabled' : '') +
                             ' aria-label="Mais ' + PASSO + ' potes" class="' + BTN_CIRCULO + '">' +
                             '<i class="fa-solid fa-plus text-xs"></i></button>' +
                     '</div>' +
@@ -334,6 +336,10 @@
     }
 
     function pickerHTML() {
+        if (window.SolidconPublico && SolidconPublico.esgotado(pickerId)) {
+            return '<div class="cart-aviso p-5 space-y-3"><p class="font-bold">Esgotado</p>' +
+                '<a class="underline text-primary-400" href="' + esc(SolidconPublico.esperaURL(pickerId)) + '">Entrar na lista de espera</a></div>';
+        }
         var jaTem = Cart.potes(pickerId);
 
         return '' +
@@ -385,6 +391,7 @@
 
     function atualizarPicker() {
         var potes = potesDoPicker();
+        pickerPotes = potes; // Preserva a escolha quando a disponibilidade atualizar.
         var valor = document.querySelector('[data-picker="valor"]');
         var caixas = document.querySelector('[data-picker="caixas"]');
         if (valor) valor.textContent = Cart.formatarBRL(Cart.precoDePotes(potes));
@@ -429,6 +436,7 @@
             campo.value = Math.max(PASSO, potesDoPicker() - PASSO);
             atualizarPicker();
         } else if (acao === 'adicionar') {
+            if (window.SolidconPublico && SolidconPublico.esgotado(pickerId)) { renderPicker(); return; }
             var potes = potesDoPicker();
             Cart.adicionar(pickerId, pickerNome, potes);
             toast(potes + ' potes de ' + pickerNome + ' no pedido (' + Cart.descreverCaixas(potes) + ')');
@@ -458,6 +466,10 @@
             botao.dataset.ligado = '1';
             botao.addEventListener('click', function (e) {
                 e.stopPropagation();
+                if (window.SolidconPublico && SolidconPublico.esgotado(botao.getAttribute('data-id'))) {
+                    window.location.href = SolidconPublico.esperaURL(botao.getAttribute('data-id'));
+                    return;
+                }
                 var nome = botao.getAttribute('data-nome');
                 Cart.adicionar(botao.getAttribute('data-id'), nome, PASSO);
                 toast(PASSO + ' potes de ' + nome + ' no pedido');
@@ -495,6 +507,7 @@
         linhaHTML: linhaHTML,
         ligarLista: ligarLista
     };
+    document.addEventListener('solidcon:publico', function () { renderPicker(); render(); });
 
     // A página de pedido reusa o Cart e o toast, mas não quer o botão flutuante
     // nem a gaveta: <body data-cart-ui="off">.

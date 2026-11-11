@@ -11,6 +11,13 @@
                'PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
 
     var CHAVE_RASCUNHO = 'temprio.checkout.v1';
+    // Atalho por ID conhecido do catalogo; nao adiciona produto esgotado ao carrinho.
+    var esperaId = new URLSearchParams(window.location.search).get('espera_produto');
+    var esperaProduto = produtos.find(function (p) { return p.id === esperaId; }) || null;
+    function indisponiveis() {
+        return Cart.itens().filter(function (i) { return window.SolidconPublico && SolidconPublico.esgotado(i.id); });
+    }
+    function chaveEspera() { return 'temprio.espera.confirmada' + (esperaProduto ? '.' + esperaProduto.id : ''); }
 
     // Orçamento da URL do WhatsApp. O navegador aguenta mais, mas o repasse
     // para o aplicativo trunca bem antes — e em silêncio.
@@ -539,12 +546,12 @@
                       (d.complemento ? ' - ' + d.complemento : '') + ' - ' + d.bairro,
             // O tamanho do pedido perdido é o dado mais útil do painel: mostra
             // quanta demanda está represada em cada praça.
-            potes: t.potes,
-            caixas: t.caixas,
-            valorCentavos: t.valorCentavos,               // para o banco
-            valor: Cart.formatarBRL(t.valorCentavos),     // para a planilha
-            itens: Cart.itens().map(function (i) { return i.nome + ' ' + i.potes; }).join(', '),
-            observacoes: d.observacoes
+            potes: esperaProduto ? 0 : t.potes,
+            caixas: esperaProduto ? 0 : t.caixas,
+            valorCentavos: esperaProduto ? 0 : t.valorCentavos,
+            valor: Cart.formatarBRL(esperaProduto ? 0 : t.valorCentavos),
+            itens: esperaProduto ? esperaProduto.nome : Cart.itens().map(function (i) { return i.nome + ' ' + i.potes; }).join(', '),
+            observacoes: (esperaProduto ? 'Interesse em reposição: ' + esperaProduto.nome + '. ' : '') + (d.observacoes || '')
         };
     }
 
@@ -631,9 +638,9 @@
     }
 
     function marcarEsperaConfirmada() {
-        try { localStorage.setItem('temprio.espera.confirmada', '1'); } catch (e) {}
+        try { localStorage.setItem(chaveEspera(), '1'); } catch (e) {}
         render();
-        CartUI.toast('Pronto! Avisamos assim que chegarmos aí.');
+        CartUI.toast(esperaProduto ? 'Pronto! Seu interesse na reposição foi registrado.' : 'Pronto! Avisamos assim que chegarmos aí.');
     }
 
     function mostrarEsperaSalvaLocal() {
@@ -642,7 +649,7 @@
     }
 
     function jaNaEspera() {
-        try { return localStorage.getItem('temprio.espera.confirmada') === '1'; }
+        try { return localStorage.getItem(chaveEspera()) === '1'; }
         catch (e) { return false; }
     }
 
@@ -803,6 +810,10 @@
      * =================================================================== */
     function enviar() {
         if (Cart.vazio()) return;
+        if (esperaProduto || indisponiveis().length) {
+            CartUI.toast('Há produto esgotado. Entre na lista de espera ou remova-o do pedido.');
+            render(); return;
+        }
 
         var invalidos = validarTudo();
         if (invalidos.length) {
@@ -1053,7 +1064,23 @@
 
         avisoSemPagamento() +
 
-        (atendeEndereco() ? blocoEnvio() : blocoForaDaArea());
+        (indisponiveis().length ? blocoEsgotados() : (atendeEndereco() ? blocoEnvio() : blocoForaDaArea()));
+    }
+
+    function blocoEsgotados() {
+        return '<div class="cart-aviso p-4 space-y-2"><p class="font-bold">Produto esgotado no pedido</p>' +
+            '<p class="text-xs">Remova o produto para continuar ou entre na lista de espera.</p>' +
+            indisponiveis().map(function (i) {
+                return '<a class="block underline" href="' + esc(SolidconPublico.esperaURL(i.id)) + '">' + esc(i.nome) + ' — lista de espera</a>';
+            }).join('') + '</div>';
+    }
+
+    function blocoEsperaProduto() {
+        return '<div class="cart-aviso p-4 space-y-3"><p class="font-bold">Lista de espera · ' + esc(esperaProduto.nome) + '</p>' +
+            '<p class="text-sm">Deixe seus dados para contato sobre a reposição. Este cadastro não cria um pedido.</p>' +
+            (jaNaEspera() ? '<p role="status">Seu interesse já foi registrado.</p>' :
+                '<button type="button" id="btn-espera" class="btn-primary w-full py-3 rounded-xl font-bold text-sm">Entrar na lista de espera</button>') +
+            '<a class="block underline" href="./catalogo.html">Voltar ao catálogo</a></div>';
     }
 
     // Sempre visível no resumo, esteja o endereço na área ou não — é o
@@ -1163,14 +1190,14 @@
     function render() {
         var itens = Cart.itens();
         var t = Cart.totais();
-        var vazio = itens.length === 0;
+        var vazio = itens.length === 0 && !esperaProduto;
 
         $('#pedido-vazio').classList.toggle('hidden', !vazio);
         $('#pedido-conteudo').classList.toggle('hidden', vazio);
         if (vazio) return;
 
-        $('#pedido-lista').innerHTML = itens.map(CartUI.linhaHTML).join('');
-        $('#pedido-resumo').innerHTML = resumoHTML(t);
+        $('#pedido-lista').innerHTML = esperaProduto ? '<p class="cart-aviso p-4">Interesse em reposição: ' + esc(esperaProduto.nome) + '</p>' : itens.map(CartUI.linhaHTML).join('');
+        $('#pedido-resumo').innerHTML = esperaProduto ? blocoEsperaProduto() : resumoHTML(t);
 
         // O checkbox é recriado a cada render: devolve o estado que mora em
         // interesseDisplayMarcado, e volta a escutar a mudança.
@@ -1199,19 +1226,18 @@
 
     /* ===================================================================
      * Pedido rápido — monta o carrinho de uma vez com os N temperos mais
-     * vendidos (rankingVendas, ver data/produtos.js e o catálogo), 1 caixa
+     * vendidos (projecao publica de 90 dias), 1 caixa
      * de cada. Vive só na tela de carrinho vazio (pedido.html): depois que
      * o cliente já montou algo à mão, o botão não faz mais sentido ali.
      *
-     * rankingVendas só cobre 49 sabores (o 50º da lista original repetia um
-     * nome já ranqueado — ver conversa que criou o campo). "Top 50" e "Top
-     * 49" dão o mesmo resultado; o rótulo do botão fica no número que o
-     * cliente reconhece.
+     * Somente sabores com ranking atual e disponiveis. Sem projecao valida,
+     * o cliente escolhe os sabores no catalogo.
      * =================================================================== */
     function pedidoRapido(n) {
-        var lista = produtos
-            .filter(function (p) { return p.rankingVendas && p.rankingVendas <= n; })
-            .sort(function (a, b) { return a.rankingVendas - b.rankingVendas; });
+        var lista = window.SolidconPublico ? SolidconPublico.ordenar(produtos).filter(function (p) {
+            return SolidconPublico.posicao(p.id) && !SolidconPublico.esgotado(p.id);
+        }).slice(0, n) : [];
+        if (!lista.length) { CartUI.toast('Selecione os sabores no catálogo.'); return; }
 
         lista.forEach(function (p) { Cart.adicionar(p.id, p.nome, Cart.PASSO); });
 
@@ -1230,6 +1256,7 @@
         CartUI.ligarLista($('#pedido-lista'));
         render();
         document.addEventListener('cart:change', render);
+        document.addEventListener('solidcon:publico', render);
 
         $('#btn-limpar').addEventListener('click', function () {
             if (Cart.vazio()) return;

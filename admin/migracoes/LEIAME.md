@@ -18,6 +18,8 @@ separação eh_equipe/eh_admin por papel. Consulte MERGE_DECISOES.md.
 | 020_solidcon_historico.sql | A, antes 017 | JÁ APLICADA COMO 017 DE A; NÃO REAPLICAR |
 | 021_total_servidor_solidcon.sql | A, antes 011 | NÃO APLICADA; depende de revisão/aprovação |
 | 022_solidcon_vendas.sql | A, antes 018 | APLICADA (2026-11-11) |
+| 023_solidcon_clientes.sql | Espelho minimizado de clientes | APLICADA (2026-11-11) |
+| 024_solidcon_publico.sql | Disponibilidade e ranking públicos, vínculo codigo_erp | APLICADA (2026-11-11) |
 
 019/020 são nomes de organização do repositório. Os objetos SQL, RPCs e a
 assinatura chamada pelo script continuam iguais. 017/018 não são reutilizados
@@ -442,9 +444,10 @@ dias com GET real, continua após falha de um dia. UUID novo por envio de dia.
 Sem nova configuração/segredo. Em modo teste, só arquivos; detalhes e comandos
 em `integracao/solidcon/LEIAME.md`. Não há importação de arquivo em modo real.
 
-Códigos: 0 = ambos os fluxos OK (ou só vendas OK em backfill); 1 = configuração,
-mutex ou estoque falhou; 3 = estoque OK/ignorado e vendas falhou. Se ambos
-falharem, prevalece 1. Vendas nunca desfazem um sucesso de estoque.
+Códigos (coletor atual, incluindo 023): 0 = fluxos OK ou clientes ainda não devidos;
+1 = configuração/mutex/estoque falhou; 3 = vendas falhou; 4 = somente clientes
+falhou. Precedência 1 > 3 > 4. Backfill continua somente vendas (0/1/3). Vendas
+e clientes nunca desfazem um sucesso de estoque.
 
 ### Validação da 022
 
@@ -480,3 +483,197 @@ Retomar a tarefa com o script anterior. Se mantiver o script 022 com a RPC
 removida, o estoque continua funcionando, mas as vendas falham e saem com 3.
 Nenhuma tarefa, aplicação de SQL ou troca do script do servidor foi realizada
 nesta entrega; aguardar revisão e o retorno da usuária.
+
+
+## 023 — Cadastros SOLIDCON minimizados (NÃO APLICADA)
+
+Entrega aprovada para atendimento B2B e conferência de cadastro; **não executar
+esta migração nesta entrega**. O precheck exige os objetos completos de 019/020
+(já instalados como 012/017 de A), whitelist e helpers de produção. Aborta antes
+de criar objetos se faltar dependência. Não depende da instalação da 022, não
+reaplica SQL base e não altera funções/dados de estoque ou vendas.
+
+`solidcon_clientes` é um espelho integral, com PK `documento` **textual**, somente
+dígitos: CPF com 11 e CNPJ com 14, conservando zeros à esquerda; `tipo` exige
+cpf/cnpj e tamanho correspondente. Demais campos: nome obrigatório (150),
+telefone/celular (32 cada), email (254), cidade/bairro (100 cada), estado (2
+letras maiúsculas), coletado_em UTC. Campos opcionais ausentes/vazios viram NULL
+no coletor. Nenhum histórico de cadastros. `solidcon_clientes_sync` guarda apenas
+status ok/erro, linhas, coleta, UUID, horário e motivo técnico fixo — sem valores
+pessoais e sem corpo/erro bruto do ERP. Logs técnicos não têm expurgo nesta fase.
+
+Ambas as tabelas têm RLS SELECT por `eh_equipe()` para authenticated. PUBLIC/anon
+sem privilégios; ninguém em authenticated escreve diretamente, incluindo admin.
+A sequência do log também não é exposta. A conta de sync não ganha papel de
+equipe; executa apenas a RPC mediante `integracoes_autorizadas`.
+
+`solidcon_receber_clientes(p_itens jsonb,p_coletado_em timestamptz,p_execucao_id uuid)`
+é SECURITY DEFINER com search_path pg_catalog, referências qualificadas e lock
+exclusivo `(5100,23)`, independente de estoque/vendas. Exige whitelist, UUID,
+coleta finita de até 24h atrás/5min à frente, array não vazio, máximo 10.000
+itens/16 MiB JSONB e exatamente os nove campos permitidos. Valida tipos,
+tamanhos, nome, UF, caracteres de controle, documento/tipo e duplicatas.
+Campo extra, inclusive nascimento ou endereço completo, rejeita o lote inteiro.
+
+Rejeita coleta anterior/igual ao último OK, UUID OK repetido e queda **maior
+que 50%** no número de clientes (50% exatos são aceitos). Em sucesso substitui
+o espelho e registra OK na mesma transação. Nas rejeições autorizadas retorna
+`status=erro` e persiste log sem RAISE. Erro inesperado durante substituição
+desfaz o DELETE/INSERT e retorna `falha_interna` com log genérico, sem SQLERRM.
+Acesso sem whitelist continua sendo erro de autorização, como na 022.
+
+O agendamento diário, controle pré-GET, normalização e saídas são descritos em
+`integracao/solidcon/LEIAME.md`, seção 023. Atualizar o servidor somente após
+revisão e aplicação manual futura da 023; este repositório não contém dados
+reais nem credenciais. Não substituir a versão operacional da 022 ainda em uso
+por esta candidata antes dessa implantação.
+
+### Como desfazer a 023 (somente mediante decisão de implantação)
+
+Pausar/drenar a tarefa e restaurar a cópia anterior do coletor. O SQL abaixo é
+documentação; **não foi executado no ambiente remoto**. Apaga o espelho e os
+logs de clientes, preservando os objetos de estoque/vendas. Sem CASCADE.
+
+```sql
+begin;
+select pg_catalog.pg_advisory_xact_lock(5100,23);
+drop function if exists public.solidcon_receber_clientes(jsonb,timestamptz,uuid);
+drop table if exists public.solidcon_clientes;
+drop table if exists public.solidcon_clientes_sync;
+commit;
+```
+
+Conservar `clientes-consulta.json` fora do repo ao trocar/restaurar o script:
+apagá-lo permitiria outro GET no mesmo dia. Se a RPC não existir, estoque e
+vendas continuam; clientes sinalizam exit 4 (ou 1/3 conforme precedência).
+
+
+### Validação da 023
+
+PostgreSQL 18 local isolado, sem Supabase/ERP: parsers SQL/PLpgSQL, precheck
+com rollback, RLS equipe/admin/não-equipe/anon, escrita direta negada,
+whitelist da RPC, vazio, tipos/limites/campos extras, duplicatas, coleta
+antiga/futura, UUID repetido, queda >50% (50% exatos aceitos), substituição
+integral e preservação de estoque/histórico. Falha de constraint induzida após
+DELETE confirmou rollback total do espelho e log genérico persistido. Lock
+de clientes independente dos locks de estoque/vendas; reaplicação idempotente
+somente nessa instância descartável, encerrada após os testes.
+
+Windows PowerShell 5.1, com fixtures exclusivamente fictícias: array unitário,
+zeros e tipo explícito, campos opcionais/limites/controles, projeção dos nove
+campos sem dados proibidos, queda local preservando último OK, modo offline
+sem reserva diária, arquivos recusados em real e backfill só de vendas.
+Em modo real **simulado**, GET/RPC substituídos por funções locais: janela das
+06h, reserva persistida antes do GET, máximo um GET/dia, dia seguinte,
+timeout/rejeição/confirmacão divergente sem retry, estado pendente/corrompido/
+futuro/inacessível falhando fechado e precedência 1/3/4. Nenhum HTTP real.
+O bloco de estoque foi comparado com a versão anterior e permaneceu intacto;
+o coletor mantém apenas as quatro rotas ERP fixas GET, sem proxy/redirect.
+
+## 024 — SOLIDCON público: disponibilidade e posição (PREPARADA, NÃO APLICADA)
+
+Arquivo: `024_solidcon_publico.sql`. Depende do catálogo/RLS de 005/014,
+019/020 (espelho e histórico) e 022 (`solidcon_vendas_dia`). **Não depende da
+021 nem a aplica**: cria `codigo_erp text` com `ADD COLUMN IF NOT EXISTS` e o
+mesmo índice `catalogo_produtos_codigo_erp_uk` parcial (`codigo_erp IS NOT NULL`).
+As definições são idênticas às da 021; se ela vier depois, os mesmos comandos
+serão ignorados com segurança. Não executa totalizadores/gatilhos da 021.
+Não executar outras migrações antigas para instalar a 024.
+Nenhuma migração foi executada no Supabase nesta entrega; sem commit/push.
+
+A única interface nova é a RPC sem argumentos `solidcon_catalogo_publico()`:
+
+| Campo | Conteúdo público |
+|---|---|
+| `produto_id` | ID do produto ativo e não removido do catálogo |
+| `disponivel` | boolean; desconhecido/falha retorna `true` |
+| `posicao` | posição inteira por família, ou `null` sem classificação |
+
+É `STABLE SECURITY DEFINER`, com `search_path=pg_catalog` e tabelas qualificadas.
+O owner que instalar precisa ler as tabelas privadas. `PUBLIC` não recebe
+EXECUTE; somente `anon` e `authenticated`. Não concede SELECT no espelho,
+views de vendas ou logs, nem muda RLS/grants existentes. A RPC não aceita
+código, EAN, intervalo ou filtro de volume e não retorna esses dados. Não
+retorna estoque, preço ERP, receitas, quantidades, datas internas ou dados
+pessoais. O site nunca lê `solidcon_produtos`/`solidcon_vendas_dia` diretamente.
+
+Cada produto do site representa um sabor/família. `trim(codigo_erp)` aceita
+a família de 12 dígitos (preferencial), EAN de pote de 13 dígitos (primeiros
+12) ou EAN de caixa de 14 (do 2º ao 13º). Mantém código de produto/alias EAN
+legado: resolve a família pelos EANs da caixa explicitamente vinculada.
+Não converte em número, preservando zeros iniciais; nunca usa o nome.
+Expande a família para todas as suas caixas CX24/CX48. Alias legado com
+mais de uma família fica desconhecido/fail-open; sem família, mantém o vínculo
+exato legado. Família explicitamente cadastrada pode receber ranking mesmo
+sem caixa presente no espelho atual, mas não marca esgotado sem dados atuais.
+Só informa
+esgotado quando existe vínculo, todos os vinculados estão presentes e com
+linha recente, o último ciclo é OK e sua coleta tem no máximo 2h. Um saldo
+positivo em alguma caixa da família torna o produto disponível. Ausência do espelho,
+produto ausente, linha antiga, ciclo com erro ou coleta >2h/futura: fail-open.
+Falha HTTP, RPC ainda ausente e resposta inválida também mostram normal.
+
+O ranking soma `qtd * potes_por_unidade` por `familia`, formatos `pote`, `cx24`
+e `cx48`, em 90 datas de São Paulo (hoje e os 89 dias anteriores). Ignora
+`outro`, datas futuras e famílias sem vendas positivas. GTIN-14 de caixa
+usa a base de 12 dígitos, exatamente como `Familia-Venda` no coletor. EANs
+repetidos da mesma família não duplicam vendas. Código legado sem família ou
+ambíguo não recebe posição. Ranqueia famílias ligadas ao catálogo
+ativo; empate por família dá posições consecutivas determinísticas. Produtos
+da mesma família compartilham posição. Nenhum volume chega ao navegador.
+
+`js/solidcon-publico.js` guarda a projeção só em memória por até 60s, com
+atualização a cada minuto/retorno à aba e timeout de 4s. Expiração ou falha
+remove o bloqueio; a regra das 2h é calculada no banco a cada consulta.
+Catálogo e os destaques já existentes ordenam pela posição atual, com os
+sem ranking depois, na ordem editorial estável. Sem projeção, não exibem
+ranking estático como se fosse atual. Não adiciona fotos/produtos à seleção
+editorial de destaques. O pedido rápido usa apenas ranqueados disponíveis.
+
+Card/modal/destaque de esgotado oferecem a lista existente via
+`pedido.html?espera_produto=<id>`. Esse fluxo valida ID contra o catálogo,
+reutiliza formulário/validação/INSERT da lista de espera, grava interesse em
+reposição e totais zero e não adiciona produto ao carrinho. Nenhuma nova
+coluna pessoal ou endpoint de contato foi criado; não há dado pessoal na
+RPC de leitura. Carrinho salvo continua removível, sinaliza esgotado e não
+permite aumentar quantidade ou enviar pedido enquanto houver indisponível.
+O cadastro regional existente permanece no fluxo normal.
+
+### Escrita do vínculo e integração com a Vitrine
+
+A coluna nova segue a RLS já existente do catálogo: 005 define
+`"admin escreve produtos" FOR ALL TO authenticated USING (eh_admin())
+WITH CHECK (eh_admin())`; 014 faz esse helper exigir papel `admin`.
+As policies de leitura pública/equipe não concedem escrita, e as RPCs de
+CRUD da 008 são invoker e também verificam `eh_admin()`. A 024 não concede
+escrita nem altera essas policies. Validado localmente com as mesmas policies:
+UPDATE anon/vendedor afeta zero linhas, admin altera a coluna nova.
+Vitral coordena a tela de vínculo na Vitrine e os cálculos de giro/estoque
+por essa mesma família; não há preenchimento automático por nome na 024.
+
+### Validação local da 024
+
+`python -m http.server 8767 --bind 127.0.0.1` na raiz; navegador Maestri Portal
+com fetch substituído por mocks sintéticos, sem envio real de pedido/contato.
+Casos: ordem/medalhas, busca preservada, card/modal esgotado, bloqueio no
+Cart, reposição com modal aberto, 404/JSON inválido/offline, interesse na
+lista com carrinho vazio e totais zero, carrinho salvo e bloqueio do checkout.
+Verificação de sintaxe com `node --check` nos JS alterados. PostgreSQL 18
+local isolado (porta 55424, schema sintético): contrato de três colunas,
+EXECUTE anon sem SELECT privado, ativos/removidos, código/EAN, GTIN duplicado,
+família ambígua, fatores 1/24/48, limites 89/90 dias e data futura, falha/ausência
+ou coleta/linha >2h. Nada foi aplicado em banco remoto ou consultado no ERP.
+Reteste após ajuste de família: instalação sem coluna/021, reaplicação,
+compatibilidade das DDLs com a 021, RLS anon/vendedor/admin, família 12 dígitos,
+EAN13/EAN14/código legado expandindo as duas caixas, zeros iniciais, uma caixa
+com saldo e todas zeradas. Estado público também testado com relógio simulado
+para expiração de 60s. CSS de `hidden` e quantidade do modal preservada na
+atualização periódica foram conferidos no DOM.
+
+Para testar manualmente no mock: retornar IDs fictícios com `disponivel=false`
+e posições 2/1/3; conferir ordem e atalho de espera. Alternar a resposta para
+`true`, 404 ou erro de rede; a adição volta a funcionar. Para teste SQL, usar
+somente banco descartável e fixtures sintéticas com as dependências acima.
+Rollback futuro: remover a chamada ao JS e executar manualmente
+`drop function public.solidcon_catalogo_publico();` — não remove espelhos nem
+coluna/índice de vínculo (preservam o cadastro e a compatibilidade com a 021).
