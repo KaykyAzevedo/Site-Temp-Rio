@@ -820,7 +820,7 @@
         solid.carregando = true;
         solidRedesenhar();
 
-        Promise.all([
+        return Promise.all([
             sb.from('solidcon_produtos')
                 .select('id_produto,nome,categoria,preco_centavos,estoque_disponivel,presente,eans,dtalteracao_erp,atualizado_em')
                 .order('nome', { ascending: true }).limit(5000),
@@ -854,6 +854,7 @@
 
     // Redesenha só o que depende do espelho (Integração e Vitrine), e só se estiver na tela.
     function solidRedesenhar() {
+        dashAtualizarResumo();
         abasParaRedesenhar.solidcon = true;
         abasParaRedesenhar.vitrine = true;
         desenharAbaSeSuja(abaAtual);
@@ -1671,7 +1672,7 @@
         vend.carregando = true;
         vendRedesenhar();
 
-        Promise.all([
+        return Promise.all([
             vendPaginar(function () { return sb.from('solidcon_vendas_por_mes').select('mes,valor_centavos,potes,dias_com_venda').order('mes', { ascending: true }); }),
             vendPaginar(function () { return sb.from('solidcon_vendas_por_dia').select('dia,valor_centavos,potes').order('dia', { ascending: true }); }),
             vendPaginar(function () { return sb.from('solidcon_vendas_familia_mes').select('mes,familia,nome_familia,formato,qtd,valor_centavos,potes').order('mes', { ascending: true }).order('familia', { ascending: true }).order('formato', { ascending: true }); }),
@@ -1701,6 +1702,7 @@
 
     // Vendas do ERP aparecem em Pedidos, Dashboard de vendas e Integração (saúde).
     function vendRedesenhar() {
+        dashAtualizarResumo();
         abasParaRedesenhar.pedidos = true;
         abasParaRedesenhar.solidcon = true;
         if (abaAtual === 'vendas' && $('#vendas-erp')) desenharVendasErp();
@@ -1843,9 +1845,9 @@
                (baixo ? '<i class="fa-solid fa-triangle-exclamation mr-1" aria-hidden="true"></i>' : '') + esc(brl(Math.round(preco))) + '</td>';
     }
 
-    function vendHtmlPreco() {
+    function vendPrecoDados() {
         var site = vendPrecoSite(), d = vendPorSaborMes();
-        if (!d.meses.length) return '<div class="adm-card p-5"><p class="font-bold">Preço médio praticado</p><p class="text-sm mt-2" style="color:var(--adm-tinta-3)">Sem vendas com potes para calcular.</p></div>';
+        if (!d.meses.length) return null;
         var cols = vendJanela(d.meses, VEND_PRECO_MESES);
         var linhas = Object.keys(d.sabores).map(function (k) {
             var s = d.sabores[k], p = 0, v = 0;
@@ -1862,6 +1864,13 @@
             tot.potes += l.potes; tot.valor += l.valor;
         });
         var abaixo = linhas.filter(function (l) { return l.valor / l.potes < VEND_PRECO_MIN; });
+        return { site: site, cols: cols, linhas: linhas, tot: tot, abaixo: abaixo };
+    }
+
+    function vendHtmlPreco() {
+        var D = vendPrecoDados();
+        if (!D) return '<div class="adm-card p-5"><p class="font-bold">Preço médio praticado</p><p class="text-sm mt-2" style="color:var(--adm-tinta-3)">Sem vendas com potes para calcular.</p></div>';
+        var site = D.site, cols = D.cols, linhas = D.linhas, tot = D.tot, abaixo = D.abaixo;
         function descCel(l) {
             if (!(l.potes > 0)) return '<td class="num">—</td>';
             var dsc = (1 - (l.valor / l.potes) / site) * 100;
@@ -1906,17 +1915,18 @@
             '</div>';
     }
 
-    function vendHtmlSazonalidade() {
+    function vendHtmlSazonalidade(idSel, nSab, nMes) {
+        idSel = idSel || 'vend-metrica'; nSab = nSab || VEND_CALOR_SABORES; nMes = nMes || VEND_CALOR_MESES;
         var d = vendPorSaborMes(), usaValor = vend.metrica === 'valor';
         function val(c) { return c ? (usaValor ? c.valor : c.potes) : 0; }
-        var cols = vendJanela(d.meses, VEND_CALOR_MESES);
+        var cols = vendJanela(d.meses, nMes);
         var linhas = Object.keys(d.sabores).map(function (k) {
             var s = d.sabores[k], tot = 0, max = 0;
             cols.forEach(function (m) { var v = val(s.meses[m]); tot += v; if (v > max) max = v; });
             return { rot: s.rot, meses: s.meses, tot: tot, max: max };
-        }).filter(function (l) { return l.tot > 0; }).sort(function (a, b) { return b.tot - a.tot; }).slice(0, VEND_CALOR_SABORES);
-        var seletor = '<label for="vend-metrica" class="adm-tile-rotulo mr-2">Métrica</label>' +
-            '<select id="vend-metrica" class="adm-input" style="width:auto;padding:.4rem .7rem">' +
+        }).filter(function (l) { return l.tot > 0; }).sort(function (a, b) { return b.tot - a.tot; }).slice(0, nSab);
+        var seletor = '<label for="' + idSel + '" class="adm-tile-rotulo mr-2">Métrica</label>' +
+            '<select id="' + idSel + '" class="adm-input" style="width:auto;padding:.4rem .7rem">' +
             '<option value="potes"' + (usaValor ? '' : ' selected') + '>Potes</option><option value="valor"' + (usaValor ? ' selected' : '') + '>Valor (R$)</option></select>';
         var corpo;
         if (!linhas.length) {
@@ -1937,7 +1947,15 @@
                 '<p class="text-xs mt-2" style="color:var(--adm-tinta-3)">Cada linha é colorida pelo pico do próprio sabor (mais escuro = mês mais forte). * mês parcial.</p>';
         }
         return '<div class="adm-card p-5"><div class="flex items-center flex-wrap gap-3 mb-1"><p class="font-bold">Sazonalidade por sabor</p><span class="ml-auto">' + seletor + '</span></div>' +
-            '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">Top ' + VEND_CALOR_SABORES + ' sabores por ' + (usaValor ? 'valor' : 'potes') + ', ' + cols.length + ' meses (' + (cols.length ? vendMesRotulo(cols[0]) + ' a ' + vendMesRotulo(cols[cols.length - 1]) : '') + ').</p>' + corpo + '</div>';
+            '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">Top ' + nSab + ' sabores por ' + (usaValor ? 'valor' : 'potes') + ', ' + cols.length + ' meses (' + (cols.length ? vendMesRotulo(cols[0]) + ' a ' + vendMesRotulo(cols[cols.length - 1]) : '') + ').</p>' + corpo + '</div>';
+    }
+
+    function vendItensMes() {
+        var atual = vendMesAtual();
+        return vend.meses.map(function (m) {
+            return { rot: vendMesRotulo(m.mes), v: vendNum(m.valor_centavos), parcial: m.mes >= atual,
+                     dica: vendMesRotulo(m.mes) + ': ' + brl(vendNum(m.valor_centavos)) + (m.mes >= atual ? ' (mês parcial)' : '') };
+        });
     }
 
     function desenharVendasErp() {
@@ -2008,10 +2026,7 @@
             .filter(function (s) { return s.v > 0; }).sort(function (a, b) { return b.v - a.v; }).slice(0, 15);
 
         // Por mês / por dia / dia da semana
-        var itensMes = vend.meses.map(function (m) {
-            return { rot: vendMesRotulo(m.mes), v: vendNum(m.valor_centavos), parcial: m.mes >= atual,
-                     dica: vendMesRotulo(m.mes) + ': ' + brl(vendNum(m.valor_centavos)) + (m.mes >= atual ? ' (mês parcial)' : '') };
-        });
+        var itensMes = vendItensMes();
         var ult90 = vend.dias.slice(-90);
         var itensDia = ult90.map(function (d) {
             var p = String(d.dia).split('-');
@@ -2084,8 +2099,10 @@
         if ((qual === 'solidcon' || qual === 'vitrine') && precisa(solid)) carregarSolidcon();
         if ((qual === 'solidcon' || qual === 'pedidos' || qual === 'vendas') && precisa(vend)) carregarVendas();
         if ((qual === 'clientes' || qual === 'pedidos') && precisa(scli)) carregarSolidClientes();
+        if ((qual === 'clientes' || qual === 'regioes' || qual === 'vendas') && precisa(cmp)) carregarCompras();
         if (qual === 'regioes' && precisa(geo)) carregarGeoClientes();
         if (qual === 'vitrine' && precisa(giro)) carregarGiro();
+        if (qual === 'dashboard') dashCarregarProgressivo(forcar);
     }
     function recarregarErp() { carregarErpDaAba(abaAtual, true); }
 
@@ -2169,9 +2186,11 @@
             '<section><div class="flex items-center gap-2 mb-4">' + SELO_SITE + '<p class="font-bold text-lg">Vendas pelo site</p></div><div id="vendas-site"></div></section>' +
             '<section class="mt-12 pt-8" style="border-top:1px solid var(--adm-borda)"><div class="flex items-center gap-2 mb-1">' + SELO_ERP +
                 '<p class="font-bold text-lg">Vendas no ERP</p></div>' +
-                '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Total de todas as vendas registradas no SOLIDCON (inclui o que não veio pelo site).</p><div id="vendas-erp"></div></section>';
+                '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Total de todas as vendas registradas no SOLIDCON (inclui o que não veio pelo site).</p><div id="vendas-erp"></div></section>' +
+            '<section id="vendas-clientes" class="mt-12 pt-8" style="border-top:1px solid var(--adm-borda)"></section>';
         desenharVendasBase();
         desenharVendasErp();
+        desenharVendasClientes();
     }
 
     // ---- Clientes: cadastros no ERP (tabela solidcon_clientes, ainda a instalar) ----
@@ -2184,7 +2203,7 @@
     // Mais que 14 dígitos (ou mais que o tipo comporta) não é documento: sem chave.
     function docNorm(s, tipo) {
         var d = docDigitos(s), t = String(tipo || '').toLowerCase();
-        if (!d) return '';
+        if (!d || /^0+$/.test(d)) return ''; // vazio ou só zeros = consumidor sem identificação
         var n = t === 'cnpj' ? 14 : t === 'cpf' ? 11 : (d.length <= 11 ? 11 : 14);
         if (d.length > n) return '';
         return d.padStart(n, '0');
@@ -2193,7 +2212,7 @@
     function carregarSolidClientes() {
         scli.carregando = true;
         scliRedesenhar();
-        vendPaginar(function () {
+        return vendPaginar(function () {
             return sb.from('solidcon_clientes')
                 .select('documento,tipo,nome,telefone,celular,email,cidade,bairro,estado,coletado_em')
                 .order('nome', { ascending: true });
@@ -2216,6 +2235,7 @@
     }
 
     function scliRedesenhar() {
+        dashAtualizarResumo();
         abasParaRedesenhar.clientes = true;
         abasParaRedesenhar.pedidos = true;
         desenharAbaSeSuja(abaAtual);
@@ -2230,7 +2250,8 @@
     function desenharClientes() {
         var alvo = $('#painel-clientes');
         desenharClientesBase();
-        alvo.insertAdjacentHTML('beforeend', '<section id="clientes-erp" class="mt-10"></section>');
+        alvo.insertAdjacentHTML('beforeend', '<section id="clientes-compras" class="mt-10"></section><section id="clientes-erp" class="mt-10"></section>');
+        desenharClientesCompras();
         desenharClientesErp();
     }
 
@@ -2301,6 +2322,258 @@
 
 
     /* ===================================================================
+     * Compras por cliente (ERP) — SOMENTE LEITURA — tabela solidcon_vendas_clientes (migração 026)
+     * Uma consulta só (dia, documento, tipo, valor), sob demanda e em cache; tudo o mais é calculado
+     * em memória e alimenta Clientes, Regiões (mapa por valor) e Dashboard de vendas.
+     * Sem a tabela: aviso "ainda não instalado". Compras sem documento (consumidor) não entram.
+     * =================================================================== */
+    var CMP_LIMITE = 20000, CMP_MIN_COMPRAS = 3, CMP_FATOR = 1.5, CMP_MIN_DIAS = 30, CMP_PERDIDO = 90, CMP_MESES_VALOR = 6;
+    var cmp = { carregado: false, carregando: false, ausente: false, erro: null, truncado: false, por: null, semDoc: 0,
+                hoje: '', corte: '', ordem: { col: 'ultima', dir: -1 }, busca: '', mostrar: 50, mostrarSumindo: 30 };
+
+    function cmpIso(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+    function cmpUtc(iso) { var p = String(iso).split('-'); return Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2])); }
+    function cmpDias(a, b) { return Math.round((cmpUtc(b) - cmpUtc(a)) / 86400000); }
+    function cmpSomaDias(iso, n) { return new Date(cmpUtc(iso) + n * 86400000).toISOString().slice(0, 10); }
+    function cmpData(iso) { var p = String(iso).split('-'); return p[2] + '/' + p[1] + '/' + p[0]; }
+    function cmpMesSeguinte(x) { var p = x.split('-'), a = Number(p[0]), mm = Number(p[1]) + 1; if (mm > 12) { mm = 1; a++; } return a + '-' + String(mm).padStart(2, '0') + '-01'; }
+    // Hoje menos N meses, com o dia limitado ao último dia do mês de destino (31/08 - 6 meses = 28/02).
+    function cmpMesesAtras(d, n) {
+        var a = d.getFullYear(), m = d.getMonth() - n;
+        while (m < 0) { m += 12; a--; }
+        var ult = new Date(a, m + 1, 0).getDate();
+        return a + '-' + String(m + 1).padStart(2, '0') + '-' + String(Math.min(d.getDate(), ult)).padStart(2, '0');
+    }
+    function cmpMediana(v) {
+        var s = v.slice().sort(function (a, b) { return a - b; }), m = Math.floor(s.length / 2);
+        return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+    }
+
+    // Agrega por documento: n compras, total e ticket dos últimos 6 meses, frequência típica
+    // (mediana do intervalo entre DIAS de compra distintos), valor médio mensal (total ÷ meses entre a 1ª e a última compra, mín. 1).
+    function cmpCalcular(linhas) {
+        var hoje = cmpIso(new Date()), corte = cmpMesesAtras(new Date(), CMP_MESES_VALOR), por = {}, semDoc = 0;
+        linhas.forEach(function (l) {
+            var k = docNorm(l.documento, l.tipo);
+            if (!k) { semDoc++; return; }
+            var dia = String(l.dia).slice(0, 10), v = vendNum(l.valor_centavos);
+            var o = por[k] || (por[k] = { doc: k, dias: [], n: 0, total: 0, n6: 0, total6: 0 });
+            o.n++; o.total += v; o.dias.push(dia);
+            if (dia >= corte) { o.n6++; o.total6 += v; }
+        });
+        Object.keys(por).forEach(function (k) {
+            var o = por[k]; o.dias.sort();
+            var un = o.dias.filter(function (d, i) { return i === 0 || d !== o.dias[i - 1]; }), iv = [];
+            for (var i = 1; i < un.length; i++) iv.push(cmpDias(un[i - 1], un[i]));
+            o.primeira = un[0]; o.ultima = un[un.length - 1];
+            o.freq = iv.length ? cmpMediana(iv) : null;
+            o.ticket6 = o.n6 ? o.total6 / o.n6 : null;
+            o.desde = cmpDias(o.ultima, hoje);
+            o.mensal = o.total / Math.max(1, cmpDias(o.primeira, o.ultima) / 30.4375);
+        });
+        cmp.por = por; cmp.semDoc = semDoc; cmp.hoje = hoje; cmp.corte = corte;
+    }
+
+    function carregarCompras() {
+        cmp.carregando = true;
+        cmpRedesenhar();
+        return vendPaginar(function () {
+            return sb.from('solidcon_vendas_clientes').select('dia,documento,tipo,valor_centavos')
+                .order('dia', { ascending: true }).order('cd_pdv', { ascending: true }).order('nr_cupom', { ascending: true });
+        }, CMP_LIMITE).then(function (r) {
+            cmp.carregando = false; cmp.ausente = false; cmp.erro = null; cmp.truncado = false;
+            if (r.error) {
+                if (solidTabelaAusente(r.error)) cmp.ausente = true; else cmp.erro = String(r.error.message || r.error);
+                cmp.carregado = false; cmp.por = null;
+            } else {
+                cmp.truncado = (r.data || []).length >= CMP_LIMITE;
+                if (cmp.truncado) { cmp.por = null; } else { cmpCalcular(r.data || []); }
+                cmp.carregado = true;
+            }
+            cmpRedesenhar();
+        }).catch(function (e) {
+            cmp.carregando = false; cmp.erro = String(e && e.message || e); cmp.carregado = false; cmp.por = null; cmpRedesenhar();
+        });
+    }
+
+    function cmpRedesenhar() {
+        dashAtualizarResumo();
+        abasParaRedesenhar.clientes = true; abasParaRedesenhar.regioes = true; abasParaRedesenhar.vendas = true;
+        desenharAbaSeSuja(abaAtual);
+    }
+
+    // Índice dos cadastros do ERP por documento normalizado (nome, telefone…); refeito só se a lista mudou.
+    function cmpCadastros() {
+        if (!scli.carregado || !scli.lista) return null;
+        if (scli.idxDe !== scli.lista) {
+            scli.idx = {}; scli.idxDe = scli.lista;
+            scli.lista.forEach(function (c) { var k = docNorm(c.documento, c.tipo); if (k) scli.idx[k] = c; });
+        }
+        return scli.idx;
+    }
+
+    function cmpPronto() { return cmp.carregado && !cmp.erro && !cmp.ausente && !cmp.truncado && !!cmp.por; }
+
+    // Aviso (HTML) quando não há dados utilizáveis; null quando pronto.
+    function cmpAviso() {
+        if (cmpPronto()) return null;
+        if (cmp.ausente) return cartaoVazio('Histórico de compras ainda não instalado', 'A tabela solidcon_vendas_clientes (migração 026) ainda não existe neste banco.');
+        if (cmp.erro) return '<div class="adm-card p-6"><p class="text-sm mb-3" style="color:var(--adm-tinta-2)">Não foi possível carregar o histórico de compras: ' + esc(cmp.erro) + '</p>' +
+            '<button type="button" class="adm-botao-fantasma" data-cmp-tentar>Tentar de novo</button></div>';
+        if (cmp.carregado && cmp.truncado) return cartaoVazio('Histórico grande demais para o painel', 'Há mais de ' + NUM.format(CMP_LIMITE) + ' compras no histórico; os indicadores ficam indisponíveis para não mostrar números incompletos.');
+        return '<div class="adm-card p-6 text-center text-sm" style="color:var(--adm-tinta-2)"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando histórico de compras…</div>';
+    }
+    function cmpLigarTentar(alvo) {
+        var b = alvo.querySelector('[data-cmp-tentar]');
+        if (b) b.addEventListener('click', carregarCompras);
+    }
+
+    // Clientes com >= 3 compras, parados há mais que 1,5x a frequência típica (mín. 30 dias), por valor médio mensal.
+    function cmpSumindo() {
+        return Object.keys(cmp.por).map(function (k) { return cmp.por[k]; }).filter(function (o) {
+            return o.n >= CMP_MIN_COMPRAS && o.freq != null && o.desde > Math.max(CMP_MIN_DIAS, CMP_FATOR * o.freq);
+        }).sort(function (a, b) { return b.mensal - a.mensal; });
+    }
+
+    function cmpNome(o, cad) {
+        var c = cad && cad[o.doc];
+        return c && c.nome ? c.nome : '(sem cadastro) ' + o.doc;
+    }
+
+    function desenharClientesCompras() {
+        var alvo = $('#clientes-compras');
+        if (!alvo) return;
+        var cab = '<div class="flex items-center gap-2 mb-2">' + SELO_ERP + '<p class="font-bold">Histórico de compras por cliente</p></div>' +
+            '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Compras registradas no SOLIDCON, ligadas ao cadastro pelo CNPJ/CPF (somente leitura). Total e ticket desde ' + (cmp.corte ? esc(cmpData(cmp.corte)) : CMP_MESES_VALOR + ' meses atrás') + ' (' + CMP_MESES_VALOR + ' meses); frequência = mediana de dias entre compras.</p>';
+        var av = cmpAviso();
+        if (av) { alvo.innerHTML = cab + av; cmpLigarTentar(alvo); return; }
+        if (!Object.keys(cmp.por).length) { alvo.innerHTML = cab + cartaoVazio('Nenhuma compra com cliente identificado', 'Quando a rotina de compras rodar, o histórico aparece aqui.'); return; }
+
+        var cad = cmpCadastros(), sum = cmpSumindo();
+        var semContato = !cad ? '<p class="text-xs mb-2" style="color:var(--adm-tinta-3)">Contatos indisponíveis: cadastros do ERP ' + (scli.carregando ? 'carregando…' : 'não carregados.') + '</p>' : '';
+        var parteSum = sum.slice(0, cmp.mostrarSumindo);
+        alvo.innerHTML = cab +
+            '<div class="adm-card p-5 mb-5"><p class="font-bold">Clientes sumindo (' + NUM.format(sum.length) + ')</p>' +
+            '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">' + CMP_MIN_COMPRAS + '+ compras e sem comprar há mais de ' + String(CMP_FATOR).replace('.', ',') + '× a frequência típica (mínimo ' + CMP_MIN_DIAS + ' dias). Ordenados pelo valor médio mensal. Telefones: uso interno da equipe.</p>' + semContato +
+            (sum.length ? '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Cliente</th><th>Telefone</th><th>Última compra</th>' +
+                '<th class="num">Frequência</th><th class="num">Compras</th><th class="num">Média/mês</th></tr></thead><tbody>' +
+                parteSum.map(function (o) {
+                    var c = cad && cad[o.doc], tel = c ? [c.telefone, c.celular].filter(Boolean).join(' / ') : '';
+                    return '<tr><td>' + esc(cmpNome(o, cad)) + '</td><td>' + esc(tel || '—') + '</td>' +
+                        '<td>' + esc(cmpData(o.ultima)) + ' <span class="text-xs" style="color:var(--adm-tinta-3)">há ' + NUM.format(o.desde) + ' dias</span></td>' +
+                        '<td class="num">a cada ' + NUM.format(Math.round(o.freq)) + ' dias</td><td class="num">' + NUM.format(o.n) + '</td><td class="num">' + esc(brl(Math.round(o.mensal))) + '</td></tr>';
+                }).join('') + '</tbody></table></div>' +
+                (sum.length > parteSum.length ? '<button type="button" class="adm-botao-fantasma mt-3" id="cmp-mais-sum">Mostrar mais</button>' : '')
+              : '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum cliente nessa situação.</p>') + '</div>' +
+            '<div class="flex items-center flex-wrap gap-3 mb-3"><input type="search" id="cmp-busca" class="adm-input" style="max-width:18rem;padding:.55rem .7rem" placeholder="Buscar cliente ou documento" aria-label="Buscar no histórico de compras" value="' + esc(cmp.busca) + '"></div>' +
+            '<div id="cmp-tabela"></div>' +
+            (cmp.semDoc ? '<p class="text-xs mt-2" style="color:var(--adm-tinta-3)">' + NUM.format(cmp.semDoc) + ' compras sem CNPJ/CPF informado ficaram de fora.</p>' : '');
+        var ms = $('#cmp-mais-sum');
+        if (ms) ms.addEventListener('click', function () { cmp.mostrarSumindo += 30; desenharClientesCompras(); });
+        $('#cmp-busca').addEventListener('input', function (ev) { cmp.busca = ev.target.value; cmp.mostrar = 50; desenharCmpTabela(); });
+        desenharCmpTabela();
+    }
+
+    function desenharCmpTabela() {
+        var alvo = $('#cmp-tabela');
+        if (!alvo || !cmpPronto()) return;
+        var cad = cmpCadastros(), q = cmp.busca.trim().toLowerCase(), qd = docDigitos(q), sum = {};
+        cmpSumindo().forEach(function (o) { sum[o.doc] = true; });
+        var lista = Object.keys(cmp.por).map(function (k) { return cmp.por[k]; }).filter(function (o) {
+            if (!q) return true;
+            return cmpNome(o, cad).toLowerCase().indexOf(q) >= 0 || (qd && o.doc.indexOf(qd) >= 0);
+        });
+        var od = cmp.ordem;
+        lista.sort(function (a, b) {
+            var va, vb;
+            if (od.col === 'nome') { va = cmpNome(a, cad).toLowerCase(); vb = cmpNome(b, cad).toLowerCase(); return va < vb ? -od.dir : va > vb ? od.dir : 0; }
+            if (od.col === 'ultima') { va = a.ultima; vb = b.ultima; return va < vb ? -od.dir : va > vb ? od.dir : 0; }
+            va = a[od.col]; vb = b[od.col];
+            if (va == null && vb == null) return 0;
+            if (va == null) return 1; if (vb == null) return -1; // sem valor vai sempre para o fim
+            return (va - vb) * od.dir;
+        });
+        function th(col, rot, num) {
+            return '<th' + (num ? ' class="num"' : '') + ' style="cursor:pointer" data-cmp-ord="' + col + '" aria-sort="' + (od.col === col ? (od.dir > 0 ? 'ascending' : 'descending') : 'none') + '">' + rot + (od.col === col ? (od.dir > 0 ? ' ▲' : ' ▼') : '') + '</th>';
+        }
+        var parte = lista.slice(0, cmp.mostrar);
+        alvo.innerHTML = '<div class="adm-card p-5"><div class="overflow-x-auto"><table class="adm-tabela"><thead><tr>' +
+            th('nome', 'Cliente') + th('ultima', 'Última compra') + th('n', 'Compras', true) + th('total6', 'Total 6 meses', true) + th('ticket6', 'Ticket médio 6 meses', true) + th('freq', 'Frequência típica', true) +
+            '</tr></thead><tbody>' + (parte.length ? parte.map(function (o) {
+                return '<tr><td>' + esc(cmpNome(o, cad)) + (sum[o.doc] ? ' <span class="adm-selo adm-selo-aguardando" title="Parou de comprar no ritmo habitual">Sumindo</span>' : '') + '</td>' +
+                    '<td>' + esc(cmpData(o.ultima)) + '</td><td class="num">' + NUM.format(o.n) + '</td>' +
+                    '<td class="num">' + (o.n6 ? esc(brl(o.total6)) : '—') + '</td><td class="num">' + (o.ticket6 != null ? esc(brl(Math.round(o.ticket6))) : '—') + '</td>' +
+                    '<td class="num">' + (o.freq != null ? 'a cada ' + NUM.format(Math.round(o.freq)) + ' dias' : '—') + '</td></tr>';
+            }).join('') : '<tr><td colspan="6" class="text-sm" style="color:var(--adm-tinta-3)">Nenhum cliente com essa busca.</td></tr>') +
+            '</tbody></table></div><p class="text-xs mt-3" style="color:var(--adm-tinta-3)">' + NUM.format(parte.length) + ' de ' + NUM.format(lista.length) + ' clientes</p>' +
+            (lista.length > parte.length ? '<button type="button" class="adm-botao-fantasma mt-3" id="cmp-mais">Mostrar mais</button>' : '') + '</div>';
+        alvo.querySelectorAll('[data-cmp-ord]').forEach(function (h) {
+            h.addEventListener('click', function () {
+                var c = h.getAttribute('data-cmp-ord');
+                cmp.ordem = { col: c, dir: cmp.ordem.col === c ? -cmp.ordem.dir : (c === 'nome' ? 1 : -1) };
+                desenharCmpTabela();
+            });
+        });
+        var mais = $('#cmp-mais');
+        if (mais) mais.addEventListener('click', function () { cmp.mostrar += 50; desenharCmpTabela(); });
+    }
+
+    // Ativos, novos e perdidos por mês (14 meses terminando no atual). null se não há clientes identificados.
+    function cmpDadosMensais() {
+        var todos = Object.keys(cmp.por).map(function (k) { return cmp.por[k]; });
+        if (!todos.length) return null;
+        var mesDe = function (iso) { return String(iso).slice(0, 7) + '-01'; };
+        var primeiro = todos.reduce(function (a, o) { return o.primeira < a ? o.primeira : a; }, todos[0].primeira);
+        var atual = mesDe(cmp.hoje), meses = [], m = atual, primeiroMes = mesDe(primeiro);
+        for (var q = 0; q < 14; q++) { meses.unshift(m); m = vendMesAnterior(m); } // 14 meses terminando no atual
+        var ativos = {}, novos = {}, perdidos = {}, agoraPerdidos = 0;
+        meses.forEach(function (x) { ativos[x] = 0; novos[x] = 0; perdidos[x] = 0; });
+        todos.forEach(function (o) {
+            var vistos = {};
+            o.dias.forEach(function (d) { var k = mesDe(d); if (!vistos[k]) { vistos[k] = 1; if (k in ativos) ativos[k]++; } });
+            var kn = mesDe(o.primeira); if (kn in novos) novos[kn]++;
+            var fim = cmpSomaDias(o.ultima, CMP_PERDIDO);
+            if (fim <= cmp.hoje) { agoraPerdidos++; var kp = mesDe(fim); if (kp in perdidos) perdidos[kp]++; }
+        });
+        return { meses: meses, atual: atual, ativos: ativos, novos: novos, perdidos: perdidos, agoraPerdidos: agoraPerdidos,
+                 primeiro: primeiro, primeiroMes: primeiroMes, totalClientes: todos.length };
+    }
+
+    // Tabela mensal (últimos n meses do cálculo).
+    function cmpHtmlTabelaMensal(d, n) {
+        var ms = d.meses.slice(-n);
+        var maxA = Math.max.apply(null, ms.map(function (x) { return d.ativos[x]; }).concat([1]));
+        return '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Mês</th><th class="num">Ativos</th><th style="width:35%"></th><th class="num">Novos</th><th class="num">Perdidos</th></tr></thead><tbody>' +
+            ms.map(function (x) {
+                var pri = x === d.primeiroMes; // só o primeiro mês REAL do histórico
+                return '<tr><td>' + esc(vendMesRotulo(x)) + (x === d.atual ? ' <span class="text-xs" style="color:var(--adm-tinta-3)">(parcial)</span>' : '') + '</td>' +
+                    '<td class="num">' + NUM.format(d.ativos[x]) + '</td>' +
+                    '<td><div style="height:6px;border-radius:99px;background:var(--adm-borda)"><div style="height:6px;border-radius:99px;background:var(--adm-marca);width:' + (d.ativos[x] / maxA * 100).toFixed(1) + '%"></div></div></td>' +
+                    '<td class="num"' + (pri ? ' title="Primeiro mês do histórico: não dá para separar novos de antigos"' : '') + '>' + (pri ? '—' : NUM.format(d.novos[x])) + '</td>' +
+                    '<td class="num">' + NUM.format(d.perdidos[x]) + '</td></tr>';
+            }).join('') + '</tbody></table></div>';
+    }
+
+    // Dashboard de vendas: clientes ativos, novos e perdidos por mês.
+    function desenharVendasClientes() {
+        var alvo = $('#vendas-clientes');
+        if (!alvo) return;
+        var cab = '<div class="flex items-center gap-2 mb-1">' + SELO_ERP + '<p class="font-bold text-lg">Clientes por mês</p></div>' +
+            '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Ativo = comprou no mês. Novo = 1ª compra do histórico no mês. Perdido = completou ' + CMP_PERDIDO + ' dias sem comprar naquele mês (e não voltou).</p>';
+        var av = cmpAviso();
+        if (av) { alvo.innerHTML = cab + av; cmpLigarTentar(alvo); return; }
+        var d = cmpDadosMensais();
+        if (!d) { alvo.innerHTML = cab + cartaoVazio('Nenhuma compra com cliente identificado', 'Quando a rotina de compras rodar, os números aparecem aqui.'); return; }
+        alvo.innerHTML = cab +
+            '<div class="grid grid-cols-2 gap-3 mb-4">' +
+                '<div class="adm-card p-4"><p class="adm-tile-rotulo mb-1">Ativos no mês atual</p><p class="adm-tile-valor">' + NUM.format(d.ativos[d.atual] || 0) + '</p><p class="text-xs mt-1" style="color:var(--adm-tinta-3)">mês em andamento</p></div>' +
+                '<div class="adm-card p-4"><p class="adm-tile-rotulo mb-1">Sem comprar há ' + CMP_PERDIDO + '+ dias</p><p class="adm-tile-valor">' + NUM.format(d.agoraPerdidos) + '</p><p class="text-xs mt-1" style="color:var(--adm-tinta-3)">de ' + NUM.format(d.totalClientes) + ' clientes no histórico</p></div>' +
+            '</div>' +
+            '<div class="adm-card p-5">' + cmpHtmlTabelaMensal(d, 14) +
+            '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">O histórico começa em ' + esc(cmpData(d.primeiro)) + ': no 1º mês não há como distinguir cliente novo de antigo.</p></div>';
+    }
+
+    /* ===================================================================
      * Vitrine — giro de estoque (cobertura, parados, ranking real)
      * Uma única consulta (solidcon_vendas_dia, 180 dias, só leitura), feita
      * sob demanda e guardada em cache; os três blocos são calculados em memória.
@@ -2321,7 +2594,7 @@
         giroRedesenhar();
         var d = new Date(Date.now() - GIRO_JANELA * 86400000);
         var desde = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-        vendPaginar(function () {
+        return vendPaginar(function () {
             return sb.from('solidcon_vendas_dia')
                 .select('dia,ean,nome,formato,potes_por_unidade,familia,qtd')
                 .gte('dia', desde).order('dia', { ascending: true }).order('ean', { ascending: true });
@@ -2344,6 +2617,7 @@
     }
 
     function giroRedesenhar() {
+        dashAtualizarResumo();
         abasParaRedesenhar.vitrine = true;
         desenharAbaSeSuja(abaAtual);
     }
@@ -2416,7 +2690,7 @@
         return '<span class="adm-selo adm-selo-confirmado"><i class="fa-solid fa-check"></i>Ok</span>';
     }
 
-    function giroHtmlCobertura() {
+    function giroItensCobertura() {
         var itens = [];
         solidGrupos().forEach(function (gr) {
             var est = solidPotes(gr.itens);
@@ -2428,6 +2702,11 @@
                          sug: semGiro ? 0 : Math.max(0, Math.ceil(g.media * GIRO_HORIZONTE - est)) });
         });
         itens.sort(function (a, b) { return a.dias - b.dias || String(a.gr.nome).localeCompare(String(b.gr.nome)); });
+        return itens;
+    }
+
+    function giroHtmlCobertura() {
+        var itens = giroItensCobertura();
         var criticos = itens.filter(function (i) { return !i.semGiro && i.dias <= GIRO_CRITICO; }).length;
         var atencao = itens.filter(function (i) { return !i.semGiro && i.dias > GIRO_CRITICO && i.dias <= GIRO_ATENCAO; }).length;
         var vis = giro.todos ? itens : itens.slice(0, 15);
@@ -2451,7 +2730,7 @@
             '<p class="text-sm mb-3"><strong>' + NUM.format(criticos) + '</strong> crítico(s) · <strong>' + NUM.format(atencao) + '</strong> em atenção</p>' + corpo + '</div>';
     }
 
-    function giroHtmlParados() {
+    function giroItensParados() {
         var itens = [];
         solidGrupos().forEach(function (gr) {
             var est = solidPotes(gr.itens);
@@ -2464,6 +2743,11 @@
         itens.sort(function (a, b) {
             return (b.dias == null ? 1e9 : b.dias) - (a.dias == null ? 1e9 : a.dias) || String(a.gr.nome).localeCompare(String(b.gr.nome));
         });
+        return itens;
+    }
+
+    function giroHtmlParados() {
+        var itens = giroItensParados();
         var vis = giro.parados ? itens : itens.slice(0, 10);
         var corpo = !itens.length
             ? '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum produto parado com estoque.</p>'
@@ -2480,8 +2764,8 @@
     }
 
     // Ranking real: potes vendidos por família (pote + cx24 + cx48 somados), janela escolhida.
-    function giroHtmlRanking() {
-        var corte = giro.rankDias, fam = {};
+    function giroRankingLista(corte) {
+        var fam = {};
         giro.linhas.forEach(function (l) {
             if (giroDiasAtras(l.dia) >= corte) return;
             var q = Number(l.qtd) || 0, pu = Number(l.potes_por_unidade) || 0;
@@ -2493,6 +2777,11 @@
         });
         var lista = Object.keys(fam).map(function (k) { return { rot: vendLimparNome(fam[k].nome || fam[k].alt), potes: fam[k].potes }; })
             .filter(function (x) { return x.potes > 0; }).sort(function (a, b) { return b.potes - a.potes; });
+        return lista;
+    }
+
+    function giroHtmlRanking() {
+        var lista = giroRankingLista(giro.rankDias);
         var total = lista.reduce(function (a, x) { return a + x.potes; }, 0);
         var topo = lista.slice(0, 30);
         var max = topo.length ? topo[0].potes : 1;
@@ -2553,13 +2842,14 @@
 
     /* ===================================================================
      * Regiões — mapa de clientes do ERP por bairro (só contagens, sem dado pessoal)
-     * Lê apenas tipo/cidade/bairro/estado de solidcon_clientes (nunca nome, documento, telefone).
+     * Lê só documento/tipo/cidade/bairro/estado de solidcon_clientes (nunca nome ou telefone). O documento fica
+     * em memória apenas para somar o valor comprado (cmp) por bairro; nunca é exibido nem enviado ao geocodificador.
      * A agregação (geoAgregar / geoClassificar) é independente do mapa, para reaproveitar
      * numa futura sugestão de rota.
      * =================================================================== */
     var geo = { carregado: false, carregando: false, ausente: false, erro: null, locais: [],
                 coords: {}, rodando: false, parar: false, feitos: 0, total: 0, ajustou: false,
-                ordem: { col: 'total', dir: -1 } };
+                ordem: { col: 'total', dir: -1 }, modo: 'n' };
     var mapaClientes = null, mapaClientesCamada = null;
     var GEO_CACHE_CHAVE = 'temprio_geo_v1', GEO_RETENTAR_MS = 7 * 86400000;
 
@@ -2573,8 +2863,9 @@
         linhas.forEach(function (l) {
             var b = String(l.bairro || '').trim(), c = String(l.cidade || '').trim(), u = String(l.estado || '').trim().toUpperCase();
             var chave = geoNorm(b) + '|' + geoNorm(c) + '|' + u;
-            var o = mapa[chave] || (mapa[chave] = { chave: chave, bairro: b, cidade: c, uf: u, total: 0, cnpj: 0, cpf: 0, grafias: {} });
+            var o = mapa[chave] || (mapa[chave] = { chave: chave, bairro: b, cidade: c, uf: u, total: 0, cnpj: 0, cpf: 0, docs: [], valor: 0, grafias: {} });
             o.total++;
+            var dk = docNorm(l.documento, l.tipo); if (dk) o.docs.push(dk);
             if (String(l.tipo).toLowerCase() === 'cnpj') o.cnpj++; else if (String(l.tipo).toLowerCase() === 'cpf') o.cpf++;
             var g = b + '|' + c; o.grafias[g] = (o.grafias[g] || 0) + 1;
         });
@@ -2641,8 +2932,8 @@
 
     function carregarGeoClientes() {
         geo.carregando = true; geoRedesenhar();
-        vendPaginar(function () {
-            return sb.from('solidcon_clientes').select('tipo,cidade,bairro,estado').order('documento', { ascending: true });
+        return vendPaginar(function () {
+            return sb.from('solidcon_clientes').select('documento,tipo,cidade,bairro,estado').order('documento', { ascending: true });
         }).then(function (r) {
             geo.carregando = false; geo.ausente = false; geo.erro = null;
             if (r.error) {
@@ -2658,7 +2949,18 @@
         }).catch(function (e) { geo.carregando = false; geo.erro = String(e && e.message || e); geoRedesenhar(); });
     }
 
+    // Soma o valor comprado (6 meses) por bairro. false = histórico indisponível (valor fica 0).
+    function geoCalcValores() {
+        var ok = cmpPronto();
+        geo.locais.forEach(function (l) {
+            l.valor = 0;
+            if (ok) l.docs.forEach(function (k) { var o = cmp.por[k]; if (o) l.valor += o.total6; });
+        });
+        return ok;
+    }
+
     function geoRedesenhar() {
+        dashAtualizarResumo();
         abasParaRedesenhar.regioes = true;
         desenharAbaSeSuja(abaAtual);
     }
@@ -2772,7 +3074,11 @@
             '<div class="adm-card p-5 mb-5"><div class="flex items-center flex-wrap gap-3 mb-3">' +
                 '<button type="button" class="adm-botao" id="geo-localizar">Localizar bairros no mapa</button>' +
                 '<button type="button" class="adm-botao-fantasma hidden" id="geo-parar">Parar</button>' +
+                '<label for="geo-modo" class="adm-tile-rotulo ml-auto">Tamanho do círculo</label>' +
+                '<select id="geo-modo" class="adm-input" style="width:auto;padding:.4rem .7rem"><option value="n"' + (geo.modo === 'n' ? ' selected' : '') + '>Nº de clientes</option>' +
+                    '<option value="valor"' + (geo.modo === 'valor' ? ' selected' : '') + '>Valor comprado (' + CMP_MESES_VALOR + ' meses)</option></select>' +
                 '<span class="text-xs" id="geo-status" role="status" style="color:var(--adm-tinta-3)"></span></div>' +
+                '<p class="text-xs mb-3 hidden" id="geo-modo-aviso" role="status" style="color:var(--adm-tinta-2)"></p>' +
                 '<div id="mapa-clientes" style="height:420px;border-radius:.75rem;overflow:hidden"></div>' +
                 '<div class="flex gap-4 flex-wrap text-xs mt-3" style="color:var(--adm-tinta-2)">' +
                     '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#F28C52"></span> Dentro de região que entrega</span>' +
@@ -2784,6 +3090,7 @@
 
         alvo.querySelector('#geo-localizar').addEventListener('click', geoLocalizar);
         alvo.querySelector('#geo-parar').addEventListener('click', geoParar);
+        alvo.querySelector('#geo-modo').addEventListener('change', function (ev) { geo.modo = ev.target.value === 'valor' ? 'valor' : 'n'; geoAtualizarMapa(); });
         geoAtualizarMapa();
     }
 
@@ -2792,6 +3099,18 @@
         if (!$('#geo-clientes') || !geo.carregado) return;
         var cls = {};
         geo.locais.forEach(function (l) { cls[l.chave] = geoClassificar(l); });
+        // Valor comprado (6 meses) por bairro: soma das compras dos documentos do bairro; só com o histórico utilizável.
+        var temValor = geoCalcValores();
+        var usaValor = geo.modo === 'valor' && temValor;
+        var avisoModo = $('#geo-modo-aviso');
+        if (avisoModo) {
+            var motivo = geo.modo === 'valor' && !temValor
+                ? (cmp.ausente ? 'Valor indisponível: histórico de compras ainda não instalado.' : cmp.erro ? 'Valor indisponível: falha ao carregar o histórico de compras.' :
+                   cmp.truncado ? 'Valor indisponível: histórico grande demais para o painel.' : 'Carregando o histórico de compras…') + ' Círculos por nº de clientes.' : '';
+            avisoModo.textContent = motivo; avisoModo.classList.toggle('hidden', !motivo);
+        }
+        var seletor = $('#geo-modo'); if (seletor) seletor.value = geo.modo;
+        function medida(l) { return usaValor ? l.valor : l.total; }
         var pendentes = geo.locais.filter(function (l) { return !(l.chave in geo.coords) && l.cidade && l.uf; }).length;
 
         var st = $('#geo-status'), bl = $('#geo-localizar'), bp = $('#geo-parar');
@@ -2809,15 +3128,15 @@
             }
             if (mapaClientesCamada) mapaClientes.removeLayer(mapaClientesCamada);
             mapaClientesCamada = L.layerGroup();
-            var maior = Math.max.apply(null, geo.locais.map(function (l) { return l.total; }).concat([1]));
+            var maior = Math.max.apply(null, geo.locais.map(medida).concat([1]));
             var pts = [];
             geo.locais.forEach(function (l) {
                 var p = geo.coords[l.chave];
                 if (!p) return;
                 var reg = cls[l.chave], cor = geoCor(reg);
-                L.circleMarker([p.lat, p.lng], { radius: 5 + Math.round(Math.sqrt(l.total / maior) * 22), color: cor, weight: 1, fillColor: cor, fillOpacity: 0.5 })
+                L.circleMarker([p.lat, p.lng], { radius: 5 + Math.round(Math.sqrt(medida(l) / maior) * 22), color: cor, weight: 1, fillColor: cor, fillOpacity: 0.5 })
                     .bindTooltip(esc((l.bairro ? l.bairro + ', ' : '') + l.cidade + '/' + l.uf) + ': ' + NUM.format(l.total) + (l.total === 1 ? ' cliente' : ' clientes') +
-                        ' (' + NUM.format(l.cnpj) + ' CNPJ, ' + NUM.format(l.cpf) + ' CPF) · ' + esc(reg ? reg.nome : 'fora das regiões'))
+                        ' (' + NUM.format(l.cnpj) + ' CNPJ, ' + NUM.format(l.cpf) + ' CPF)' + (temValor ? ' · ' + esc(brl(l.valor)) + ' em ' + CMP_MESES_VALOR + ' meses' : '') + ' · ' + esc(reg ? reg.nome : 'fora das regiões'))
                     .addTo(mapaClientesCamada);
                 pts.push([p.lat, p.lng]);
             });
@@ -2871,11 +3190,11 @@
         if (tab) {
             tab.innerHTML = '<div class="adm-card p-5 mb-5"><p class="font-bold mb-3">Clientes por bairro</p>' +
                 '<div class="overflow-x-auto" style="max-height:26rem;overflow-y:auto"><table class="adm-tabela"><thead><tr>' +
-                th('local', 'Bairro / cidade') + th('regiao', 'Região') + th('total', 'Clientes', true) + th('cnpj', 'CNPJ', true) + th('cpf', 'CPF', true) + '<th>Posição</th></tr></thead><tbody>' +
+                th('local', 'Bairro / cidade') + th('regiao', 'Região') + th('total', 'Clientes', true) + th('cnpj', 'CNPJ', true) + th('cpf', 'CPF', true) + (temValor ? th('valor', 'Valor ' + CMP_MESES_VALOR + ' meses', true) : '') + '<th>Posição</th></tr></thead><tbody>' +
                 lista.map(function (l) {
                     var r = cls[l.chave], p = geo.coords[l.chave];
                     return '<tr><td>' + esc(l.bairro || '(sem bairro)') + ', ' + esc(l.cidade || '—') + (l.uf ? '/' + esc(l.uf) : '') + '</td>' +
-                        '<td>' + esc(r ? r.nome : 'Fora das regiões') + '</td><td class="num">' + NUM.format(l.total) + '</td><td class="num">' + NUM.format(l.cnpj) + '</td><td class="num">' + NUM.format(l.cpf) + '</td>' +
+                        '<td>' + esc(r ? r.nome : 'Fora das regiões') + '</td><td class="num">' + NUM.format(l.total) + '</td><td class="num">' + NUM.format(l.cnpj) + '</td><td class="num">' + NUM.format(l.cpf) + '</td>' + (temValor ? '<td class="num">' + esc(brl(l.valor)) + '</td>' : '') +
                         '<td class="text-xs" style="color:var(--adm-tinta-3)">' + (p ? 'no mapa' : (l.chave in geo.coords ? 'não localizado' : (l.cidade && l.uf ? 'pendente' : 'sem cidade/UF'))) + '</td></tr>';
                 }).join('') + '</tbody></table></div></div>';
             tab.querySelectorAll('[data-geo-ord]').forEach(function (h) {
@@ -2961,8 +3280,300 @@
         });
     }
 
+    /* ===================================================================
+     * Dashboard — "Resumão": KPIs e cards por tema, montados SÓ com o que as abas de origem já
+     * calculam (mesmas funções e mesmo cache). Nada de consulta nova: os carregadores existentes
+     * rodam em fila (um por vez, sob demanda) e cada bloco aparece quando seus dados chegam.
+     * Vendedor vê só o que as abas dele mostram (ABAS_SO_ADMIN fica de fora).
+     * =================================================================== */
+    var dash = { iniciado: false, rodando: false };
+
+    // Gate positivo: áreas restritas só com papel === 'admin' (papel nulo/desconhecido não libera). A RLS continua sendo a proteção real.
+    function dashVe(aba) { return papel === 'admin' || ABAS_SO_ADMIN.indexOf(aba) === -1; }
+
+    function dashAtualizarResumo() {
+        if (abaAtual === 'dashboard' && $('#resumao')) desenharResumao();
+        else abasParaRedesenhar.dashboard = true;
+    }
+
+    // Carrega, um após o outro, o que o Resumão usa. Não repete o que já está em cache (salvo forcar).
+    function dashCarregarProgressivo(forcar) {
+        if (dash.rodando) return;
+        var adm = papel === 'admin';
+        var passos = [];
+        if (adm) passos.push([vend, carregarVendas]);
+        passos.push([cmp, carregarCompras]);
+        passos.push([scli, carregarSolidClientes]);
+        if (adm) { passos.push([solid, carregarSolidcon]); passos.push([giro, carregarGiro]); passos.push([geo, carregarGeoClientes]); }
+        dash.rodando = true;
+        (function prox(i) {
+            if (i >= passos.length) { dash.rodando = false; return; }
+            var o = passos[i][0];
+            var precisa = forcar ? !o.carregando : (!o.carregado && !o.carregando && !o.ausente && !o.erro);
+            if (!precisa) { prox(i + 1); return; }
+            var p;
+            try { p = passos[i][1](); } catch (e) { p = null; }
+            Promise.resolve(p).then(function () { prox(i + 1); }, function () { prox(i + 1); });
+        })(0);
+    }
+
+    // Single-flight: clique repetido em "Tentar de novo" não dispara consulta enquanto a anterior roda.
+    function resUma(o, fn) { return function () { if (!o.carregando) fn(); }; }
+    var RES_CARREGADORES = { vend: resUma(vend, carregarVendas), cmp: resUma(cmp, carregarCompras), scli: resUma(scli, carregarSolidClientes),
+                             solid: resUma(solid, carregarSolidcon), giro: resUma(giro, carregarGiro), geo: resUma(geo, carregarGeoClientes) };
+
+    function resMotivo(o) {
+        return o.ausente ? 'ainda não instalado' : o.erro ? 'falha ao carregar' : o.truncado ? 'histórico grande demais' : 'carregando…';
+    }
+
+    // HTML de estado (carregando / ausente / erro / limite) ou null quando os dados estão utilizáveis.
+    function resEstado(o, rotulo, chave) {
+        if (o.ausente) return '<p class="text-sm" style="color:var(--adm-tinta-3)">' + esc(rotulo) + ': ainda não instalado neste banco.</p>';
+        if (o.erro && !o.carregando) return '<p class="text-sm mb-2" style="color:var(--adm-tinta-2)">Não foi possível carregar ' + esc(rotulo) + ': ' + esc(o.erro) + '</p>' +
+            '<button type="button" class="adm-botao-fantasma" data-res-tentar="' + chave + '">Tentar de novo</button>';
+        if (o.truncado && !o.carregando) return '<p class="text-sm" style="color:var(--adm-tinta-3)">' + esc(rotulo) + ': histórico grande demais para o painel; indicadores indisponíveis.</p>';
+        if (!o.carregado || o.erro || o.truncado) return '<p class="text-sm" style="color:var(--adm-tinta-2)"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando ' + esc(rotulo) + '…</p>';
+        return null;
+    }
+
+    function resSeguro(fn) {
+        try { return fn(); } catch (e) {
+            if (window.console) console.error('[painel] resumão:', e);
+            return '<div class="adm-card p-5"><p class="text-sm" style="color:var(--adm-tinta-3)">Não foi possível montar este bloco.</p></div>';
+        }
+    }
+
+    function resKpi(rot, val, nota) {
+        return '<div class="adm-card p-4"><p class="adm-tile-rotulo mb-1">' + esc(rot) + '</p><p class="adm-tile-valor">' + esc(val) + '</p>' +
+               (nota ? '<p class="text-xs mt-1" style="color:var(--adm-tinta-3)">' + esc(nota) + '</p>' : '') + '</div>';
+    }
+
+    function resCard(titulo, aba, sub, corpo, largo) {
+        return '<div class="adm-card p-5' + (largo ? ' lg:col-span-2' : '') + '"><div class="flex items-start justify-between gap-3 mb-1"><p class="font-bold">' + esc(titulo) + '</p>' +
+            '<button type="button" class="text-xs underline shrink-0" style="color:var(--adm-marca)" data-ir-aba="' + aba + '">ver detalhes →</button></div>' +
+            (sub ? '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">' + esc(sub) + '</p>' : '<div class="mb-3"></div>') + corpo + '</div>';
+    }
+
+    function resSecao(icone, titulo, cards) {
+        var c = cards.filter(Boolean).join('');
+        if (!c) return '';
+        return '<section class="mb-8"><div class="flex items-center gap-2 mb-3"><i class="fa-solid ' + icone + '" style="color:var(--adm-marca)"></i>' +
+               '<p class="font-bold text-lg">' + esc(titulo) + '</p></div><div class="grid lg:grid-cols-2 gap-5">' + c + '</div></section>';
+    }
+
+    function resKpis() {
+        var adm = dashVe('vendas'), atual = vendMesAtual(), k = [];
+        var abertos = dados.pedidos.filter(function (p) { return p.status === 'aguardando' || p.status === 'confirmado'; });
+        var aguard = abertos.filter(function (p) { return p.status === 'aguardando'; }).length;
+        if (adm) {
+            if (vend.carregado && !vend.erro && !vend.ausente) {
+                var mf = vend.meses.filter(function (m) { return m.mes === atual; })[0], ma = vend.meses.filter(function (m) { return m.mes === vendMesAnterior(atual); })[0];
+                var vf = mf ? vendNum(mf.valor_centavos) : 0, va = ma ? vendNum(ma.valor_centavos) : 0;
+                var nota = va > 0 ? ((vf >= va ? '+' : '') + ((vf - va) / va * 100).toFixed(1).replace('.', ',') + '% vs ' + vendMesRotulo(vendMesAnterior(atual)) + ' inteiro') : 'sem mês anterior para comparar';
+                k.push(resKpi('Vendas do mês (ERP)', brl(vf), nota + ' · mês parcial'));
+                k.push(resKpi('Potes vendidos no mês', NUM.format(Math.round(mf ? vendNum(mf.potes) : 0)), 'caixas contadas em potes'));
+            } else {
+                k.push(resKpi('Vendas do mês (ERP)', '—', 'vendas do ERP: ' + resMotivo(vend)));
+                k.push(resKpi('Potes vendidos no mês', '—', 'vendas do ERP: ' + resMotivo(vend)));
+            }
+        } else {
+            var mesSite = atual.slice(0, 7);
+            var fat = dados.resumo.filter(function (r) { return String(r.mes).slice(0, 7) === mesSite; })[0];
+            k.push(resKpi('Faturamento do site no mês', brl(fat ? fat.faturamento_centavos : 0), 'pedidos confirmados ou entregues'));
+        }
+        if (cmpPronto()) {
+            var d = cmpDadosMensais();
+            k.push(d ? resKpi('Clientes ativos no mês', NUM.format(d.ativos[d.atual] || 0), NUM.format(d.novos[d.atual] || 0) + ' novos · ' + NUM.format(d.perdidos[d.atual] || 0) + ' perdidos')
+                     : resKpi('Clientes ativos no mês', '0', 'nenhuma compra identificada'));
+        } else {
+            k.push(resKpi('Clientes ativos no mês', '—', 'histórico de compras: ' + resMotivo(cmp)));
+        }
+        if (adm) {
+            if (solid.carregado && !solid.erro && !solid.ausente && giro.carregado && !giro.erro && !giro.ausente && !giro.truncado && giro.linhas.length) {
+                var it = giroItensCobertura();
+                var crit = it.filter(function (i) { return !i.semGiro && i.dias <= GIRO_CRITICO; }).length;
+                var aten = it.filter(function (i) { return !i.semGiro && i.dias > GIRO_CRITICO && i.dias <= GIRO_ATENCAO; }).length;
+                k.push(resKpi('Itens críticos de estoque', NUM.format(crit), 'acabam em até ' + GIRO_CRITICO + ' dias · ' + NUM.format(aten) + ' em atenção'));
+            } else {
+                var fonte = !(solid.carregado && !solid.erro && !solid.ausente) ? ['estoque do ERP', resMotivo(solid)] : ['giro', giro.carregado && !giro.truncado && !giro.linhas.length ? 'sem vendas' : resMotivo(giro)];
+                k.push(resKpi('Itens críticos de estoque', '—', fonte[0] + ': ' + fonte[1]));
+            }
+        }
+        k.push(resKpi('Pedidos abertos', NUM.format(abertos.length), NUM.format(aguard) + ' aguardando confirmação'));
+        return k;
+    }
+
+    function resCardsVendas() {
+        if (!dashVe('vendas')) return [];
+        var est = resEstado(vend, 'vendas do ERP', 'vend');
+        if (est) return [resCard('Vendas no ERP', 'vendas', 'Vendas por mês, preço praticado e sazonalidade.', est, true)];
+        if (!vend.meses.length) return [resCard('Vendas no ERP', 'vendas', null, '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhuma venda sincronizada ainda.</p>', true)];
+        var cards = [resCard('Vendas por mês', 'vendas', 'ERP SOLIDCON · mês corrente em cinza (parcial)', vendBarras(vendItensMes(), 'Vendas por mês em reais', 1))];
+        var D = vendPrecoDados();
+        if (!D) {
+            cards.push(resCard('Preço médio praticado', 'vendas', null, '<p class="text-sm" style="color:var(--adm-tinta-3)">Sem vendas com potes para calcular.</p>'));
+        } else {
+            var pior = D.linhas.slice().sort(function (a, b) { return a.valor / a.potes - b.valor / b.potes; }).slice(0, 5);
+            var pm = D.tot.potes > 0 ? D.tot.valor / D.tot.potes : 0, dsc = D.site > 0 ? (1 - pm / D.site) * 100 : 0;
+            cards.push(resCard('Preço médio praticado', 'vendas',
+                'Últimos ' + D.cols.length + ' meses · site ' + brl(D.site) + '/pote · mínimo ' + brl(VEND_PRECO_MIN),
+                '<p class="text-sm mb-3"><strong>' + esc(brl(Math.round(pm))) + '</strong> por pote (' + esc(vendPct(Math.abs(dsc)) + '%' + (dsc < 0 ? ' acima' : ' abaixo') + ' do site') + ') · <strong>' +
+                NUM.format(D.abaixo.length) + '</strong> sabor(es) abaixo do mínimo</p>' +
+                '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Sabor (menores preços)</th><th class="num">Preço</th></tr></thead><tbody>' +
+                pior.map(function (l) { return '<tr><td>' + esc(l.rot) + '</td>' + vendCelulaPreco(l.potes, l.valor, D.site) + '</tr>'; }).join('') + '</tbody></table></div>'));
+        }
+        cards.push('<div class="lg:col-span-2">' + vendHtmlSazonalidade('res-metrica', 10, 12) +
+            '<p class="text-right mt-2"><button type="button" class="text-xs underline" style="color:var(--adm-marca)" data-ir-aba="vendas">ver detalhes →</button></p></div>');
+        return cards;
+    }
+
+    function resCardsEstoque() {
+        if (!dashVe('vitrine')) return [];
+        var est = resEstado(solid, 'estoque do ERP', 'solid') || resEstado(giro, 'vendas do ERP (giro)', 'giro');
+        if (est) return [resCard('Estoque e giro', 'vitrine', 'Quanto tempo o estoque dura, produtos parados e ranking.', est, true)];
+        if (!giro.linhas.length) return [resCard('Estoque e giro', 'vitrine', null, '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhuma venda sincronizada ainda.</p>', true)];
+        var it = giroItensCobertura(), crit = it.filter(function (i) { return !i.semGiro && i.dias <= GIRO_CRITICO; }).length;
+        var aten = it.filter(function (i) { return !i.semGiro && i.dias > GIRO_CRITICO && i.dias <= GIRO_ATENCAO; }).length;
+        var par = giroItensParados(), rk = giroRankingLista(30), totRk = rk.reduce(function (a, x) { return a + x.potes; }, 0), topo = rk.slice(0, 8), mx = topo.length ? topo[0].potes : 1;
+        return [
+            resCard('Estoque acaba em quantos dias', 'vitrine', 'Cobertura por sabor, em potes · crítico ≤ ' + GIRO_CRITICO + ' dias, atenção ≤ ' + GIRO_ATENCAO,
+                '<p class="text-sm mb-3"><strong>' + NUM.format(crit) + '</strong> crítico(s) · <strong>' + NUM.format(aten) + '</strong> em atenção</p>' +
+                (it.length ? '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Sabor</th><th class="num">Estoque</th><th class="num">Acaba em</th><th>Situação</th></tr></thead><tbody>' +
+                    it.slice(0, 6).map(function (i) {
+                        return '<tr><td>' + esc(i.gr.nome) + '</td><td class="num">' + esc(NUM.format(i.est)) + '</td><td class="num">' + (i.semGiro ? '—' : esc(giroFmt(i.dias, 0) + ' dias')) + '</td><td>' + giroSeloCobertura(i.dias, i.semGiro) + '</td></tr>';
+                    }).join('') + '</tbody></table></div>' : '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum sabor com estoque ou giro no período.</p>')),
+            resCard('Produtos parados', 'vitrine', 'Com estoque e sem venda há ' + GIRO_PARADO + ' dias ou mais',
+                '<p class="text-sm mb-3"><strong>' + NUM.format(par.length) + '</strong> sabor(es) parado(s)</p>' +
+                (par.length ? '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Sabor</th><th class="num">Estoque</th><th class="num">Sem venda há</th></tr></thead><tbody>' +
+                    par.slice(0, 5).map(function (i) { return '<tr><td>' + esc(i.gr.nome) + '</td><td class="num">' + esc(NUM.format(i.est)) + '</td><td class="num">' + (i.dias == null ? '—' : esc(NUM.format(i.dias) + ' dias')) + '</td></tr>'; }).join('') +
+                    '</tbody></table></div>' : '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum produto parado com estoque.</p>')),
+            resCard('Ranking real de vendas (30 dias)', 'vitrine', 'Potes vendidos no ERP, pote + caixa 24 + caixa 48 do mesmo sabor',
+                topo.length ? topo.map(function (x, i) {
+                    var pct = totRk > 0 ? x.potes / totRk * 100 : 0;
+                    return '<div class="mb-2"><div class="flex justify-between gap-3 text-xs mb-1"><span style="color:var(--adm-tinta-2)">' + (i + 1) + '. ' + esc(x.rot) + '</span>' +
+                        '<span class="font-bold">' + esc(NUM.format(Math.round(x.potes))) + ' <span class="font-normal" style="color:var(--adm-tinta-3)">' + esc(giroFmt(pct, 1) + '%') + '</span></span></div>' +
+                        '<div style="height:6px;border-radius:99px;background:var(--adm-borda)"><div style="height:6px;border-radius:99px;background:var(--adm-marca);width:' + (x.potes / mx * 100).toFixed(1) + '%"></div></div></div>';
+                }).join('') : '<p class="text-sm" style="color:var(--adm-tinta-3)">Sem vendas nesse período.</p>', true)
+        ];
+    }
+
+    function resCardsClientes() {
+        var cards = [], est = resEstado(cmp, 'histórico de compras', 'cmp');
+        if (est) {
+            cards.push(resCard('Clientes ativos, novos e perdidos', 'clientes', 'Histórico de compras por cliente (ERP).', est));
+        } else {
+            var d = cmpDadosMensais();
+            cards.push(resCard('Clientes ativos, novos e perdidos', 'clientes', 'Últimos 6 meses · perdido = ' + CMP_PERDIDO + ' dias sem comprar',
+                d ? cmpHtmlTabelaMensal(d, 6) : '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhuma compra com cliente identificado.</p>'));
+            var sum = cmpSumindo(), cad = cmpCadastros();
+            cards.push(resCard('Clientes sumindo', 'clientes', CMP_MIN_COMPRAS + '+ compras e parados há mais de ' + String(CMP_FATOR).replace('.', ',') + '× o ritmo habitual',
+                '<p class="text-sm mb-3"><strong>' + NUM.format(sum.length) + '</strong> cliente(s) · maiores por média mensal</p>' +
+                (sum.length ? '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Cliente</th><th>Última compra</th><th class="num">Média/mês</th></tr></thead><tbody>' +
+                    sum.slice(0, 5).map(function (o) {
+                        return '<tr><td>' + esc(cmpNome(o, cad)) + '</td><td>' + esc(cmpData(o.ultima)) + '</td><td class="num">' + esc(brl(Math.round(o.mensal))) + '</td></tr>';
+                    }).join('') + '</tbody></table></div>' : '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum cliente nessa situação.</p>')));
+        }
+        if (dashVe('regioes')) {
+            var eg = resEstado(geo, 'cadastros do ERP', 'geo');
+            if (eg) {
+                cards.push(resCard('Clientes por região', 'regioes', 'Cadastros do ERP por bairro.', eg, true));
+            } else if (!geo.locais.length) {
+                cards.push(resCard('Clientes por região', 'regioes', null, '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum cadastro sincronizado ainda.</p>', true));
+            } else {
+                var temV = geoCalcValores(), dentro = 0, fora = 0;
+                geo.locais.forEach(function (l) { if (geoClassificar(l)) dentro += l.total; else fora += l.total; });
+                var top = geo.locais.slice().sort(function (a, b) { return temV ? (b.valor - a.valor) || (b.total - a.total) : (b.total - a.total); }).slice(0, 8);
+                cards.push(resCard('Clientes por região', 'regioes',
+                    'Aproximação por nome de bairro/cidade (sem polígono) · mapa na aba de origem',
+                    '<p class="text-sm mb-3"><strong>' + NUM.format(dentro) + '</strong> cliente(s) dentro das regiões cadastradas · <strong>' + NUM.format(fora) + '</strong> fora · ' + NUM.format(geo.locais.length) + ' bairros' +
+                    (temV ? '' : ' · valor comprado: ' + esc(resMotivo(cmp))) + '</p>' +
+                    '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Bairro / cidade</th><th>Região</th><th class="num">Clientes</th>' + (temV ? '<th class="num">Valor 6 meses</th>' : '') + '</tr></thead><tbody>' +
+                    top.map(function (l) {
+                        var r = geoClassificar(l);
+                        return '<tr><td>' + esc(l.bairro || '(sem bairro)') + ', ' + esc(l.cidade || '—') + (l.uf ? '/' + esc(l.uf) : '') + '</td><td>' + esc(r ? r.nome : 'Fora das regiões') + '</td><td class="num">' + NUM.format(l.total) + '</td>' +
+                        (temV ? '<td class="num">' + esc(brl(l.valor)) + '</td>' : '') + '</tr>';
+                    }).join('') + '</tbody></table></div>', true));
+            }
+        }
+        return cards;
+    }
+
+    function resCardsPedidos() {
+        var cards = [], pedidos = dados.pedidos;
+        var linhas = COLUNAS_KANBAN.map(function (c) {
+            var n = pedidos.filter(function (p) { return p.status === c.status; }).length;
+            return '<div class="flex items-center justify-between gap-3 py-1.5" style="border-bottom:1px solid var(--adm-borda)">' + selo(c.status) + '<span class="font-bold">' + NUM.format(n) + '</span></div>';
+        }).join('');
+        var lancar = pedidos.filter(function (p) { return ('lancado_solidcon_em' in p) && p.status !== 'cancelado' && !lancadoNoSolidcon(p); }).length;
+        var temLanc = pedidos.some(function (p) { return 'lancado_solidcon_em' in p; });
+        var cadastrar = 0, cadOk = !!pedidos.length && pedidos.some(function (p) { return cadastroErpDoPedido(p); });
+        var faltam = {}; // clientes distintos (documento tipado), não pedidos
+        pedidos.forEach(function (p) {
+            if (cadastroErpDoPedido(p) !== 'falta') return;
+            var tp = p.cnpj ? 'cnpj' : 'cpf';
+            faltam[tp + ':' + docNorm(p.cnpj || p.cpf, tp)] = true;
+        });
+        cadastrar = Object.keys(faltam).length;
+        var extras = '<p class="text-xs mt-3" style="color:var(--adm-tinta-2)">' +
+            (temLanc ? '<strong>' + NUM.format(lancar) + '</strong> pedido(s) ainda sem lançamento no SOLIDCON' : 'Lançamento no SOLIDCON: indisponível neste banco') + '<br>' +
+            (scli.carregado && !scli.erro && !scli.ausente ? '<strong>' + NUM.format(cadastrar) + '</strong> cliente(s) a cadastrar no ERP antes de faturar' : 'Cadastros do ERP: ' + esc(resMotivo(scli))) + '</p>';
+        cards.push(resCard('Pedidos por status', 'pedidos', 'Pedidos do site no período selecionado', (pedidos.length ? linhas : '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum pedido no período.</p>') + (pedidos.length ? extras : '')));
+        var res = dados.resumo;
+        cards.push(resCard('Faturamento do site por mês', 'pedidos', 'Pedidos confirmados ou entregues',
+            res.length ? vendBarras(res.map(function (r) {
+                return { rot: rotuloMes(r.mes), v: Number(r.faturamento_centavos) || 0, dica: rotuloMes(r.mes) + ': ' + brl(r.faturamento_centavos) + ' · ' + NUM.format(r.confirmados) + ' confirmados' };
+            }), 'Faturamento do site por mês em reais', 1) : '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum pedido ainda.</p>'));
+        if (dashVe('visitas')) {
+            var corte = Date.now() - 30 * 86400000, sess = {};
+            dados.visitasBrutas.forEach(function (v) { if (v.sessao && new Date(v.criado_em).getTime() >= corte) sess[v.sessao] = true; });
+            var leads30 = dados.leads.filter(function (l) { return new Date(l.criado_em).getTime() >= corte; }).length;
+            cards.push(resCard('Visitas e leads (30 dias)', 'visitas', 'Movimento do site',
+                '<div class="grid grid-cols-2 gap-3"><div><p class="adm-tile-rotulo mb-1">Sessões</p><p class="adm-tile-valor">' + NUM.format(Object.keys(sess).length) + '</p></div>' +
+                '<div><p class="adm-tile-rotulo mb-1">Leads</p><p class="adm-tile-valor">' + NUM.format(leads30) + '</p></div></div>' +
+                '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">Sessões contadas nas últimas ' + NUM.format(dados.visitasBrutas.length) + ' visitas carregadas. <button type="button" class="underline" style="color:var(--adm-marca)" data-ir-aba="leads">ver leads →</button></p>'));
+        }
+        return cards;
+    }
+
+    function desenharResumao() {
+        var alvo = $('#resumao');
+        if (!alvo) return;
+        var kpis = resSeguro(resKpis);
+        alvo.innerHTML =
+            '<div class="mb-4"><p class="font-bold text-xl">Resumão</p>' +
+            '<p class="text-xs" style="color:var(--adm-tinta-3)">Os principais números em um só lugar. Cada bloco aparece quando seus dados chegam; “ver detalhes” abre a aba de origem.</p></div>' +
+            '<div class="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-8">' + (Array.isArray(kpis) ? kpis.join('') : kpis) + '</div>' +
+            resSecao('fa-chart-line', 'Vendas', toArr(resSeguro(resCardsVendas))) +
+            resSecao('fa-boxes-stacked', 'Estoque', toArr(resSeguro(resCardsEstoque))) +
+            resSecao('fa-users', 'Clientes', toArr(resSeguro(resCardsClientes))) +
+            resSecao('fa-clipboard-list', 'Pedidos e site', toArr(resSeguro(resCardsPedidos)));
+        var met = alvo.querySelector('#res-metrica');
+        if (met) met.addEventListener('change', function (ev) {
+            vend.metrica = ev.target.value === 'valor' ? 'valor' : 'potes';
+            abasParaRedesenhar.vendas = true;
+            desenharResumao();
+        });
+    }
+    function toArr(x) { return Array.isArray(x) ? x : [x]; }
+
     function desenharDashboard() {
         var alvo = $('#painel-dashboard');
+        alvo.innerHTML = '<section id="resumao"></section>' +
+            '<section class="mt-12 pt-8" style="border-top:1px solid var(--adm-borda)"><div class="mb-4"><p class="font-bold text-lg">Detalhe do site</p>' +
+            '<p class="text-xs" style="color:var(--adm-tinta-3)">Faturamento, pedidos e receita por período — pedidos feitos pelo site.</p></div><div id="dash-site-corpo"></div></section>';
+        alvo.querySelector('#resumao').addEventListener('click', function (ev) {
+            var ir = ev.target.closest('[data-ir-aba]');
+            if (ir) { trocarAba(ir.getAttribute('data-ir-aba')); window.scrollTo(0, 0); return; }
+            var t = ev.target.closest('[data-res-tentar]');
+            if (t) { var f = RES_CARREGADORES[t.getAttribute('data-res-tentar')]; if (f) f(); }
+        });
+        desenharResumao();
+        desenharDashboardBase();
+        if (!dash.iniciado) { dash.iniciado = true; dashCarregarProgressivo(false); }
+    }
+
+    function desenharDashboardBase() {
+        var alvo = $('#dash-site-corpo');
         var resumo = dados.resumo;
 
         if (!resumo.length) {
@@ -3431,11 +4042,18 @@
     function lancadoNoSolidcon(p) { return !!p.lancado_solidcon_em; }
 
     // Cliente do pedido já existe no ERP? Sem a lista do ERP (carregando, ausente ou erro) não afirma nada.
-    function seloCadastroErp(p) {
-        if (p.status === 'cancelado' || scli.carregando || scli.erro || scli.ausente || !scli.carregado || !scli.docs) return '';
+    // 'ja' | 'falta' | null (sem como afirmar: cancelado, fonte indisponível ou sem documento).
+    function cadastroErpDoPedido(p) {
+        if (p.status === 'cancelado' || scli.carregando || scli.erro || scli.ausente || !scli.carregado || !scli.docs) return null;
         var tp = p.cnpj ? 'cnpj' : 'cpf', doc = p.cnpj || p.cpf;
-        if (!docNorm(doc, tp)) return '';
-        return jaNoErp(doc, tp)
+        if (!docNorm(doc, tp)) return null;
+        return jaNoErp(doc, tp) ? 'ja' : 'falta';
+    }
+
+    function seloCadastroErp(p) {
+        var st = cadastroErpDoPedido(p);
+        if (!st) return '';
+        return st === 'ja'
             ? '<span class="adm-selo" style="background:rgba(168,85,247,.14);color:#D8B4FE" title="O CNPJ/CPF deste pedido tem cadastro no SOLIDCON">' +
               '<i class="fa-solid fa-link"></i>Já cadastrado no ERP</span>'
             : '<span class="adm-selo adm-selo-aguardando" title="Não há cadastro com este CNPJ/CPF no SOLIDCON">' +
