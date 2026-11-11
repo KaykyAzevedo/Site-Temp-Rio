@@ -1649,7 +1649,7 @@
      * Sob demanda e isolado do carregar() geral. Sem a 018: aviso na aba.
      * =================================================================== */
     var vend = { carregado: false, carregando: false, ausente: false, erro: null,
-                 dias: [], meses: [], fam: [], syncs: [], mesFoco: null };
+                 dias: [], meses: [], fam: [], syncs: [], mesFoco: null, metrica: 'potes' };
     var VEND_DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
     var VEND_FORMATOS = [['pote', 'Pote avulso'], ['cx24', 'Caixa 24'], ['cx48', 'Caixa 48'], ['outro', 'Outros']];
 
@@ -1794,6 +1794,152 @@
         return { txt: txt, alerta: alerta };
     }
 
+    /* ---- Dashboard de vendas (ERP): preço médio praticado e sazonalidade ----
+     * Reaproveitam vend.fam (solidcon_vendas_familia_mes, já em cache): sem nova consulta.
+     * Pote avulso, caixa 24 e caixa 48 já vêm convertidos em potes, por família (sabor). */
+    var VEND_PRECO_MIN = 330;      // mínimo definido pelo dono (R$ 3,30/pote)
+    var VEND_PRECO_MESES = 6;      // colunas da tabela de preço
+    var VEND_CALOR_MESES = 18;     // colunas do mapa de calor
+    var VEND_CALOR_SABORES = 20;
+
+    // Preço de tabela do site (R$ 4,00/pote): lê siteConfig.pedido.precoPorPoteCentavos (js/config.js); 400 se indisponível.
+    function vendPrecoSite() {
+        var c = (typeof siteConfig !== 'undefined' && siteConfig && siteConfig.pedido) ? Number(siteConfig.pedido.precoPorPoteCentavos) : NaN;
+        return c > 0 ? c : 400;
+    }
+
+    function vendPct(n) { return n.toFixed(1).replace('.', ','); }
+
+    // Agrupa vend.fam por sabor e mês: { sabores: {fam: {rot, meses: {mes: {potes, valor}}}}, meses: [ordenados] }
+    function vendPorSaborMes() {
+        var sab = {}, ms = {};
+        vend.fam.forEach(function (x) {
+            var p = vendNum(x.potes);
+            if (p <= 0) return; // sem potes não há preço (evita distorcer com linhas sem conversão)
+            var s = sab[x.familia] || (sab[x.familia] = { rot: vendLimparNome(x.nome_familia), meses: {} });
+            var m = s.meses[x.mes] || (s.meses[x.mes] = { potes: 0, valor: 0 });
+            m.potes += p; m.valor += vendNum(x.valor_centavos);
+            ms[x.mes] = true;
+        });
+        return { sabores: sab, meses: Object.keys(ms).sort() };
+    }
+
+    // N meses consecutivos terminando no último mês com venda (meses sem venda ficam na janela, zerados).
+    function vendJanela(meses, n) {
+        if (!meses.length) return [];
+        var p = meses[meses.length - 1].split('-'), a = Number(p[0]), m = Number(p[1]), out = [];
+        for (var i = 0; i < n; i++) {
+            out.unshift(a + '-' + String(m).padStart(2, '0') + '-01');
+            m--; if (m < 1) { m = 12; a--; }
+        }
+        return out;
+    }
+
+    function vendCelulaPreco(potes, valor, site) {
+        if (!(potes > 0)) return '<td class="num" style="color:var(--adm-tinta-3)">—</td>';
+        var preco = valor / potes, baixo = preco < VEND_PRECO_MIN;
+        return '<td class="num" title="' + esc(NUM.format(Math.round(potes)) + ' potes · ' + vendPct((1 - preco / site) * 100) + '% de desconto sobre o site') + '"' +
+               (baixo ? ' style="color:var(--adm-ruim);font-weight:700"' : '') + '>' +
+               (baixo ? '<i class="fa-solid fa-triangle-exclamation mr-1" aria-hidden="true"></i>' : '') + esc(brl(Math.round(preco))) + '</td>';
+    }
+
+    function vendHtmlPreco() {
+        var site = vendPrecoSite(), d = vendPorSaborMes();
+        if (!d.meses.length) return '<div class="adm-card p-5"><p class="font-bold">Preço médio praticado</p><p class="text-sm mt-2" style="color:var(--adm-tinta-3)">Sem vendas com potes para calcular.</p></div>';
+        var cols = vendJanela(d.meses, VEND_PRECO_MESES);
+        var linhas = Object.keys(d.sabores).map(function (k) {
+            var s = d.sabores[k], p = 0, v = 0;
+            cols.forEach(function (m) { if (s.meses[m]) { p += s.meses[m].potes; v += s.meses[m].valor; } });
+            return { rot: s.rot, meses: s.meses, potes: p, valor: v };
+        }).filter(function (l) { return l.potes > 0; }).sort(function (a, b) { return b.potes - a.potes; });
+        var tot = { rot: 'Todos os sabores', meses: {}, potes: 0, valor: 0 };
+        linhas.forEach(function (l) {
+            cols.forEach(function (m) {
+                if (!l.meses[m]) return;
+                var t = tot.meses[m] || (tot.meses[m] = { potes: 0, valor: 0 });
+                t.potes += l.meses[m].potes; t.valor += l.meses[m].valor;
+            });
+            tot.potes += l.potes; tot.valor += l.valor;
+        });
+        var abaixo = linhas.filter(function (l) { return l.valor / l.potes < VEND_PRECO_MIN; });
+        function descCel(l) {
+            if (!(l.potes > 0)) return '<td class="num">—</td>';
+            var dsc = (1 - (l.valor / l.potes) / site) * 100;
+            return '<td class="num">' + esc(vendPct(Math.abs(dsc)) + '%' + (dsc < 0 ? ' acima' : '')) + '</td>';
+        }
+        function linhaTab(l, forte) {
+            var preco = l.potes > 0 ? l.valor / l.potes : 0, baixo = l.potes > 0 && preco < VEND_PRECO_MIN;
+            return '<tr' + (forte ? ' style="font-weight:700"' : '') + '><td>' + esc(l.rot) + '</td>' +
+                cols.map(function (m) { var c = l.meses[m]; return vendCelulaPreco(c ? c.potes : 0, c ? c.valor : 0, site); }).join('') +
+                vendCelulaPreco(l.potes, l.valor, site) + descCel(l) + '</tr>';
+        }
+        // Gráfico: preço do período por sabor (mais vendidos), com marcas em R$ 3,30 e no preço do site
+        var topo = linhas.slice(0, 12);
+        var teto = Math.max(site, VEND_PRECO_MIN, Math.max.apply(null, topo.map(function (l) { return l.valor / l.potes; }).concat([0]))) * 1.05;
+        var pos = function (v) { return (v / teto * 100).toFixed(2) + '%'; };
+        var grafico = topo.map(function (l) {
+            var preco = l.valor / l.potes, baixo = preco < VEND_PRECO_MIN;
+            return '<div class="mb-2"><div class="flex justify-between gap-3 text-xs mb-1"><span style="color:var(--adm-tinta-2)">' + esc(l.rot) + '</span>' +
+                '<span class="font-bold" style="' + (baixo ? 'color:var(--adm-ruim)' : '') + '">' + esc(brl(Math.round(preco))) + '</span></div>' +
+                '<div style="position:relative;height:8px;border-radius:99px;background:var(--adm-borda)">' +
+                '<div style="height:8px;border-radius:99px;background:' + (baixo ? 'var(--adm-ruim)' : 'var(--adm-marca)') + ';width:' + pos(preco) + '"></div>' +
+                '<div style="position:absolute;top:-3px;bottom:-3px;left:' + pos(VEND_PRECO_MIN) + ';width:2px;background:var(--adm-ruim)"></div>' +
+                '<div style="position:absolute;top:-3px;bottom:-3px;left:' + pos(site) + ';width:2px;background:var(--adm-tinta-2)"></div></div></div>';
+        }).join('');
+        return '<div class="adm-card p-5">' +
+            '<p class="font-bold">Preço médio praticado por sabor</p>' +
+            '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">Valor vendido ÷ potes (pote avulso, caixa 24 e caixa 48 convertidos), ' + cols.length +
+                ' meses (' + vendMesRotulo(cols[0]) + ' a ' + vendMesRotulo(cols[cols.length - 1]) + '; mês sem venda fica em branco). Site: ' + esc(brl(site)) + '/pote. Vermelho: abaixo de ' + esc(brl(VEND_PRECO_MIN)) + ' (mínimo definido).</p>' +
+            (abaixo.length
+                ? '<div class="text-sm mb-3 p-3" role="status" style="border:1px solid rgba(239,68,68,.45);border-radius:.6rem"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:var(--adm-ruim)"></i>' +
+                  NUM.format(abaixo.length) + (abaixo.length === 1 ? ' sabor está' : ' sabores estão') + ' com preço médio abaixo do mínimo no período: ' +
+                  esc(abaixo.slice(0, 6).map(function (l) { return l.rot; }).join(', ') + (abaixo.length > 6 ? ' e mais ' + (abaixo.length - 6) : '')) + '.</div>'
+                : '') +
+            '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Sabor</th>' +
+                cols.map(function (m) { return '<th style="text-align:right">' + esc(vendMesRotulo(m)) + (m >= vendMesAtual() ? '*' : '') + '</th>'; }).join('') +
+                '<th style="text-align:right">Período</th><th style="text-align:right">Desc. médio</th></tr></thead><tbody>' +
+                linhaTab(tot, true) + linhas.map(function (l) { return linhaTab(l, false); }).join('') +
+            '</tbody></table></div>' +
+            '<p class="text-xs mt-2" style="color:var(--adm-tinta-3)">* mês parcial. Desconto médio = quanto o preço praticado fica abaixo do site.</p>' +
+            '<p class="font-bold mt-5 mb-1">Preço no período — 12 sabores mais vendidos</p>' +
+            '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">Marca vermelha: ' + esc(brl(VEND_PRECO_MIN)) + ' · marca cinza: site (' + esc(brl(site)) + ')</p>' + grafico +
+            '</div>';
+    }
+
+    function vendHtmlSazonalidade() {
+        var d = vendPorSaborMes(), usaValor = vend.metrica === 'valor';
+        function val(c) { return c ? (usaValor ? c.valor : c.potes) : 0; }
+        var cols = vendJanela(d.meses, VEND_CALOR_MESES);
+        var linhas = Object.keys(d.sabores).map(function (k) {
+            var s = d.sabores[k], tot = 0, max = 0;
+            cols.forEach(function (m) { var v = val(s.meses[m]); tot += v; if (v > max) max = v; });
+            return { rot: s.rot, meses: s.meses, tot: tot, max: max };
+        }).filter(function (l) { return l.tot > 0; }).sort(function (a, b) { return b.tot - a.tot; }).slice(0, VEND_CALOR_SABORES);
+        var seletor = '<label for="vend-metrica" class="adm-tile-rotulo mr-2">Métrica</label>' +
+            '<select id="vend-metrica" class="adm-input" style="width:auto;padding:.4rem .7rem">' +
+            '<option value="potes"' + (usaValor ? '' : ' selected') + '>Potes</option><option value="valor"' + (usaValor ? ' selected' : '') + '>Valor (R$)</option></select>';
+        var corpo;
+        if (!linhas.length) {
+            corpo = '<p class="text-sm" style="color:var(--adm-tinta-3)">Sem vendas para o mapa.</p>';
+        } else {
+            corpo = '<div class="overflow-x-auto"><table class="adm-tabela" style="font-size:.72rem"><thead><tr><th>Sabor</th>' +
+                cols.map(function (m) { return '<th style="text-align:center;padding-left:.25rem;padding-right:.25rem">' + esc(vendMesRotulo(m)) + (m >= vendMesAtual() ? '*' : '') + '</th>'; }).join('') +
+                '</tr></thead><tbody>' +
+                linhas.map(function (l) {
+                    return '<tr><td style="white-space:nowrap">' + esc(l.rot) + '</td>' + cols.map(function (m) {
+                        var v = val(l.meses[m]);
+                        var a = l.max > 0 ? Math.round(Math.sqrt(v / l.max) * 85) : 0; // intensidade relativa ao pico do próprio sabor
+                        var txt = v > 0 ? (usaValor ? brlCurto(v) : NUM.format(Math.round(v))) : '';
+                        var dica = l.rot + ' · ' + vendMesRotulo(m) + ': ' + (usaValor ? brl(Math.round(v)) : NUM.format(Math.round(v)) + ' potes');
+                        return '<td title="' + esc(dica) + '" style="text-align:center;padding-left:.25rem;padding-right:.25rem;background:color-mix(in srgb, var(--adm-marca) ' + a + '%, transparent)">' + esc(txt) + '</td>';
+                    }).join('') + '</tr>';
+                }).join('') + '</tbody></table></div>' +
+                '<p class="text-xs mt-2" style="color:var(--adm-tinta-3)">Cada linha é colorida pelo pico do próprio sabor (mais escuro = mês mais forte). * mês parcial.</p>';
+        }
+        return '<div class="adm-card p-5"><div class="flex items-center flex-wrap gap-3 mb-1"><p class="font-bold">Sazonalidade por sabor</p><span class="ml-auto">' + seletor + '</span></div>' +
+            '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">Top ' + VEND_CALOR_SABORES + ' sabores por ' + (usaValor ? 'valor' : 'potes') + ', ' + cols.length + ' meses (' + (cols.length ? vendMesRotulo(cols[0]) + ' a ' + vendMesRotulo(cols[cols.length - 1]) : '') + ').</p>' + corpo + '</div>';
+    }
+
     function desenharVendasErp() {
         var alvo = $('#vendas-erp');
         if (!alvo) return;
@@ -1916,9 +2062,12 @@
                 cartao('Vendas por dia', 'Últimos 90 dias', vendBarras(itensDia, 'Vendas por dia nos últimos 90 dias em reais', 10)) +
                 cartao('Média por dia da semana', 'Só dias com venda, em todo o histórico', vendBarras(itensSemana, 'Média de vendas por dia da semana em reais', 1)) +
             '</div>' +
+            '<div class="grid gap-5 mt-5" id="vend-preco-saz">' + vendHtmlPreco() + vendHtmlSazonalidade() + '</div>' +
             '<p class="text-xs mt-4" style="color:var(--adm-tinta-3)">Somente leitura. Valores do ERP SOLIDCON, em reais.</p>';
 
         $('#vend-mes').addEventListener('change', function (ev) { vend.mesFoco = ev.target.value; desenharVendasErp(); });
+        var met = $('#vend-metrica');
+        if (met) met.addEventListener('change', function (ev) { vend.metrica = ev.target.value === 'valor' ? 'valor' : 'potes'; desenharVendasErp(); });
     }
 
 
@@ -1934,7 +2083,7 @@
         function precisa(o) { return forcar ? !o.carregando : (!o.carregado && !o.carregando && !o.ausente && !o.erro); }
         if ((qual === 'solidcon' || qual === 'vitrine') && precisa(solid)) carregarSolidcon();
         if ((qual === 'solidcon' || qual === 'pedidos' || qual === 'vendas') && precisa(vend)) carregarVendas();
-        if (qual === 'clientes' && precisa(scli)) carregarSolidClientes();
+        if ((qual === 'clientes' || qual === 'pedidos') && precisa(scli)) carregarSolidClientes();
         if (qual === 'regioes' && precisa(geo)) carregarGeoClientes();
         if (qual === 'vitrine' && precisa(giro)) carregarGiro();
     }
@@ -2030,6 +2179,17 @@
 
     function docDigitos(s) { return String(s == null ? '' : s).replace(/\D/g, ''); }
 
+    // Chave de comparação: só dígitos, completando com zeros conforme o TIPO conhecido
+    // ('cnpj' -> 14, 'cpf' -> 11). Sem tipo conhecido, infere pelo tamanho (<=11 CPF, 12-14 CNPJ).
+    // Mais que 14 dígitos (ou mais que o tipo comporta) não é documento: sem chave.
+    function docNorm(s, tipo) {
+        var d = docDigitos(s), t = String(tipo || '').toLowerCase();
+        if (!d) return '';
+        var n = t === 'cnpj' ? 14 : t === 'cpf' ? 11 : (d.length <= 11 ? 11 : 14);
+        if (d.length > n) return '';
+        return d.padStart(n, '0');
+    }
+
     function carregarSolidClientes() {
         scli.carregando = true;
         scliRedesenhar();
@@ -2046,23 +2206,24 @@
             } else {
                 scli.lista = r.data || [];
                 scli.docs = {};
-                scli.lista.forEach(function (c) { var d = docDigitos(c.documento); if (d) scli.docs[d] = true; });
+                scli.lista.forEach(function (c) { var d = docNorm(c.documento, c.tipo); if (d) scli.docs[d] = true; });
                 scli.carregado = true;
             }
             scliRedesenhar();
         }).catch(function (e) {
-            scli.carregando = false; scli.erro = String(e && e.message || e); scliRedesenhar();
+            scli.carregando = false; scli.erro = String(e && e.message || e); scli.carregado = false; scli.docs = null; scliRedesenhar();
         });
     }
 
     function scliRedesenhar() {
         abasParaRedesenhar.clientes = true;
+        abasParaRedesenhar.pedidos = true;
         desenharAbaSeSuja(abaAtual);
     }
 
     // true se o documento (CNPJ/CPF) do cliente do site já existe no ERP
-    function jaNoErp(doc) {
-        var d = docDigitos(doc);
+    function jaNoErp(doc, tipo) {
+        var d = docNorm(doc, tipo);
         return !!(scli.docs && d && scli.docs[d]);
     }
 
@@ -2116,7 +2277,7 @@
         });
         if (!lista.length) { alvo.innerHTML = cartaoVazio('Nenhum cadastro com essa busca', 'Tente outro nome ou documento.'); return; }
         var siteDocs = {};
-        listaClientesCombinada().forEach(function (c) { var d = docDigitos(c.cnpj || c.cpf); if (d) siteDocs[d] = true; });
+        listaClientesCombinada().forEach(function (c) { var d = docNorm(c.cnpj || c.cpf, c.cnpj ? 'cnpj' : 'cpf'); if (d) siteDocs[d] = true; });
         var parte = lista.slice(0, scli.mostrar);
         alvo.innerHTML = '<div class="adm-card p-5"><div class="overflow-x-auto"><table class="adm-tabela"><thead><tr>' +
             '<th>Nome</th><th>Documento</th><th>Contato</th><th>Local</th><th>Coletado</th></tr></thead><tbody>' +
@@ -2124,7 +2285,7 @@
                 var tipo = String(c.tipo || '').toUpperCase();
                 var contato = [c.telefone, c.celular].filter(Boolean).join(' / ');
                 var local = [c.bairro, c.cidade].filter(Boolean).join(', ') + (c.estado ? '/' + c.estado : '');
-                var noSite = siteDocs[docDigitos(c.documento)];
+                var noSite = siteDocs[docNorm(c.documento, c.tipo)];
                 return '<tr><td>' + esc(c.nome || '—') + ' ' + SELO_ERP +
                        (noSite ? ' <span class="adm-selo adm-selo-confirmado" title="Também é cliente do site">Também no site</span>' : '') + '</td>' +
                     '<td>' + (tipo ? '<span class="text-xs" style="color:var(--adm-tinta-3)">' + esc(tipo) + '</span> ' : '') + esc(c.documento || '—') + '</td>' +
@@ -3117,7 +3278,7 @@
                     : '') +
             '</div>' +
             '<p class="text-xs mt-1 mb-2" style="color:var(--adm-tinta-3)">' + esc(dataHora(p.criado_em)) + '</p>' +
-            (seloSolidcon(p) ? '<div class="mb-2">' + seloSolidcon(p) + '</div>' : '') +
+            (seloSolidcon(p) || seloCadastroErp(p) ? '<div class="mb-2 flex flex-wrap gap-1">' + seloSolidcon(p) + seloCadastroErp(p) + '</div>' : '') +
             '<div class="flex items-center gap-1 flex-wrap pt-2" style="border-top:1px solid var(--adm-borda)">' +
                 acoesDeStatus(p) +
             '</div>' +
@@ -3135,7 +3296,7 @@
                     '<td>' + esc(dataHora(p.criado_em)) + '</td>' +
                     '<td>' + esc(p.razao_social) + '</td>' +
                     '<td>' + esc((p.cidade || '') + '/' + (p.uf || '')) + '</td>' +
-                    '<td>' + selo(p.status) + ' ' + seloSolidcon(p) + '</td>' +
+                    '<td>' + selo(p.status) + ' ' + seloSolidcon(p) + ' ' + seloCadastroErp(p) + '</td>' +
                     '<td class="num">' + esc(brl(p.valor_centavos)) + '</td>' +
                     '<td><div class="flex items-center gap-1 flex-wrap">' + acoesDeStatus(p) + '</div></td>' +
                 '</tr>';
@@ -3196,7 +3357,7 @@
                     '</p>' +
                 '</div>' +
                 '<div class="text-right">' +
-                    selo(p.status) +
+                    selo(p.status) + (seloCadastroErp(p) ? '<div class="mt-1.5">' + seloCadastroErp(p) + '</div>' : '') +
                     '<p class="text-xs mt-1.5" style="color:var(--adm-tinta-3)">' + esc(dataHora(p.criado_em)) + '</p>' +
                 '</div>' +
             '</div>' +
@@ -3268,6 +3429,18 @@
     }
 
     function lancadoNoSolidcon(p) { return !!p.lancado_solidcon_em; }
+
+    // Cliente do pedido já existe no ERP? Sem a lista do ERP (carregando, ausente ou erro) não afirma nada.
+    function seloCadastroErp(p) {
+        if (p.status === 'cancelado' || scli.carregando || scli.erro || scli.ausente || !scli.carregado || !scli.docs) return '';
+        var tp = p.cnpj ? 'cnpj' : 'cpf', doc = p.cnpj || p.cpf;
+        if (!docNorm(doc, tp)) return '';
+        return jaNoErp(doc, tp)
+            ? '<span class="adm-selo" style="background:rgba(168,85,247,.14);color:#D8B4FE" title="O CNPJ/CPF deste pedido tem cadastro no SOLIDCON">' +
+              '<i class="fa-solid fa-link"></i>Já cadastrado no ERP</span>'
+            : '<span class="adm-selo adm-selo-aguardando" title="Não há cadastro com este CNPJ/CPF no SOLIDCON">' +
+              '<i class="fa-solid fa-user-plus"></i>Cadastrar no ERP antes de faturar</span>';
+    }
 
     // Sem a coluna (migração 021 pendente) não há selo: não dá para afirmar nada.
     function seloSolidcon(p) {
@@ -3738,7 +3911,7 @@
     function linhaCliente(c) {
         return '<tr>' +
             '<td>' + esc(c.nome) + ' ' + SELO_SITE +
-                (jaNoErp(c.cnpj || c.cpf) ? ' <span class="adm-selo" style="background:rgba(168,85,247,.14);color:#D8B4FE" title="Este documento já tem cadastro no SOLIDCON"><i class="fa-solid fa-link"></i>Já no ERP</span>' : '') +
+                (jaNoErp(c.cnpj || c.cpf, c.cnpj ? 'cnpj' : 'cpf') ? ' <span class="adm-selo" style="background:rgba(168,85,247,.14);color:#D8B4FE" title="Este documento já tem cadastro no SOLIDCON"><i class="fa-solid fa-link"></i>Já no ERP</span>' : '') +
                 (c.ativo ? '' : ' <span class="adm-selo adm-selo-cancelado" style="margin-left:.4rem">Inativo</span>') + '</td>' +
             '<td>' + esc(c.telefone || '—') + '</td>' +
             '<td>' + esc(c.tipo) + '</td>' +
