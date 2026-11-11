@@ -6212,7 +6212,7 @@
                 L.circleMarker(REGIAO_COORDS[id], {
                     radius: raio, color: '#F28C52', weight: 1,
                     fillColor: '#F28C52', fillOpacity: 0.45
-                }).bindTooltip(regiaoNome(id) + ': ' + NUM.format(n) + (n === 1 ? ' sessão' : ' sessões'))
+                }).bindTooltip(esc(regiaoNome(id)) + ': ' + NUM.format(n) + (n === 1 ? ' sessão' : ' sessões'))
                   .addTo(mapaVisitasCamada);
             });
             mapaVisitasCamada.addTo(mapaVisitas);

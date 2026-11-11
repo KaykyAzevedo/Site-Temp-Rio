@@ -1520,10 +1520,10 @@ function openModalFromCard(card) {
         data.nutricional.rows.forEach(row => {
             nutBody.innerHTML += `
                 <tr class="hover:bg-white/5 transition-colors">
-                    <td class="px-4 py-2 font-medium">${row.nome}</td>
-                    <td class="px-4 py-2 text-center">${row.cem}</td>
-                    <td class="px-4 py-2 text-center">${row.porcao}</td>
-                    <td class="px-4 py-2 text-center">${row.vd}</td>
+                    <td class="px-4 py-2 font-medium">${escapeFicha(row.nome)}</td>
+                    <td class="px-4 py-2 text-center">${escapeFicha(row.cem)}</td>
+                    <td class="px-4 py-2 text-center">${escapeFicha(row.porcao)}</td>
+                    <td class="px-4 py-2 text-center">${escapeFicha(row.vd)}</td>
                 </tr>
             `;
         });

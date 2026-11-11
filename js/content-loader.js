@@ -1,5 +1,11 @@
 document.addEventListener('DOMContentLoaded', () => {
 
+    // Os dados vêm de data/*.js (estáticos), mas tudo entra no HTML escapado:
+    // um texto com < ou " não pode virar marcação.
+    const esc = (t) => String(t == null ? '' : t)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+
     // ---------- Config ----------
     const updateLinks = () => {
         document.querySelectorAll('a[href^="https://wa.me/"]').forEach(a => {
@@ -9,10 +15,10 @@ document.addEventListener('DOMContentLoaded', () => {
             a.href = siteConfig.redesSociais.instagram;
         });
         document.querySelectorAll('.config-telefone').forEach(el => {
-            el.innerHTML = `<i class="fa-brands fa-whatsapp mt-1"></i> ${siteConfig.empresa.telefone}`;
+            el.innerHTML = `<i class="fa-brands fa-whatsapp mt-1"></i> ${esc(siteConfig.empresa.telefone)}`;
         });
         document.querySelectorAll('.config-email').forEach(el => {
-            el.innerHTML = `<i class="fa-regular fa-envelope mt-1"></i> ${siteConfig.empresa.email}`;
+            el.innerHTML = `<i class="fa-regular fa-envelope mt-1"></i> ${esc(siteConfig.empresa.email)}`;
         });
     };
 
@@ -28,7 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const imagemProduto = (prod, { lazy = false, overlay = '' } = {}) => `
                     <div class="w-full aspect-[4/3] relative overflow-hidden bg-[#111111]">
-                        <img src="${prod.imagem}" alt="${prod.nome}"${lazy ? ' loading="lazy"' : ''} class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-out transform-gpu">
+                        <img src="${esc(prod.imagem)}" alt="${esc(prod.nome)}"${lazy ? ' loading="lazy"' : ''} class="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700 ease-out transform-gpu">
                         <div class="absolute inset-0 bg-gradient-to-t from-[#1A1A1A] via-[#1A1A1A]/20 to-transparent opacity-90"></div>${overlay}
                     </div>`;
 
@@ -61,8 +67,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const ordenarPorVendas = (lista) => window.SolidconPublico ? SolidconPublico.ordenar(lista) : lista.slice();
     const acaoProduto = (prod) => window.SolidconPublico && SolidconPublico.esgotado(prod.id)
         ? `<p class="text-sm font-bold text-primary-400 mb-2" role="status">Esgotado</p>
-           <a href="${SolidconPublico.esperaURL(prod.id)}" data-lista-espera class="mt-auto w-full py-2.5 text-center rounded-xl border border-primary-500/40 text-primary-400 text-xs font-bold uppercase tracking-widest">Entrar na lista de espera</a>`
-        : `<button type="button" class="cart-add-btn mt-auto w-full py-2.5 rounded-xl border border-primary-500/40 text-primary-400 text-xs font-bold uppercase tracking-widest hover:bg-primary-500 hover:text-white transition-all" data-id="${prod.id}">Adicionar</button>`;
+           <a href="${esc(SolidconPublico.esperaURL(prod.id))}" data-lista-espera class="mt-auto w-full py-2.5 text-center rounded-xl border border-primary-500/40 text-primary-400 text-xs font-bold uppercase tracking-widest">Entrar na lista de espera</a>`
+        : `<button type="button" class="cart-add-btn mt-auto w-full py-2.5 rounded-xl border border-primary-500/40 text-primary-400 text-xs font-bold uppercase tracking-widest hover:bg-primary-500 hover:text-white transition-all" data-id="${esc(prod.id)}">Adicionar</button>`;
 
     const loadCatalog = () => {
         const container = document.getElementById('catalogGrid');
@@ -70,9 +76,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const renderCatalog = (items) => {
             container.innerHTML = items.map(prod => `
-                <div class="${CLASSES_CARD}" data-id="${prod.id}">${imagemProduto(prod, { lazy: true, overlay: OVERLAY_LUPA + seloPodio(prod) })}
+                <div class="${CLASSES_CARD}" data-id="${esc(prod.id)}">${imagemProduto(prod, { lazy: true, overlay: OVERLAY_LUPA + seloPodio(prod) })}
                     <div class="p-6 pt-4 bg-[#1A1A1A] relative z-10 flex flex-col flex-1 border-t border-white/5">
-                        <h4 class="text-lg font-bold text-white uppercase tracking-wide mb-1 leading-tight">${prod.nome}</h4>
+                        <h4 class="text-lg font-bold text-white uppercase tracking-wide mb-1 leading-tight">${esc(prod.nome)}</h4>
                         <p class="text-primary-500 text-xs font-bold tracking-widest uppercase mb-3">100% Natural</p>
                         ${acaoProduto(prod)}
                     </div>
@@ -107,7 +113,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!grupo1 || !grupo2) return;
 
         const html = parceiros.map(p => `
-            <img src="${p.imagem}" alt="${p.nome}" class="h-16 md:h-20 lg:h-24 w-auto max-w-none shrink-0 object-contain rounded">
+            <img src="${esc(p.imagem)}" alt="${esc(p.nome)}" class="h-16 md:h-20 lg:h-24 w-auto max-w-none shrink-0 object-contain rounded">
         `).join('');
 
         grupo1.innerHTML = html;
@@ -125,13 +131,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     ${'<i class="fa-solid fa-star"></i>'.repeat(d.avaliacao)}
                 </div>
                 <p class="text-gray-400 font-light text-lg leading-relaxed mb-10 flex-1">
-                    ${d.texto}
+                    ${esc(d.texto)}
                 </p>
                 <div class="flex items-center gap-4 mt-auto">
-                    <img src="${d.imagem}" alt="${d.nome}" class="w-12 h-12 rounded-full object-cover">
+                    <img src="${esc(d.imagem)}" alt="${esc(d.nome)}" class="w-12 h-12 rounded-full object-cover">
                     <div>
-                        <h4 class="font-bold text-white text-sm">${d.nome}</h4>
-                        <p class="text-xs text-gray-500">${d.cargo}</p>
+                        <h4 class="font-bold text-white text-sm">${esc(d.nome)}</h4>
+                        <p class="text-xs text-gray-500">${esc(d.cargo)}</p>
                     </div>
                 </div>
             </div>
@@ -146,14 +152,14 @@ document.addEventListener('DOMContentLoaded', () => {
         container.innerHTML = faq.map(f => `
             <div class="surface-card rounded-xl overflow-hidden border border-borderSubtle">
                 <button class="w-full px-6 py-5 text-left flex justify-between items-center focus:outline-none faq-btn group">
-                    <span class="font-semibold text-lg text-white group-hover:text-primary-400 transition-colors">${f.pergunta}</span>
+                    <span class="font-semibold text-lg text-white group-hover:text-primary-400 transition-colors">${esc(f.pergunta)}</span>
                     <div class="w-8 h-8 rounded-full bg-white/5 flex items-center justify-center group-hover:bg-primary-500/10 transition-colors">
                         <i class="fa-solid fa-chevron-down text-orange-500 transform transition-transform duration-500 ease-[cubic-bezier(0.87,0,0.13,1)]"></i>
                     </div>
                 </button>
                 <div class="faq-content overflow-hidden transition-all duration-500 ease-[cubic-bezier(0.87,0,0.13,1)] max-h-0 opacity-0">
                     <div class="px-6 pb-5 text-gray-400 font-light">
-                        ${f.resposta}
+                        ${esc(f.resposta)}
                     </div>
                 </div>
             </div>

@@ -23,6 +23,7 @@ separação eh_equipe/eh_admin por papel. Consulte MERGE_DECISOES.md.
 | 025_solidcon_ficha.sql | Ficha técnica pública dos sabores | APLICADA (2026-11-11) |
 | 026_solidcon_vendas_clientes.sql | Histórico de compras por cliente | APLICADA (2026-11-11) |
 | 027_solidcon_fabrica_financeiro.sql | Estoque da fábrica, endereço CNPJ, formas de pagamento | APLICADA (2026-11-11) |
+| 028_reforco_seguranca.sql | Reforço de segurança (auditoria 004–027) | NÃO APLICADA |
 
 019/020 são nomes de organização do repositório. Os objetos SQL, RPCs e a
 assinatura chamada pelo script continuam iguais. 017/018 não são reutilizados
@@ -813,3 +814,53 @@ não editado nesta tarefa):
 > (art. 7º, V e IX). Acesso restrito à equipe autenticada; nada é público nem repassado a
 > terceiros. O cadastro é substituído a cada atualização diária: o que for excluído ou
 > corrigido no sistema de gestão some ou é corrigido aqui na atualização seguinte.
+
+## 028_reforco_seguranca.sql — Reforço de segurança (NÃO APLICADA)
+
+Resultado da auditoria das migrações 004–027 e de `admin/supabase*.sql`, conferida num
+Postgres isolado com tudo aplicado (catálogo: RLS, policies, grants, `SECURITY DEFINER`).
+Idempotente, `begin/commit`, sem UPDATE/DELETE e sem apagar dados. Rodar no SQL Editor
+como `postgres`. Não toca o ERP nem o coletor.
+
+**O que já estava certo:** todas as tabelas de `public` têm RLS; `anon` só lê
+`catalogo_produtos` (ativos), `regioes`, `regioes_faixas_cep` e a view
+`vitrines_publicas` (só vitrines aprovadas e vigentes, sem telefone/e-mail/CNPJ); as RPCs
+SOLIDCON são `SECURITY DEFINER` com `search_path=pg_catalog` e não executáveis por `anon`;
+`_lgpd_anonimizar`, `lgpd_marcar_inativos`, `lgpd_excluir_pessoa` e `lgpd_purgar_marcados`
+checam `eh_admin()` por conta própria.
+
+**Achados corrigidos pela 028:**
+
+| # | Gravidade | Achado | Correção |
+|---|---|---|---|
+| 1 | MÉDIO | INSERT anônimo em `pedidos` aceitava `status='confirmado'`, `confirmado_em`, `enviado_whatsapp` e `criado_em` escolhidos pelo cliente: um POST direto criava “pedido confirmado” que somava no faturamento do painel. | Gatilho `pedidos_028_estado_inicial` (BEFORE INSERT): para `anon`/`authenticated` fora da equipe impõe `aguardando`, sem confirmação/envio, `criado_em=now()`. Equipe, `service_role` e SQL Editor não mudam. |
+| 2 | MÉDIO | `historico_do_cliente(p_cnpj)` (`SECURITY DEFINER`, liberada a `anon`) devolvia nº de pedidos, caixas e valor total de **qualquer** CNPJ. | Mesma assinatura e retorno; números só para equipe autenticada. `anon`/não-equipe recebem zeros (o site não tem como provar titularidade do CNPJ: um pedido recente pode ser forjado). `js/pedido.js` já trata zeros como “1 pedido”. **Efeito no produto:** o convite da vitrine deixa de usar o histórico (gatilhos “2+ pedidos” e bônus “recorrente”); continua pelo volume do pedido atual. Reativar exige identidade verificada (login do cliente). |
+| 3 | MÉDIO | Campos livres sem limite de tamanho em tabelas com INSERT anônimo: `visitas` (pagina, sessao, user_agent, referencia, `pre_registro` jsonb — também via `completar_visita`), `leads` (pagina_origem, sessao, observacoes), `consentimentos`, `vitrines`, `pedidos.itens` (jsonb sem limite de itens) e `lista_espera.itens`. | CHECKs `*_028_tamanhos` **NOT VALID** (linhas antigas não são reprovadas; valem para novas e alteradas). Limites folgados sobre o que o site envia: user_agent 1000, pagina 200, sessao 100, `pre_registro` 2 KB, `pedidos.itens` ≤ 300 itens e 256 KB. |
+| 4 | BAIXO | `anon`/`authenticated` tinham TRUNCATE/REFERENCES/TRIGGER (grant padrão do Supabase). TRUNCATE ignora RLS. O PostgREST não expõe TRUNCATE, então hoje não é explorável pela API. | REVOKE desses três privilégios nas tabelas de `public` e nos default privileges do `postgres`. |
+| 5 | BAIXO | 10 funções `SECURITY DEFINER` antigas com `search_path=public` sem `pg_temp` explícito. | `ALTER FUNCTION ... SET search_path = public, pg_temp` (corpo não muda). |
+
+**Riscos que ficam (não resolvíveis só em SQL):**
+
+- **Spam / volume:** `pedidos`, `leads`, `visitas`, `consentimentos`, `lista_espera`,
+  `vitrines` e `solicitacoes_lgpd` continuam aceitando INSERT anônimo sem limite de taxa
+  (o banco não vê IP de forma confiável sem guardar dado pessoal). Recomendação: CAPTCHA
+  invisível (ex.: Turnstile) via Edge Function nos formulários de pedido/pré-cadastro, ou
+  limite de taxa no gateway.
+- **`lgpd_meus_dados(documento, telefone)`:** sem limite de tentativas; força bruta de
+  telefone para um CPF conhecido é cara, mas possível. Toda tentativa já vai para
+  `auditoria`. Recomendação: limite por documento/hora na própria função (exige reescrever
+  o corpo da 015 — fica para revisão própria).
+- **`marcar_enviado_whatsapp(p_id)`:** `anon` marca qualquer pedido como enviado se souber
+  o UUID (não adivinhável). Baixo.
+
+**Validação (PG isolado `supabase/postgres:17.11.0.018`, 004–027 + 028, e 028 reaplicada):**
+anon com status forjado → `aguardando`; payload real do site (pedido, vitrine, lead,
+consentimento, visita + `completar_visita`) aceito; equipe mantém status; histórico → zeros para anon (mesmo após
+pedido forjado) e números para a equipe; trigger funciona com SELECT em `admins` revogado de anon; campos gigantes recusados; linhas
+antigas fora do limite preservadas; TRUNCATE revogado; nenhuma definer com
+`search_path=public` restante.
+
+**Desfazer:** `drop trigger pedidos_028_estado_inicial on public.pedidos; drop function
+public.pedido_028_estado_inicial();` · `alter table ... drop constraint <tabela>_028_tamanhos;` ·
+recriar `historico_do_cliente` a partir de `admin/supabase-vitrine.sql` · `grant truncate,
+references, trigger on all tables in schema public to anon, authenticated;` (não recomendado).
