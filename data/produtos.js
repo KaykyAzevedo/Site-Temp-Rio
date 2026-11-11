@@ -391,14 +391,6 @@ const produtos = [
         destaque: false
     },
     {
-        // PENDENTE: sem ficha tecnica cadastrada em js/product-modal.js
-        id: "pimenta-em-po",
-        rankingVendas: 31,
-        nome: "Pimenta em Pó",
-        imagem: "assets/images/produtos/pimenta-em-po.png",
-        destaque: false
-    },
-    {
         id: "pimenta-preta-em-graos",
         nome: "Pimenta Preta em Grãos",
         imagem: "assets/images/produtos/pimenta-preta-em-graos.png",
