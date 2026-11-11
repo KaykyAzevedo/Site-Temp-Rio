@@ -53,11 +53,11 @@ conta da tarefa e administradores; não use transcrição PowerShell com segredo
 Deixe `modo="teste"`: os campos Supabase podem continuar como placeholders.
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File C:\TempRio\solidcon\sync-produtos.ps1 -Config C:\TempRio\solidcon\config.json -ArquivoEntrada C:\caminho\com-saldo.json -ArquivoEntradaSemSaldo C:\caminho\sem-saldo.json -ArquivoVendas C:\caminho\vendas-por-dia.json -ArquivoClientes C:\caminho\clientes-ficticios.json
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File C:\TempRio\solidcon\sync-produtos.ps1 -Config C:\TempRio\solidcon\config.json -ArquivoEntrada C:\caminho\com-saldo.json -ArquivoEntradaSemSaldo C:\caminho\sem-saldo.json -ArquivoVendas C:\caminho\vendas-por-dia.json -ArquivoClientes C:\caminho\clientes-ficticios.json -ArquivoVendasClientes C:\caminho\vendas-clientes-ficticios.json
 ```
 
 Informe **os dois arquivos de estoque ou nenhum**; uso parcial é recusado sem GET.
-Para teste totalmente offline, inclua também -ArquivoVendas e -ArquivoClientes.
+Para teste totalmente offline, inclua também -ArquivoVendas, -ArquivoClientes e -ArquivoVendasClientes.
 Com arquivos locais, a ausência do arquivo do fluxo gera falha isolada, sem
 GET implícito de vendas/clientes. Informe sempre os dois arquivos de estoque.
 Sem arquivos, faz os dois GETs locais. Arquivos locais são permitidos somente
@@ -65,11 +65,17 @@ em modo teste. Em teste **não faz nenhuma chamada ao Supabase**, nem login nem
 log de falha. Produz `produtos-normalizados.json`,
 `resumo.json` e `ultimo-ok-teste.json` em `pastaSaida`. Saídas de teste são
 substituídas em cada sucesso; log tem rotação de 1 MiB e três arquivos antigos.
-Exit 0 = fluxos OK (inclui clientes ainda não devidos ou já concluídos hoje);
+Exit 0 = fluxos OK (inclui clientes e ficha ainda não devidos ou já concluídos hoje);
 exit 1 = configuração/mutex/estoque falhou; exit 3 = vendas falhou;
-**exit 4 = somente clientes falhou**. Precedência: 1 > 3 > 4. Os logs de
-cada fluxo identificam as falhas quando ocorrer mais de uma.
-Em backfill, 0 = vendas OK, 3 = falha de vendas, 1 = inicialização inválida.
+exit 4 = somente clientes falhou; exit 5 = somente ficha técnica falhou;
+**exit 6 = somente histórico de vendas por cliente falhou**.
+Precedência: 1 > 3 > 4 > 5 > 6. Os logs de cada fluxo identificam as falhas quando ocorrer mais de uma.
+A ficha técnica é enviada 1x/dia aproveitando dados já presentes em GetProdutos (nenhuma chamada nova ao ERP).
+Vendas por cliente executa 1 GET por ciclo cobrindo ontem e hoje; -BackfillDias divide em blocos mensais com pausa de 700ms.
+Em backfill, 0 = vendas OK, 3 = falha de vendas, 6 = falha de vendas por cliente, 1 = inicialização inválida.
+A ficha só roda no ciclo normal e com o estoque confirmado no mesmo ciclo; backfill nunca roda ficha (nem reserva o dia).
+A RPC da ficha só é aceita com `encontrados` = linhas enviadas.
+Reserva diária da ficha por modo (`ficha-consulta-teste.json` / `ficha-consulta-real.json`): teste na mesma pasta e dia não bloqueia o envio real.
 Não há senha/token nos logs.
 
 Em sobreposição, grava somente `resumo-rejeitado.json` e diagnóstico no log,
@@ -332,3 +338,35 @@ conta da tarefa e administradores. O espelho é substituído diariamente, sem
 histórico pessoal; se a coleta falhar, conserva o último espelho válido até a
 próxima coleta válida. Acesso no painel apenas pela equipe via RLS; o cadastro
 ERP não é sincronizado com autenticação nem autoriza acesso por CNPJ/CPF.
+
+## 026 — Vendas por cliente: histórico e conformidade LGPD (NÃO IMPLANTADA)
+
+A migração `026_solidcon_vendas_clientes.sql` é candidata e **não deve ser aplicada nesta entrega**.
+Permite a visualização do histórico de compras de clientes no painel administrativo pela equipe de vendas.
+
+### Endpoint do ERP e ciclo de coleta
+
+Endpoint exclusivo autorizado (somente leitura):
+`GET http://localhost:5100/api/Vendas/CNPJ/63671696000106/INICIO/{yyyy-MM-dd}/FIM/{yyyy-MM-dd}/GetVendasResumo`
+
+- **Ciclo regular:** 1 GET por ciclo cobrindo `ontem` e `hoje` (`INICIO = ontem`, `FIM = hoje`), capturando as vendas do dia e do dia anterior à medida que são registradas nos PDVs.
+- **Modo `-BackfillDias`:** para carga inicial de histórico (até 400 dias), divide o período em blocos mensais consecutivos (máximo 31 dias por bloco), executando 1 GET e 1 RPC por bloco com pausa de 700ms entre as requisições ao ERP.
+- **Validação estrita (lote inteiro rejeitado, exit 6):** resposta que não seja array JSON (ex.: objeto de erro HTTP), item que não seja objeto, `dtCupom` ausente/inválido, `vlCupom` ausente, `totalItens`/`cdPDV`/`nrCupom` ausentes, negativos ou fracionários (sem arredondar), cupom fora do intervalo consultado e mesma chave `(dia, cdPDV, nrCupom)` com dados diferentes. Repetição idêntica é ignorada. Só a ausência/invalidade de `cdCliente` descarta o cupom (consumidor sem documento).
+- **Teste offline:** o arquivo `-ArquivoVendasClientes` é validado inteiro antes de dividir em blocos; cupom fora dos blocos (ex.: além de `-BackfillDias`) falha o fluxo. O parâmetro `-ArquivoVendasClientes` permite alimentar o sincronizador com amostras de testes sintéticas sem qualquer tráfego de rede ou consulta ao ERP.
+
+### Declaração de Conformidade com a LGPD (Lei 13.709/2018)
+
+1. **Finalidade Legítima:** Gestão comercial B2B, apuração de ticket médio, frequência e análise de recorrência de compras de clientes no painel interno.
+2. **Minimização de Dados (Necessidade):**
+   - Compras anônimas (consumidor final sem CPF/CNPJ) são descartadas na origem e não são gravadas.
+   - Metadados fiscais desnecessários como chave NF-e (`nfCeChave`), modalidades de pagamento e CNPJ de filial são sumariamente descartados e não entram no payload nem no banco de dados.
+   - Apenas os campos indispensáveis são armazenados: `dia`, `dt`, `documento`, `tipo`, `valor_centavos`, `total_itens`, `cd_pdv`, `nr_cupom`, `coletado_em`.
+3. **Acesso Restrito:** A tabela `solidcon_vendas_clientes` e seu histórico são protegidos por Row Level Security (RLS) concedida estritamente a usuários autenticados com papel de equipe (`public.eh_equipe()`). Acesso público ou anônimo é revogado (`revoke all`).
+4. **Retenção Bounded e Descarte Automático (400 dias):**
+   - Retenção máxima estipulada em 400 dias de histórico (adequada para ciclos sazonais e anuais B2B).
+   - A RPC `solidcon_receber_vendas_clientes` executa expurgo automático a cada chamada bem-sucedida (`delete from solidcon_vendas_clientes where dia < (v_hoje - 400) and dia is not null;`), garantindo que dados mais antigos sejam eliminados sem intervenção manual.
+5. **Segurança e Isolamento de Falhas:**
+   - RPC SECURITY DEFINER restrita a tokens de integração cadastrados em `integracoes_autorizadas`.
+   - Substituição atômica de intervalo com `DELETE ... WHERE` compatível com a extensão `safeupdate`.
+   - Falha isolada gera código de saída **6**, preservando intactos o estoque, as vendas gerais, o cadastro de clientes e a ficha técnica (precedência `1 > 3 > 4 > 5 > 6`).
+

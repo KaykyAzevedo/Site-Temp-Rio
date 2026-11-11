@@ -20,6 +20,8 @@ separação eh_equipe/eh_admin por papel. Consulte MERGE_DECISOES.md.
 | 022_solidcon_vendas.sql | A, antes 018 | APLICADA (2026-11-11) |
 | 023_solidcon_clientes.sql | Espelho minimizado de clientes | APLICADA (2026-11-11) |
 | 024_solidcon_publico.sql | Disponibilidade e ranking públicos, vínculo codigo_erp | APLICADA (2026-11-11) |
+| 025_solidcon_ficha.sql | Ficha técnica pública dos sabores | APLICADA (2026-11-11) |
+| 026_solidcon_vendas_clientes.sql | Histórico de compras por cliente | APLICADA (2026-11-11) |
 
 019/020 são nomes de organização do repositório. Os objetos SQL, RPCs e a
 assinatura chamada pelo script continuam iguais. 017/018 não são reutilizados
@@ -677,3 +679,53 @@ somente banco descartável e fixtures sintéticas com as dependências acima.
 Rollback futuro: remover a chamada ao JS e executar manualmente
 `drop function public.solidcon_catalogo_publico();` — não remove espelhos nem
 coluna/índice de vínculo (preservam o cadastro e a compatibilidade com a 021).
+
+## 025_solidcon_ficha.sql — Ficha técnica pública (NÃO APLICADA)
+
+- `solidcon_receber_ficha` grava só `ncm`, `cest`, `qtd_medida`, `unid_medida`; **nunca** toca `atualizado_em`/`visto_em` (frescor do estoque da 024 continua refletindo só o fluxo de estoque).
+- Todo item precisa existir e estar `presente` no espelho (`produto_desconhecido` rejeita o lote); retorno traz `encontrados` (= linhas) e `atualizados` (linhas que mudaram, 0..N).
+- `solidcon_ficha_publica()`: produto com GTIN-14 de mais de uma família fica fora; caixa só com GTIN-14 da própria família; valor ambíguo (mais de um distinto) sai `null`; gramatura só com unidade de peso/volume (`g`, `kg`, `ml`, `l`) e quantidade > 0 — "1 un" não é publicado.
+
+## 026_solidcon_vendas_clientes.sql — Histórico de compras por cliente (NÃO APLICADA)
+
+Migração candidata para análise de compras por cliente no painel da Vitral (`js/admin.js`).
+**NÃO APLICAR** sem instrução expressa do Tech Lead.
+
+### Estrutura da tabela e chave primária
+
+- Tabela: `public.solidcon_vendas_clientes`
+- Colunas exatas consumidas pelo painel:
+  - `dia date not null`
+  - `dt timestamptz not null`
+  - `documento text not null` (CPF com 11 dígitos ou CNPJ com 14 dígitos, completados com zeros à esquerda)
+  - `tipo text not null check (tipo in ('cpf', 'cnpj'))`
+  - `valor_centavos bigint not null check (valor_centavos >= 0)`
+  - `total_itens integer not null check (total_itens >= 0)`
+  - `cd_pdv integer not null check (cd_pdv >= 0)`
+  - `nr_cupom bigint not null check (nr_cupom >= 0)`
+  - `coletado_em timestamptz not null check (isfinite(coletado_em))`
+- Chave primária: `(dia, cd_pdv, nr_cupom)`.
+  *Justificativa:* Identifica univocamente a emissão de cada cupom fiscal de venda pelo terminal do PDV no dia,
+  correspondendo estritamente à ordenação executada pela Vitral em `js/admin.js` (`order by dia, cd_pdv, nr_cupom`).
+- Índices:
+  - `solidcon_vendas_clientes_doc_dia_idx` em `(documento, dia desc)` — agiliza agregações e histórico por cliente.
+  - `solidcon_vendas_clientes_dia_idx` em `(dia desc)` — suporte para consultas gerais e rotina de expurgo de retenção.
+
+### RPC e Substituição Atômica (compatível com safeupdate)
+
+- RPC: `public.solidcon_receber_vendas_clientes(p_inicio date, p_fim date, p_itens jsonb, p_coletado_em timestamptz, p_execucao_id uuid)`
+- `SECURITY DEFINER`, lock consultivo `pg_advisory_xact_lock(5100, 26)`.
+- Janela temporal máxima de 31 datas por chamada (`(p_fim - p_inicio) <= 30`).
+- Snapshot antigo: recusado (`snapshot_antigo`) se qualquer envio OK cujo intervalo **cruze** `[p_inicio, p_fim]` tiver `coletado_em` igual ou mais novo — um lote velho nunca sobrescreve dia já coberto por um mais novo.
+- Validação por item: `dt` ISO com fuso explícito e no mesmo dia (America/Sao_Paulo) de `dia`; CPF/CNPJ com dígitos verificadores válidos (rejeita só zeros/dígito repetido) via `solidcon_026_documento_valido` (sem grant); cupom duplicado comparado por valor (`(dia, cd_pdv, nr_cupom)`).
+- Substituição atômica: `DELETE FROM public.solidcon_vendas_clientes WHERE dia >= p_inicio AND dia <= p_fim AND dia IS NOT NULL;` seguido do `INSERT` dos itens validados.
+- Retenção automática de 400 dias: executa `DELETE FROM public.solidcon_vendas_clientes WHERE dia < (v_hoje - 400) AND dia IS NOT NULL;` a cada sincronização.
+- Subtransação com tratamento de exceções: qualquer inconsistência gera log na tabela técnica `solidcon_vendas_clientes_sync` sem expor dados pessoais no motivo do erro.
+
+### Conformidade LGPD
+
+1. **Finalidade:** Gestão comercial B2B, análise de recorrência, ticket médio e relacionamento da equipe com clientes cadastrados.
+2. **Minimização:** Chaves de NF-e (`nfCeChave`), modalidades de pagamento e CNPJ de filial são sumariamente descartados. Vendas a consumidor sem documento não entram no banco.
+3. **Controle de Acesso:** RLS habilitada; somente equipe autenticada (`eh_equipe()`) tem acesso de leitura (`SELECT`). Escrita restrita à RPC com token de integração autorizado.
+4. **Descarte:** Histórico limitado a 400 dias com expurgo automático garantido no banco.
+

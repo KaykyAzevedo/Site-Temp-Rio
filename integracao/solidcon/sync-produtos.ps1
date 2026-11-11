@@ -6,7 +6,8 @@ param(
     [string]$ArquivoEntradaSemSaldo,
     [ValidateRange(1,400)][int]$BackfillDias,
     [string]$ArquivoVendas,
-    [string]$ArquivoClientes
+    [string]$ArquivoClientes,
+    [string]$ArquivoVendasClientes
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -29,9 +30,13 @@ $Real = $false
 $CodigoSaida = 1
 $VendasFalhou = $false
 $ClientesFalhou = $false
+$FichaFalhou = $false
+$VendasClientesFalhou = $false
 $EstoqueOk = $false
 $jsonComSaldo = $null
 $jsonSemSaldo = $null
+$linhasComSaldo = $null
+$linhasSemSaldo = $null
 $ZonaSP = [TimeZoneInfo]::FindSystemTimeZoneById('E. South America Standard Time')
 
 function Salvar-Json($Valor, [string]$Caminho) {
@@ -157,7 +162,7 @@ function Entrar-Supabase {
 }
 
 function Chamar-Rpc([string]$Nome, $Dados) {
-    if ($Nome -notin @('solidcon_receber_produtos', 'solidcon_registrar_falha', 'solidcon_receber_vendas', 'solidcon_receber_clientes')) { throw 'RPC invalida' }
+    if ($Nome -notin @('solidcon_receber_produtos', 'solidcon_registrar_falha', 'solidcon_receber_vendas', 'solidcon_receber_clientes', 'solidcon_receber_ficha', 'solidcon_receber_vendas_clientes')) { throw 'RPC invalida' }
     $corpo = ConvertTo-Json -InputObject $Dados -Depth 20 -Compress
     $opcoes = @{
         Uri = ($SupabaseBase + '/rest/v1/rpc/' + $Nome); Method = 'Post'
@@ -353,7 +358,7 @@ function Sincronizar-Vendas($Catalogo) {
         } catch {
             $script:VendasFalhou=$true; Log 'ERRO vendas arquivo offline invalido.'; return
         }
-    } elseif ($ArquivoEntrada -or $ArquivoEntradaSemSaldo -or $ArquivoClientes) {
+    } elseif ($ArquivoEntrada -or $ArquivoEntradaSemSaldo -or $ArquivoClientes -or $ArquivoVendasClientes) {
         $script:VendasFalhou=$true; Log 'ERRO vendas informe -ArquivoVendas para manter o teste totalmente offline.'; return
     }
     [decimal]$totalPeriodo=0; [decimal]$potesPeriodo=0; $linhasPeriodo=0; $diasComLinhas=0; $falhas=0
@@ -534,7 +539,7 @@ function Sincronizar-Clientes {
             $faseClientes = 'arquivo'
             $jsonClientes = Get-Content -LiteralPath $ArquivoClientes -Raw -Encoding UTF8
         } else {
-            if ($ArquivoEntrada -or $ArquivoEntradaSemSaldo -or $ArquivoVendas) {
+            if ($ArquivoEntrada -or $ArquivoEntradaSemSaldo -or $ArquivoVendas -or $ArquivoVendasClientes) {
                 throw 'informe ArquivoClientes para teste offline'
             }
             $agoraSP = [TimeZoneInfo]::ConvertTime([DateTimeOffset]::UtcNow, $ZonaSP)
@@ -607,11 +612,443 @@ function Sincronizar-Clientes {
     }
 }
 
+function Normalizar-Ficha($LinhasCom, $LinhasSem) {
+    if ($null -eq $LinhasCom -or $null -eq $LinhasSem) { throw 'linhas de produtos ausentes para ficha' }
+    $linhas = @(
+        @($LinhasCom | ForEach-Object { $_ })
+        @($LinhasSem | ForEach-Object { $_ })
+    )
+    if ($linhas.Count -eq 0) { throw 'linhas vazias para ficha' }
+    $produtos = @{}
+    foreach ($l in $linhas) {
+        if ($null -eq $l -or $l -isnot [pscustomobject]) { continue }
+        if ((Inteiro-Positivo $l.id_loja) -ne $Cfg.filialEsperada) { throw 'filial diferente da esperada' }
+        if ($l.classificacao01 -cnotin $Cfg.categorias) { continue }
+        $id = Inteiro-Positivo $l.id_produto
+        $chave = $id.ToString($Invariant)
+
+        # NCM: 8 digitos ou null
+        $ncm = $null
+        $ncmVal = Campo $l 'ncm'
+        if ($null -ne $ncmVal -and -not [string]::IsNullOrWhiteSpace([string]$ncmVal)) {
+            $ncmStr = ([string]$ncmVal).Trim()
+            if ($ncmStr -notmatch '^[0-9]{8}$') { throw 'NCM invalido' }
+            $ncm = $ncmStr
+        }
+
+        # CEST: 7 digitos ou null
+        $cest = $null
+        $cestVal = Campo $l 'cest'
+        if ($null -ne $cestVal -and -not [string]::IsNullOrWhiteSpace([string]$cestVal)) {
+            $cestStr = ([string]$cestVal).Trim()
+            if ($cestStr -notmatch '^[0-9]{7}$') { throw 'CEST invalido' }
+            $cest = $cestStr
+        }
+
+        # QTD_MEDIDA: numeric >= 0 ou null
+        $qtdMedida = $null
+        $qtdVal = Campo $l 'qtd_medida'
+        if ($null -ne $qtdVal -and -not [string]::IsNullOrWhiteSpace([string]$qtdVal)) {
+            $qtdNum = Numero-Decimal $qtdVal
+            if ($qtdNum -lt 0 -or $qtdNum -ge 1000000000) { throw 'qtd_medida fora do limite' }
+            $qtdMedida = $qtdNum
+        }
+
+        # UNID_MEDIDA: string 1..20 chars sem cntrl ou null
+        $unidMedida = $null
+        $unidVal = Campo $l 'unid_medida'
+        if ($null -ne $unidVal -and -not [string]::IsNullOrWhiteSpace([string]$unidVal)) {
+            $unidStr = ([string]$unidVal).Trim()
+            if ($unidStr.Length -lt 1 -or $unidStr.Length -gt 20 -or $unidStr -match '[\x00-\x1F\x7F]') {
+                throw 'unid_medida invalida'
+            }
+            $unidMedida = $unidStr
+        }
+
+        $item = [ordered]@{
+            id_produto = $id
+            ncm = $ncm
+            cest = $cest
+            qtd_medida = $qtdMedida
+            unid_medida = $unidMedida
+        }
+
+        if ($produtos.ContainsKey($chave)) {
+            $ant = $produtos[$chave]
+            if ($ant.ncm -cne $item.ncm -or $ant.cest -cne $item.cest -or
+                $ant.qtd_medida -ne $item.qtd_medida -or $ant.unid_medida -cne $item.unid_medida) {
+                throw 'ficha divergente para o mesmo produto'
+            }
+        } else {
+            $produtos[$chave] = $item
+        }
+    }
+    $itens = @($produtos.Values | Sort-Object { $_.id_produto })
+    if ($itens.Count -eq 0 -or $itens.Count -gt 2000) { throw 'quantidade de produtos na ficha invalida' }
+    return [pscustomobject]@{ itens = $itens }
+}
+
+function Sincronizar-Ficha($LinhasCom, $LinhasSem) {
+    $script:FichaFalhou = $false
+    if ($BackfillDias -gt 0) { return }
+    $faseFicha = 'agenda'; $reservaGravada = $false; $consulta = $null
+    # Reserva diaria separada por modo: um teste na mesma pasta/dia nunca faz o real pular a RPC.
+    $consultaPath = Join-Path $Pasta ('ficha-consulta-' + $Cfg.modo + '.json')
+    try {
+        if ($null -eq $LinhasCom -or $null -eq $LinhasSem) {
+            throw 'dados de produtos ausentes para extracao de ficha'
+        }
+        $agoraSP = [TimeZoneInfo]::ConvertTime([DateTimeOffset]::UtcNow, $ZonaSP)
+        $dia = $agoraSP.ToString('yyyy-MM-dd')
+        if (Test-Path -LiteralPath $consultaPath) {
+            $consulta = Get-Content -LiteralPath $consultaPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($consulta.versao -ne 1 -or $consulta.dia -isnot [string] -or
+                $consulta.status -cnotin @('pendente','ok','erro')) { throw 'estado ficha invalido' }
+            $diaAnterior = [DateTime]::ParseExact($consulta.dia, 'yyyy-MM-dd', $Invariant)
+            if ($diaAnterior -gt $agoraSP.Date) { throw 'estado ficha futuro' }
+            if ($consulta.dia -ceq $dia) {
+                if ($consulta.status -cne 'ok') { $script:FichaFalhou = $true }
+                Log ('SEM ENVIO ficha ja reservada hoje status={0}.' -f $consulta.status)
+                return
+            }
+        }
+        $consulta = [ordered]@{
+            versao=1; dia=$dia; tentativa_em=[DateTimeOffset]::UtcNow.ToString('o'); status='pendente'
+        }
+        $faseFicha = 'reserva'
+        Salvar-Json $consulta $consultaPath
+        $reservaGravada = $true
+
+        $coleta = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", $Invariant)
+        $execucao = [guid]::NewGuid().ToString('D')
+        $faseFicha = 'normalizacao'
+        $normal = Normalizar-Ficha $LinhasCom $LinhasSem
+        $estadoPathFicha = Join-Path $Pasta ('ficha-ultimo-ok-' + $Cfg.modo + '.json')
+        if ($Real) {
+            $faseFicha = 'rpc'
+            if (-not $script:Token) { $script:Token = Entrar-Supabase }
+            $r = Chamar-Rpc 'solidcon_receber_ficha' @{
+                p_itens = $normal.itens; p_coletado_em = $coleta; p_execucao_id = $execucao
+            }
+            # encontrados = itens presentes no espelho; atualizados (0..N) = linhas que mudaram.
+            # "ok" sem confirmar todos os produtos nao e aceito.
+            if ($r.status -cne 'ok' -or $r.execucao_id -cne $execucao -or $r.linhas -ne $normal.itens.Count -or
+                $r.encontrados -isnot [ValueType] -or $r.encontrados -ne $normal.itens.Count -or
+                $r.atualizados -isnot [ValueType] -or $r.atualizados -lt 0 -or $r.atualizados -gt $normal.itens.Count -or
+                [DateTimeOffset]::Parse($r.coletado_em, $Invariant) -ne [DateTimeOffset]::Parse($coleta, $Invariant)) {
+                throw 'ficha nao confirmada'
+            }
+        } else {
+            $faseFicha = 'saida-teste'
+            Salvar-Json ([ordered]@{
+                coletado_em=$coleta; execucao_id=$execucao; linhas=$normal.itens.Count; itens=$normal.itens
+            }) (Join-Path $Pasta 'ficha-normalizada.json')
+        }
+        $faseFicha = 'estado-local'
+        Salvar-Json ([ordered]@{
+            linhas=$normal.itens.Count; coletado_em=$coleta; execucao_id=$execucao
+        }) $estadoPathFicha
+        if ($reservaGravada) { $consulta.status = 'ok'; Salvar-Json $consulta $consultaPath }
+        Log ('OK ficha modo={0} linhas={1} execucao={2} coletado_em={3}' -f $Cfg.modo, $normal.itens.Count, $execucao, $coleta)
+    } catch {
+        $script:FichaFalhou = $true
+        if ($faseFicha -ceq 'rpc') { $script:Token = $null }
+        if ($reservaGravada) {
+            try { $consulta.status = 'erro'; Salvar-Json $consulta $consultaPath } catch {}
+        }
+        try { Log ('ERRO ficha fase={0}; estoque, vendas e clientes preservados; sem novo envio hoje.' -f $faseFicha) } catch {}
+    }
+}
+
+function Inteiro-NaoNegativo($Valor, [long]$Maximo) {
+    # Sem arredondamento: 1.5 e rejeitado (nao vira 2).
+    $numero = Numero-Decimal $Valor
+    if ($numero -lt 0 -or [decimal]::Truncate($numero) -ne $numero -or $numero -gt $Maximo) {
+        throw 'inteiro invalido'
+    }
+    return [long]$numero
+}
+
+function Dt-VendaCliente($Valor) {
+    if ($Valor -isnot [string] -or
+        $Valor -notmatch '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,7})?(Z|[+-]\d{2}:\d{2})?$') {
+        throw 'dtCupom invalido'
+    }
+    if ($Valor -match '(Z|[+-]\d{2}:\d{2})$') {
+        $sp = [TimeZoneInfo]::ConvertTime([DateTimeOffset]::Parse($Valor, $Invariant), $ZonaSP)
+    } else {
+        # Hora sem fuso = estabelecimento em Sao Paulo (mesma regra de Data-Erp).
+        $local = [DateTime]::SpecifyKind([DateTime]::Parse($Valor, $Invariant, [Globalization.DateTimeStyles]::None), [DateTimeKind]::Unspecified)
+        if ($ZonaSP.IsInvalidTime($local) -or $ZonaSP.IsAmbiguousTime($local)) { throw 'dtCupom ambiguo' }
+        $sp = New-Object DateTimeOffset($local, $ZonaSP.GetUtcOffset($local))
+    }
+    return [pscustomobject]@{
+        dia = $sp.ToString('yyyy-MM-dd', $Invariant)
+        dt  = $sp.ToString("yyyy-MM-dd'T'HH:mm:sszzz", $Invariant)
+    }
+}
+
+# $Json: corpo JSON (ERP ou arquivo). Precisa ser array; objeto/erro HTTP nunca vira lote vazio.
+# $Inicio/$Fim vazios = sem intervalo (arquivo offline inteiro); preenchidos = cupom fora do
+# intervalo consultado rejeita o lote (nao e descartado em silencio).
+function Normalizar-VendasClientes([string]$Json, [string]$Inicio, [string]$Fim) {
+    if ([string]::IsNullOrEmpty($Json) -or -not $Json.TrimStart().StartsWith('[') -or $Json.Length -gt 32MB) {
+        throw 'resposta vendas-clientes invalida'
+    }
+    $itensRaw = @(ConvertFrom-Json -InputObject $Json)
+    if ($itensRaw.Count -eq 1 -and $itensRaw[0] -is [array]) { $itensRaw = @($itensRaw[0]) }
+    if ($itensRaw.Count -gt 10000) { throw 'quantidade vendas-clientes fora do limite' }
+
+    # Digitos verificadores (modulo 11) de CPF/CNPJ: p1/p2 sao os pesos dos 2 DVs.
+    $DvValido = {
+        param([string]$d, [int[]]$p1, [int[]]$p2)
+        if ($d -match '^(\d)\1+$') { return $false }
+        foreach ($pesos in $p1, $p2) {
+            $k = $pesos.Count; $s = 0
+            for ($i = 0; $i -lt $k; $i++) { $s += [int][string]$d[$i] * $pesos[$i] }
+            $r = $s % 11; $dv = if ($r -lt 2) { 0 } else { 11 - $r }
+            if ($dv -ne [int][string]$d[$k]) { return $false }
+        }
+        return $true
+    }
+
+    $itensPorChave = @{}
+    $semDoc = 0
+    [decimal]$totalCentavos = 0
+
+    foreach ($l in $itensRaw) {
+        if ($null -eq $l -or $l -isnot [pscustomobject]) { throw 'item vendas-clientes invalido' }
+
+        # Campos estruturais validados em TODAS as linhas, antes de descartar sem documento:
+        # objeto de erro/lixo nunca e contado como "consumidor sem CPF".
+        $data = Dt-VendaCliente (Campo $l 'dtCupom')
+        if ($Inicio -and $Fim -and ($data.dia -lt $Inicio -or $data.dia -gt $Fim)) {
+            throw 'cupom fora do intervalo consultado'
+        }
+        $vlCupom = Campo $l 'vlCupom'
+        if ($null -eq $vlCupom) { throw 'vlCupom obrigatorio' }
+        $centavos = Centavos-Venda $vlCupom
+        $totalItensNum = Inteiro-NaoNegativo (Campo $l 'totalItens') ([int]::MaxValue)
+        $cdPdv = Inteiro-NaoNegativo (Campo $l 'cdPDV') ([int]::MaxValue)
+        $nrCupom = Inteiro-NaoNegativo (Campo $l 'nrCupom') ([long]::MaxValue)
+
+        $cdCliente = Campo $l 'cdCliente'
+        if ($null -eq $cdCliente) { $semDoc++; continue }
+        $textoDoc = if ($cdCliente -is [IFormattable]) { $cdCliente.ToString($null, $Invariant) } else { [string]$cdCliente }
+        $digitos = $textoDoc -replace '[^0-9]', ''
+        if ($digitos.Length -notin 1..14 -or $digitos -match '^0+$') { $semDoc++; continue }
+
+        # ERP envia cdCliente sem zeros a esquerda (10-14 digitos).
+        # Desempata CPF/CNPJ com as regras de DV de Normalizar-Clientes.
+        $tipo = $null; $documento = $null
+        if ($digitos.Length -gt 11) {
+            $doc14 = $digitos.PadLeft(14, [char]'0')
+            if (& $DvValido $doc14 @(5,4,3,2,9,8,7,6,5,4,3,2) @(6,5,4,3,2,9,8,7,6,5,4,3,2)) {
+                $tipo = 'cnpj'; $documento = $doc14
+            } else {
+                $semDoc++; continue
+            }
+        } else {
+            $cpfPad = $digitos.PadLeft(11, [char]'0')
+            $cnpjPad = $digitos.PadLeft(14, [char]'0')
+            $cpfOk = & $DvValido $cpfPad @(10..2) @(11..2)
+            $cnpjOk = & $DvValido $cnpjPad @(5,4,3,2,9,8,7,6,5,4,3,2) @(6,5,4,3,2,9,8,7,6,5,4,3,2)
+            if ($cnpjOk -and -not $cpfOk) {
+                $tipo = 'cnpj'; $documento = $cnpjPad
+            } elseif ($cpfOk) {
+                $tipo = 'cpf'; $documento = $cpfPad
+            } else {
+                $semDoc++; continue
+            }
+        }
+
+        $item = [ordered]@{
+            dia            = $data.dia
+            dt             = $data.dt
+            documento      = $documento
+            tipo           = $tipo
+            valor_centavos = $centavos
+            total_itens    = $totalItensNum
+            cd_pdv         = $cdPdv
+            nr_cupom       = $nrCupom
+        }
+        # Chave unica / primaria: (dia, cd_pdv, nr_cupom). Repeticao identica e ignorada;
+        # repeticao com qualquer campo diferente rejeita o lote (nunca substitui em silencio).
+        $chave = '{0}#{1}#{2}' -f $data.dia, $cdPdv, $nrCupom
+        if ($itensPorChave.ContainsKey($chave)) {
+            $ant = $itensPorChave[$chave]
+            foreach ($campo in @($item.Keys)) {
+                if ($ant[$campo] -cne $item[$campo]) { throw 'cupom conflitante no lote' }
+            }
+            continue
+        }
+        $itensPorChave[$chave] = $item
+    }
+
+    $itensOrdenados = @($itensPorChave.Values | Sort-Object { $_.dia }, { $_.cd_pdv }, { $_.nr_cupom })
+    foreach ($it in $itensOrdenados) { $totalCentavos += $it.valor_centavos }
+    if ($totalCentavos -gt [long]::MaxValue) { throw 'total vendas-clientes excede bigint' }
+    if ([Text.Encoding]::UTF8.GetByteCount((ConvertTo-Json -InputObject $itensOrdenados -Depth 5 -Compress)) -gt 16MB) {
+        throw 'payload vendas-clientes fora do limite'
+    }
+    return [pscustomobject]@{
+        itens                = $itensOrdenados
+        valor_total_centavos = [long]$totalCentavos
+        sem_documento        = $semDoc
+    }
+}
+
+# Blocos de ate um mes civil (no maximo 31 datas, limite da RPC).
+# Saida desenrolada no pipeline; chamadores SEMPRE recolhem com @() (1 ou N blocos).
+function Obter-BlocosMensais([datetime]$DataInicio, [datetime]$DataFim) {
+    $blocos = New-Object Collections.ArrayList
+    $atual = $DataInicio.Date
+    $limite = $DataFim.Date
+    while ($atual -le $limite) {
+        $fimMes = New-Object DateTime($atual.Year, $atual.Month, [DateTime]::DaysInMonth($atual.Year, $atual.Month))
+        $fimBloco = if ($fimMes -lt $limite) { $fimMes } else { $limite }
+        [void]$blocos.Add([pscustomobject]@{
+            Inicio = $atual.ToString('yyyy-MM-dd', $Invariant)
+            Fim    = $fimBloco.ToString('yyyy-MM-dd', $Invariant)
+        })
+        $atual = $fimBloco.AddDays(1)
+    }
+    return $blocos.ToArray()
+}
+
+function Ler-VendasClientesErp([string]$Inicio, [string]$Fim) {
+    if ($Inicio -notmatch '^\d{4}-\d{2}-\d{2}$' -or $Fim -notmatch '^\d{4}-\d{2}-\d{2}$') {
+        throw 'datas vendas-clientes invalidas'
+    }
+    # Unica rota de vendas por cliente autorizada. Sem proxy ou redirecionamento.
+    $url = ('http://localhost:5100/api/Vendas/CNPJ/63671696000106/INICIO/{0}/FIM/{1}/GetVendasResumo' -f $Inicio, $Fim)
+    $pedido = [Net.HttpWebRequest]::Create($url)
+    $pedido.Method = 'GET'; $pedido.Proxy = $null; $pedido.AllowAutoRedirect = $false
+    $pedido.Timeout = 120000; $pedido.ReadWriteTimeout = 120000; $pedido.Accept = 'application/json'
+    $resposta = $pedido.GetResponse()
+    try {
+        if ([int]$resposta.StatusCode -ne 200) { throw 'status vendas-clientes inesperado' }
+        $leitor = New-Object IO.StreamReader($resposta.GetResponseStream(), [Text.Encoding]::UTF8, $true)
+        try { return $leitor.ReadToEnd() } finally { $leitor.Dispose() }
+    } finally { $resposta.Dispose() }
+}
+
+function Sincronizar-VendasClientes {
+    $script:VendasClientesFalhou = $false
+    $faseVc = 'inicio'
+    try {
+        $hoje = [TimeZoneInfo]::ConvertTime([DateTimeOffset]::UtcNow, $ZonaSP).Date
+        if ($BackfillDias -gt 0) {
+            $blocos = @(Obter-BlocosMensais $hoje.AddDays(-($BackfillDias - 1)) $hoje)
+        } else {
+            # Ciclo normal: 1 GET cobrindo ontem + hoje
+            $blocos = @([pscustomobject]@{
+                Inicio = $hoje.AddDays(-1).ToString('yyyy-MM-dd', $Invariant)
+                Fim    = $hoje.ToString('yyyy-MM-dd', $Invariant)
+            })
+        }
+
+        $itensArquivo = $null
+        if ($ArquivoVendasClientes) {
+            # Arquivo inteiro validado de uma vez: qualquer linha invalida falha o fluxo.
+            $faseVc = 'arquivo'
+            $jsonVc = Get-Content -LiteralPath $ArquivoVendasClientes -Raw -Encoding UTF8
+            $itensArquivo = @((Normalizar-VendasClientes $jsonVc '' '').itens)
+            if ($BackfillDias -le 0 -and $itensArquivo.Count -gt 0) {
+                # Teste offline sem -BackfillDias: se o arquivo sair de ontem..hoje, cobrir seus dias.
+                $dias = @($itensArquivo | ForEach-Object { $_.dia } | Sort-Object)
+                if ($dias[0] -lt $blocos[0].Inicio -or $dias[-1] -gt $blocos[0].Fim) {
+                    $blocos = @(Obter-BlocosMensais ([DateTime]::ParseExact($dias[0], 'yyyy-MM-dd', $Invariant)) ([DateTime]::ParseExact($dias[-1], 'yyyy-MM-dd', $Invariant)))
+                }
+            }
+        } elseif ($ArquivoEntrada -or $ArquivoEntradaSemSaldo -or $ArquivoVendas -or $ArquivoClientes) {
+            throw 'informe ArquivoVendasClientes para teste offline'
+        }
+
+        $totalItensSincronizados = 0
+        $totalCentavosSincronizados = [decimal]0
+        $itensArquivoUsados = 0
+        for ($b = 0; $b -lt $blocos.Count; $b++) {
+            $bInicio = [string]$blocos[$b].Inicio
+            $bFim = [string]$blocos[$b].Fim
+            if ($bInicio -notmatch '^\d{4}-\d{2}-\d{2}$' -or $bFim -notmatch '^\d{4}-\d{2}-\d{2}$' -or $bInicio -gt $bFim) {
+                throw 'bloco vendas-clientes invalido'
+            }
+
+            $faseVc = 'leitura'
+            if ($ArquivoVendasClientes) {
+                $itensBloco = @($itensArquivo | Where-Object { $_.dia -ge $bInicio -and $_.dia -le $bFim })
+                [decimal]$somaBloco = 0
+                foreach ($it in $itensBloco) { $somaBloco += $it.valor_centavos }
+                $itensArquivoUsados += $itensBloco.Count
+                $normal = [pscustomobject]@{ itens = $itensBloco; valor_total_centavos = [long]$somaBloco; sem_documento = 0 }
+            } else {
+                $jsonErp = Ler-VendasClientesErp $bInicio $bFim
+                $faseVc = 'normalizacao'
+                $normal = Normalizar-VendasClientes $jsonErp $bInicio $bFim
+            }
+
+            $coleta = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", $Invariant)
+            $execucao = [guid]::NewGuid().ToString('D')
+
+            if ($Real) {
+                $faseVc = 'rpc'
+                if (-not $script:Token) { $script:Token = Entrar-Supabase }
+                $r = Chamar-Rpc 'solidcon_receber_vendas_clientes' @{
+                    p_inicio      = $bInicio
+                    p_fim         = $bFim
+                    p_itens       = @($normal.itens)
+                    p_coletado_em = $coleta
+                    p_execucao_id = $execucao
+                }
+                if ($r.status -cne 'ok' -or $r.execucao_id -cne $execucao -or
+                    $r.inicio -cne $bInicio -or $r.fim -cne $bFim -or
+                    $r.linhas -ne @($normal.itens).Count -or
+                    $r.valor_total_centavos -ne $normal.valor_total_centavos) {
+                    throw 'vendas-clientes nao confirmadas pela RPC'
+                }
+            } else {
+                $faseVc = 'saida-teste'
+                Salvar-Json @($normal.itens) (Join-Path $Pasta ('vendas-clientes-normalizadas-' + $bInicio + '_' + $bFim + '.json'))
+            }
+
+            $totalItensSincronizados += @($normal.itens).Count
+            $totalCentavosSincronizados += $normal.valor_total_centavos
+
+            # Pausa de 700ms entre blocos mensais no ERP
+            if (-not $ArquivoVendasClientes -and ($b + 1) -lt $blocos.Count) {
+                Start-Sleep -Milliseconds 700
+            }
+        }
+        if ($ArquivoVendasClientes -and $itensArquivoUsados -ne $itensArquivo.Count) {
+            # Cupom do arquivo fora dos blocos (ex.: alem do -BackfillDias) nao some em silencio.
+            throw 'arquivo vendas-clientes com cupons fora dos blocos'
+        }
+
+        if (-not $Real) {
+            $faseVc = 'saida-teste'
+            Salvar-Json ([ordered]@{
+                blocos               = $blocos.Count
+                itens_total          = $totalItensSincronizados
+                valor_total_centavos = [long]$totalCentavosSincronizados
+                execucao_id          = $ExecucaoId
+            }) (Join-Path $Pasta 'vendas-clientes-resumo.json')
+        }
+
+        Log ('OK vendas-clientes blocos={0} cupons_clientes={1} total_centavos={2}' -f $blocos.Count, $totalItensSincronizados, [long]$totalCentavosSincronizados)
+    } catch {
+        $script:VendasClientesFalhou = $true
+        if ($faseVc -ceq 'rpc') { $script:Token = $null }
+        # Mensagem fixa por fase: nunca $_ (poderia conter documento/valor recebido).
+        try { Log ('ERRO vendas-clientes fase={0}; outros fluxos preservados.' -f $faseVc) } catch {}
+    }
+}
+
 try {
     $Cfg = Get-Content -LiteralPath $Config -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($Cfg.modo -cnotin @('teste', 'real')) { throw 'modo invalido' }
     $Real = $Cfg.modo -ceq 'real'
-    if ($Real -and ($ArquivoEntrada -or $ArquivoEntradaSemSaldo -or $ArquivoVendas -or $ArquivoClientes)) { throw 'arquivos locais so podem ser usados em teste' }
+    if ($Real -and ($ArquivoEntrada -or $ArquivoEntradaSemSaldo -or $ArquivoVendas -or $ArquivoClientes -or $ArquivoVendasClientes)) { throw 'arquivos locais so podem ser usados em teste' }
     if ([bool]$ArquivoEntrada -ne [bool]$ArquivoEntradaSemSaldo) { throw 'informar os dois arquivos ou nenhum' }
     if ((Inteiro-Positivo $Cfg.filialEsperada) -ne 4) { throw 'filial deve ser 4' }
     if ($Cfg.categorias -isnot [array] -or $Cfg.categorias.Count -ne 2) { throw 'categorias invalidas' }
@@ -841,7 +1278,15 @@ try {
     catch { $VendasFalhou=$true; Log 'ERRO vendas falha local; estoque preservado.' }
     try { Sincronizar-Clientes }
     catch { $ClientesFalhou=$true; try { Log 'ERRO clientes falha local; estoque e vendas preservados.' } catch {} }
-    $CodigoSaida = if (-not $EstoqueOk) { 1 } elseif ($VendasFalhou) { 3 } elseif ($ClientesFalhou) { 4 } else { 0 }
+    # Ficha so no ciclo normal e com estoque confirmado neste ciclo (mesmo GetProdutos).
+    # Backfill nunca roda ficha; estoque com falha ja sai com 1.
+    if ($EstoqueOk -and $BackfillDias -le 0) {
+        try { Sincronizar-Ficha $linhasComSaldo $linhasSemSaldo }
+        catch { $FichaFalhou=$true; try { Log 'ERRO ficha falha local; estoque, vendas e clientes preservados.' } catch {} }
+    }
+    try { Sincronizar-VendasClientes }
+    catch { $VendasClientesFalhou=$true; try { Log 'ERRO vendas-clientes falha local; estoque, vendas, clientes e ficha preservados.' } catch {} }
+    $CodigoSaida = if (-not $EstoqueOk) { 1 } elseif ($VendasFalhou) { 3 } elseif ($ClientesFalhou) { 4 } elseif ($FichaFalhou) { 5 } elseif ($VendasClientesFalhou) { 6 } else { 0 }
 } catch {
     # Configuracao/mutex invalidos impedem ambos os fluxos, sem chamadas extras.
     try { Log ('ERRO fase=' + $Fase + ': ' + $Mensagem) } catch {}

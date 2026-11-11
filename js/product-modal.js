@@ -1328,6 +1328,16 @@ const modalHTML = `
                         </h4>
                         <p id="modal-alergicos" class="text-white font-light leading-relaxed font-bold uppercase text-sm">...</p>
                     </div>
+
+                    <!-- Ficha Técnica Section (Solidcon) -->
+                    <div id="modal-ficha-container" class="hidden flex-col gap-3 bg-white/5 border border-white/10 rounded-xl p-5">
+                        <h4 class="text-primary-500 text-sm font-bold uppercase tracking-widest flex items-center gap-2">
+                            <i class="fa-solid fa-barcode"></i> Ficha técnica
+                        </h4>
+                        <div id="modal-ficha-body" class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                            <!-- Injetado dinamicamente -->
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Nutritional Table -->
@@ -1380,6 +1390,64 @@ const nutContainer = document.getElementById('modal-nutricional-container');
 const nutPorcoes = document.getElementById('modal-porcoes');
 const nutPorcao = document.getElementById('modal-porcao');
 const nutBody = document.getElementById('modal-nutricional-body');
+const fichaContainer = document.getElementById('modal-ficha-container');
+const fichaBody = document.getElementById('modal-ficha-body');
+
+function escapeFicha(str) {
+    return String(str || '').replace(/[&<>"']/g, function (m) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m];
+    });
+}
+
+function renderFicha(prodId) {
+    if (!fichaContainer || !fichaBody) return;
+    const ficha = typeof SolidconPublico !== 'undefined' && typeof SolidconPublico.ficha === 'function'
+        ? SolidconPublico.ficha(prodId)
+        : null;
+
+    if (!ficha) {
+        fichaContainer.classList.add('hidden');
+        fichaContainer.classList.remove('flex');
+        fichaBody.innerHTML = '';
+        return;
+    }
+
+    const itens = [];
+    if (ficha.ean_pote) {
+        itens.push({ rotulo: 'EAN do pote', valor: ficha.ean_pote, mono: true });
+    }
+    if (ficha.ean_cx24) {
+        itens.push({ rotulo: 'EAN Caixa 24', valor: ficha.ean_cx24, mono: true });
+    }
+    if (ficha.ean_cx48) {
+        itens.push({ rotulo: 'EAN Caixa 48', valor: ficha.ean_cx48, mono: true });
+    }
+    if (ficha.ncm) {
+        itens.push({ rotulo: 'NCM', valor: ficha.ncm, mono: true });
+    }
+    if (ficha.gramatura) {
+        itens.push({ rotulo: 'Gramatura', valor: ficha.gramatura, mono: false });
+    }
+
+    if (itens.length === 0) {
+        fichaContainer.classList.add('hidden');
+        fichaContainer.classList.remove('flex');
+        fichaBody.innerHTML = '';
+        return;
+    }
+
+    fichaBody.innerHTML = itens.map(function (it) {
+        return `
+            <div class="flex flex-col bg-white/[0.03] p-2.5 rounded-lg border border-white/5">
+                <span class="text-[11px] text-textSecondary uppercase tracking-wider font-semibold">${escapeFicha(it.rotulo)}</span>
+                <span class="text-white text-sm font-medium ${it.mono ? 'font-mono' : ''}">${escapeFicha(it.valor)}</span>
+            </div>
+        `;
+    }).join('');
+
+    fichaContainer.classList.remove('hidden');
+    fichaContainer.classList.add('flex');
+}
 
 let currentCard = null;
 
@@ -1466,6 +1534,13 @@ function openModalFromCard(card) {
 
     updateNavigationButtons();
 
+    const prodId = card.dataset.id || (function () {
+        if (typeof produtos === 'undefined') return null;
+        const match = produtos.find(p => p.nome && p.nome.toUpperCase() === rawName);
+        return match ? match.id : null;
+    })();
+    renderFicha(prodId);
+
     // Gancho opcional: js/cart-ui.js usa para montar o seletor de caixa.
     if (typeof window.onProductModalOpen === 'function') {
         window.onProductModalOpen(card.dataset.id || null, rawName);
@@ -1542,3 +1617,16 @@ window.closeProductModal = closeModal;
 
 // Call once for static cards (if any)
 window.setupModal();
+
+document.addEventListener('solidcon:publico', function () {
+    if (modal && !modal.classList.contains('hidden') && currentCard) {
+        const nameEl = currentCard.querySelector('h4');
+        const rawName = nameEl ? nameEl.textContent.trim().toUpperCase() : '';
+        const prodId = currentCard.dataset.id || (function () {
+            if (typeof produtos === 'undefined') return null;
+            const match = produtos.find(p => p.nome && p.nome.toUpperCase() === rawName);
+            return match ? match.id : null;
+        })();
+        renderFicha(prodId);
+    }
+});
