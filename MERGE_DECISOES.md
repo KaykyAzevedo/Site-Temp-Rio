@@ -25,7 +25,7 @@ do projeto fica ignorado pelo Git.
 - **Vendedor pode ver a receita do ERP?** A aba Vendas SOLIDCON está disponível
   à equipe e a 022 usa `eh_equipe()` nas tabelas, com views que respeitam RLS.
   Se o dono reservar a receita a admin, ajustar interface e RLS antes da 022.
-  A funcionalidade foi aprovada e a 022 segue pendente.
+  A 022 foi aplicada em 2026-11-11; o dono aceitou a receita visível à equipe (hoje 1 pessoa).
 
 ## Migrações
 

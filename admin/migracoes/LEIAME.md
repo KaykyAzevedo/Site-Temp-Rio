@@ -17,7 +17,7 @@ separação eh_equipe/eh_admin por papel. Consulte MERGE_DECISOES.md.
 | 019_solidcon_espelho.sql | A, antes 012 | JÁ APLICADA COMO 012 DE A; NÃO REAPLICAR |
 | 020_solidcon_historico.sql | A, antes 017 | JÁ APLICADA COMO 017 DE A; NÃO REAPLICAR |
 | 021_total_servidor_solidcon.sql | A, antes 011 | NÃO APLICADA; depende de revisão/aprovação |
-| 022_solidcon_vendas.sql | A, antes 018 | NÃO APLICADA |
+| 022_solidcon_vendas.sql | A, antes 018 | APLICADA (2026-11-11) |
 
 019/020 são nomes de organização do repositório. Os objetos SQL, RPCs e a
 assinatura chamada pelo script continuam iguais. 017/018 não são reutilizados
@@ -384,7 +384,7 @@ histórico perdido. O retorno da RPC segue compatível com o script.
 
 ## 022 — Vendas diárias SOLIDCON
 
-Funcionalidade aprovada. A 022 **não está aplicada**. Requer 019 e 020 completas,
+Funcionalidade aprovada. A 022 **foi aplicada em 2026-11-11** (backfill de 180 dias feito; coletor 08b7c809 no servidor). Requer 019 e 020 completas,
 as tabelas/funções delas e os helpers de papéis de produção; preflight aborta
 com mensagem clara. Não reaplicar SQL base, 019 ou 020. Número 022 não colide
 com as 013–016 do outro repo; nomes novos usam `solidcon_vendas_` ou

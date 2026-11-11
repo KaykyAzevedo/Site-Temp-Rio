@@ -1,4 +1,4 @@
--- 022_solidcon_vendas.sql: NAO APLICADA. Vendas diarias, antes 018 de A.
+-- 022_solidcon_vendas.sql: APLICADA em 2026-11-11 (antes 018 de A).
 -- Corpo original preservado; numeros antigos abaixo sao historicos.
 -- 018: vendas diarias, leitura do ERP. Nao altera RPCs/objetos da 012/017.
 begin;

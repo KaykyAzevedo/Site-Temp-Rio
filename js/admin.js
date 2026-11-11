@@ -358,7 +358,7 @@
                   solicitacoesLgpd: [] };
 
     var ABAS = ['dashboard', 'pedidos', 'clientes', 'historico', 'vendas',
-                'espera', 'vitrine', 'regioes', 'visitas', 'solidcon', 'vendassolid', 'leads', 'lgpd'];
+                'espera', 'vitrine', 'regioes', 'visitas', 'solidcon', 'leads', 'lgpd'];
 
     /* Abas fora do alcance de um vendedor (migração 014: RLS só libera
      * pedidos/clientes/usuarios para quem não é admin). Esconder a aba é
@@ -414,8 +414,7 @@
         $('#btn-sair').addEventListener('click', sair);
         $('#btn-atualizar').addEventListener('click', function () {
             carregar();
-            if (abaAtual === 'solidcon') carregarSolidcon();
-            if (abaAtual === 'vendassolid') carregarVendas();
+            recarregarErp();
         });
         $('#filtro-periodo').addEventListener('change', function () { carregar(); });
 
@@ -739,8 +738,7 @@
         ABAS.forEach(function (a) {
             $('#painel-' + a).classList.toggle('hidden', a !== qual);
         });
-        if (qual === 'solidcon' && !solid.carregado && !solid.carregando) carregarSolidcon();
-        if (qual === 'vendassolid' && !vend.carregado && !vend.carregando) carregarVendas();
+        carregarErpDaAba(qual);
 
         // A aba só é redesenhada de verdade agora, se algo mudou desde a
         // última vez que ela foi vista (ver desenharAbaSeSuja) — é o que
@@ -781,8 +779,7 @@
         visitas: desenharVisitas,
         leads: desenharLeads,
         lgpd: desenharLgpd,
-        solidcon: desenharSolidcon,
-        vendassolid: desenharVendasSolid
+        solidcon: desenharSolidcon
     };
 
     function desenharAbaSeSuja(aba) {
@@ -799,7 +796,8 @@
      * =================================================================== */
     var solid = { carregado: false, carregando: false, produtos: [], syncs: [],
                   erro: null, ausente: false, busca: '', situacao: 'todos', caixa: 'todas',
-                  extra: false, eventos: [], limite: 5, ehAdmin: null, tipoEvento: 'todos' };
+                  extra: false, eventos: [], limite: 5, ehAdmin: null, tipoEvento: 'todos',
+                  catalogo: null, listaAberta: false };
     var SOLID_BAIXO = 5;
     var SOLID_STALE_MS = 2 * 60 * 60 * 1000;
 
@@ -817,8 +815,7 @@
 
     function carregarSolidcon() {
         solid.carregando = true;
-        $('#painel-solidcon').innerHTML = '<div class="adm-card p-8 text-center text-sm" style="color:var(--adm-tinta-2)">' +
-            '<i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando produtos do SOLIDCON…</div>';
+        solidRedesenhar();
 
         Promise.all([
             sb.from('solidcon_produtos')
@@ -828,25 +825,45 @@
                 .select('status,concluido_em,coletado_em,qtd_recebida,qtd_presente,mensagem')
                 .order('concluido_em', { ascending: false }).limit(200)
         ]).then(function (rs) {
-            solid.carregando = false;
             var falha = rs.filter(function (r) { return r.error; })[0];
             solid.ausente = false; solid.erro = null;
             if (falha) {
                 if (solidTabelaAusente(falha.error)) solid.ausente = true;
                 else solid.erro = String(falha.error.message || falha.error);
                 solid.carregado = false;
-            } else {
-                solid.produtos = rs[0].data || [];
-                solid.syncs = rs[1].data || [];
-                solid.carregado = true;
+                solid.carregando = false;
+                solidRedesenhar();
+                return;
             }
-            if (!solid.carregado) { desenharSolidcon(); return; }
-            return carregarSolidExtra().then(desenharSolidcon);
+            solid.produtos = rs[0].data || [];
+            solid.syncs = rs[1].data || [];
+            solid.carregado = true;
+            return Promise.all([carregarSolidExtra(), carregarCatalogoSite()]).then(function () {
+                solid.carregando = false;
+                solidRedesenhar();
+            });
         }).catch(function (e) {
             solid.carregando = false;
             solid.erro = String(e && e.message || e);
-            desenharSolidcon();
+            solidRedesenhar();
         });
+    }
+
+    // Redesenha só o que depende do espelho (Integração e Vitrine), e só se estiver na tela.
+    function solidRedesenhar() {
+        abasParaRedesenhar.solidcon = true;
+        abasParaRedesenhar.vitrine = true;
+        desenharAbaSeSuja(abaAtual);
+    }
+
+    // Produtos do site (para casar com o ERP). Tenta com codigo_erp (021); sem a coluna, cai para id/nome.
+    function carregarCatalogoSite() {
+        return sb.from('catalogo_produtos').select('id,nome,codigo_erp').order('nome', { ascending: true }).limit(1000)
+            .then(function (r) {
+                if (!r.error) { solid.catalogo = r.data || []; return; }
+                return sb.from('catalogo_produtos').select('id,nome').order('nome', { ascending: true }).limit(1000)
+                    .then(function (r2) { solid.catalogo = r2.error ? null : (r2.data || []); });
+            }, function () { solid.catalogo = null; });
     }
 
     function solidCabecalho() {
@@ -934,18 +951,158 @@
             alvo.innerHTML = '<div class="adm-card p-8"><p class="font-bold mb-2">Não foi possível carregar o SOLIDCON</p>' +
                 '<p class="text-sm mb-4" style="color:var(--adm-tinta-2)">' + esc(solid.erro) + '</p>' +
                 '<button type="button" class="adm-botao-fantasma" id="solid-tentar">Tentar de novo</button></div>';
-            $('#solid-tentar').addEventListener('click', carregarSolidcon);
+            alvo.querySelector('#solid-tentar').addEventListener('click', carregarSolidcon);
             return;
         }
-        if (!solid.carregado) return;
+        if (!solid.carregado) {
+            alvo.innerHTML = '<div class="adm-card p-8 text-center text-sm" style="color:var(--adm-tinta-2)">' +
+                '<i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando a integração SOLIDCON…</div>';
+            return;
+        }
 
+        function tile(r, v, nota) {
+            return '<div class="adm-card p-4"><p class="adm-tile-rotulo mb-1">' + r + '</p>' +
+                   '<p class="adm-tile-valor">' + esc(v) + '</p>' +
+                   (nota ? '<p class="text-xs mt-1" style="color:var(--adm-tinta-3)">' + esc(nota) + '</p>' : '') + '</div>';
+        }
+        var falhas = solid.syncs.filter(function (s) { return s.status === 'erro'; }).length;
+        var corte = Date.now() - 86400000;
+        var ev24 = solid.extra ? solid.eventos.filter(function (e) { return new Date(e.em).getTime() >= corte; }).length : null;
+        var selo = function (st) {
+            return st === 'ok'
+                ? '<span class="adm-selo adm-selo-confirmado"><i class="fa-solid fa-check"></i>OK</span>'
+                : '<span class="adm-selo adm-selo-cancelado"><i class="fa-solid fa-triangle-exclamation"></i>Falhou</span>';
+        };
+        var histProd = solid.syncs.slice(0, 15).map(function (s) {
+            var m = String(s.mensagem || '');
+            return '<tr><td>' + esc(dataHora(s.concluido_em || s.coletado_em)) + '</td><td>' + selo(s.status) + '</td>' +
+                '<td class="num">' + esc(s.qtd_recebida == null ? '—' : NUM.format(s.qtd_recebida)) + '</td>' +
+                '<td class="num">' + esc(s.qtd_presente == null ? '—' : NUM.format(s.qtd_presente)) + '</td>' +
+                '<td>' + esc(m.length > 120 ? m.slice(0, 120) + '…' : m) + '</td></tr>';
+        }).join('');
+
+        // Vendas: só a saúde da rotina (os números ficam em Pedidos e Dashboard de vendas).
+        var vendaSaude;
+        if (vend.carregando && !vend.carregado) vendaSaude = '<p class="text-sm" style="color:var(--adm-tinta-3)"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando…</p>';
+        else if (vend.ausente) vendaSaude = '<p class="text-sm" style="color:var(--adm-tinta-3)">Rotina de vendas ainda não instalada neste banco.</p>';
+        else if (vend.erro) vendaSaude = '<p class="text-sm" style="color:var(--adm-tinta-3)">Não foi possível ler: ' + esc(vend.erro) + '</p>';
+        else if (!vend.carregado) vendaSaude = '';
+        else {
+            var cab = vendCabecalhoAtualizacao();
+            vendaSaude = '<p class="text-sm mb-3" style="color:var(--adm-tinta-2)"><i class="fa-regular fa-clock mr-2"></i>Atualizado ' + esc(cab.txt) + '</p>' +
+                (cab.alerta ? '<p class="text-sm mb-3" role="alert" style="color:#FCA5A5"><i class="fa-solid fa-triangle-exclamation mr-2"></i>' + esc(cab.alerta) + '</p>' : '') +
+                (vend.syncs.length
+                    ? '<div class="overflow-x-auto" style="max-height:14rem;overflow-y:auto"><table class="adm-tabela"><thead><tr>' +
+                      '<th>Execução</th><th>Dia coletado</th><th>Status</th><th class="num">Linhas</th><th>Mensagem</th></tr></thead><tbody>' +
+                      vend.syncs.slice(0, 10).map(function (s) {
+                          var m = String(s.mensagem || '');
+                          return '<tr><td>' + esc(dataHora(s.em)) + '</td><td>' + esc(s.dia ? String(s.dia).split('-').reverse().join('/') : '—') + '</td>' +
+                              '<td>' + selo(s.status) + '</td><td class="num">' + esc(s.linhas == null ? '—' : NUM.format(s.linhas)) + '</td>' +
+                              '<td>' + esc(m.length > 120 ? m.slice(0, 120) + '…' : m) + '</td></tr>';
+                      }).join('') + '</tbody></table></div>'
+                    : '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhuma execução registrada.</p>');
+        }
+
+        alvo.innerHTML = solidCabecalho() +
+            '<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">' +
+                tile('Produtos no espelho', NUM.format(solid.produtos.length), 'recebidos do ERP') +
+                tile('Falhas recentes', NUM.format(falhas), 'nas últimas ' + NUM.format(solid.syncs.length) + ' execuções') +
+                tile('Eventos em 24h', ev24 == null ? '—' : NUM.format(ev24), solid.extra ? 'estoque e preço' : 'histórico não instalado') +
+                tile('Limite de estoque baixo', solid.extra ? NUM.format(solid.limite) + ' cx' : '—', 'alerta na Vitrine') +
+            '</div>' +
+            '<div class="adm-card p-5 mb-5"><p class="font-bold mb-1">Histórico de sincronização de produtos</p>' +
+                '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">Estoque e preços do ERP, somente leitura.</p>' +
+                (histProd
+                    ? '<div class="overflow-x-auto" style="max-height:18rem;overflow-y:auto"><table class="adm-tabela"><thead><tr>' +
+                      '<th>Concluída</th><th>Status</th><th class="num">Recebidos</th><th class="num">Presentes</th><th>Mensagem</th></tr></thead><tbody>' + histProd + '</tbody></table></div>'
+                    : '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhuma execução registrada.</p>') +
+            '</div>' +
+            '<div class="adm-card p-5 mb-5"><p class="font-bold mb-1">Sincronização de vendas</p>' +
+                '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">Saúde da rotina. Os valores vendidos ficam em Pedidos e no Dashboard de vendas.</p>' + vendaSaude + '</div>' +
+            (solid.extra ? solidBlocoEventos() + '<div class="adm-card p-5 mt-5">' + solidControleLimite() + '</div>' : '') +
+            '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">Somente leitura. O preço do ERP é apenas referência — não altera o preço do site.</p>';
+
+        alvo.querySelectorAll('[data-solid-tipo]').forEach(function (b) {
+            b.addEventListener('click', function () { solid.tipoEvento = b.getAttribute('data-solid-tipo'); desenharSolidcon(); });
+        });
+        var sv = $('#solid-limite-salvar');
+        if (sv) sv.addEventListener('click', salvarSolidLimite);
+    }
+
+    /* ---- Vitrine: estoque do ERP ao lado de cada produto do site + alertas ---- */
+    // Casa produto do site com itens do ERP SOMENTE por código explícito do catálogo
+    // (codigo_erp = id_produto ou EAN). Sem inferência por nome: SKUs do mesmo sabor
+    // (pesos/caixas diferentes) trocariam o estoque.
+    function solidCasar(prod) {
+        var cod = prod.codigo_erp ? String(prod.codigo_erp).trim() : '';
+        if (!cod) return { itens: [], via: '', motivo: 'sem código ERP' };
+        var itens = solid.produtos.filter(function (p) {
+            return String(p.id_produto) === cod || (p.eans || []).map(String).indexOf(cod) >= 0;
+        });
+        return itens.length ? { itens: itens, via: 'código', motivo: '' }
+                            : { itens: [], via: '', motivo: 'código ' + cod + ' não encontrado no ERP' };
+    }
+
+    function solidSeloSituacao(itens) {
+        if (!itens.length) return '<span class="adm-selo" style="background:rgba(255,255,255,.08);color:var(--adm-tinta-2)"><i class="fa-solid fa-link-slash"></i>Sem vínculo</span>';
+        var vivos = itens.filter(function (p) { return !solidEsgotado(p); });
+        if (!vivos.length) return '<span class="adm-selo adm-selo-cancelado"><i class="fa-solid fa-ban"></i>Esgotado</span>';
+        if (vivos.every(function (p) { return Number(p.estoque_disponivel) <= solid.limite; }))
+            return '<span class="adm-selo adm-selo-aguardando"><i class="fa-solid fa-arrow-down"></i>Estoque baixo</span>';
+        return '<span class="adm-selo adm-selo-confirmado"><i class="fa-solid fa-check"></i>Disponível</span>';
+    }
+
+    function solidTabelaPorProduto() {
+        if (solid.catalogo == null) {
+            return '<p class="text-sm" style="color:var(--adm-tinta-3)">Não foi possível ler o catálogo do site para casar com o ERP. A lista completa do ERP está logo abaixo.</p>';
+        }
+        if (!solid.catalogo.length) return '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum produto no catálogo do site.</p>';
+        var linhas = solid.catalogo.map(function (prod) {
+            var c = solidCasar(prod);
+            var chips = c.itens.map(function (p) {
+                var cx = solidCaixa(p), esg = solidEsgotado(p);
+                return '<span class="text-xs mr-3" style="white-space:nowrap;color:var(--adm-tinta-2)">' + (cx ? 'CX ' + cx : 'Pote') + ': <strong>' +
+                       esc(NUM.format(esg ? 0 : Number(p.estoque_disponivel) || 0)) + '</strong> cx</span>';
+            }).join('');
+            return '<tr><td>' + esc(prod.nome) + '</td><td>' + (chips || '<span class="text-xs" style="color:var(--adm-tinta-3)">—</span>') + '</td>' +
+                   '<td>' + solidSeloSituacao(c.itens) + '</td>' +
+                   '<td class="text-xs" style="color:var(--adm-tinta-3)">' + esc(c.via ? 'por ' + c.via : c.motivo) + '</td></tr>';
+        }).join('');
+        return '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Produto do site</th><th>Estoque no ERP</th><th>Situação</th><th>Vínculo</th></tr></thead><tbody>' +
+               linhas + '</tbody></table></div>';
+    }
+
+    function desenharVitrineErp() {
+        var alvo = $('#vitrine-erp');
+        if (!alvo) return;
+        var cab = '<div class="flex items-center gap-2 mb-4"><span class="adm-selo" style="background:rgba(168,85,247,.14);color:#D8B4FE">ERP SOLIDCON</span>' +
+                  '<p class="font-bold">Estoque por produto</p></div>';
+        if (solid.ausente) {
+            alvo.innerHTML = cab + cartaoVazio('Estoque do ERP ainda não instalado',
+                'As tabelas solidcon_produtos e solidcon_sync não existem neste banco.');
+            return;
+        }
+        if (solid.erro) {
+            alvo.innerHTML = cab + '<div class="adm-card p-6"><p class="text-sm mb-3" style="color:var(--adm-tinta-2)">Não foi possível carregar o estoque: ' + esc(solid.erro) + '</p>' +
+                '<button type="button" class="adm-botao-fantasma" id="solid-tentar">Tentar de novo</button></div>';
+            alvo.querySelector('#solid-tentar').addEventListener('click', carregarSolidcon);
+            return;
+        }
+        if (!solid.carregado) {
+            alvo.innerHTML = cab + '<div class="adm-card p-6 text-center text-sm" style="color:var(--adm-tinta-2)"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando estoque do ERP…</div>';
+            return;
+        }
         function chips(attr, atual, itens) {
             return itens.map(function (i) {
                 return '<button type="button" class="adm-chip' + (atual === i[0] ? ' is-ativo' : '') +
                        '" ' + attr + '="' + i[0] + '">' + i[1] + '</button>';
             }).join('');
         }
-        alvo.innerHTML = solidCabecalho() + (solid.extra ? solidBlocoAtencao() : '') + solidContadores() +
+        alvo.innerHTML = cab + solidCabecalho() + solidBlocoAtencao() +
+            '<div class="adm-card p-5 mb-5"><p class="font-bold mb-3">Produtos do site e estoque correspondente</p>' + solidTabelaPorProduto() +
+            '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">O vínculo usa só o código ERP do catálogo (id ou EAN do produto no SOLIDCON); sem código válido, o produto fica sem vínculo. Estoque em caixas.</p></div>' +
+            '<details class="mb-2"' + (solid.listaAberta ? ' open' : '') + '><summary class="text-sm font-bold cursor-pointer mb-3">Todos os produtos do ERP (' + NUM.format(solid.produtos.length) + ')</summary>' +
+            solidContadores() +
             '<div class="flex items-center flex-wrap gap-3 mb-4">' +
                 '<input type="search" id="solid-busca" class="adm-input" style="max-width:18rem;padding:.55rem .7rem" ' +
                     'placeholder="Buscar por nome ou código" aria-label="Buscar produto" value="' + esc(solid.busca) + '">' +
@@ -955,25 +1112,27 @@
                 '<div class="flex gap-1 flex-wrap">' +
                     chips('data-solid-cx', solid.caixa, [['todas', 'Todas as caixas'], ['24', 'CX 24'], ['48', 'CX 48']]) +
                 '</div>' +
-            '</div>' +
-            '<div id="solid-lista"></div>' + (solid.extra ? '<div class="mt-5">' + solidBlocoEventos() + '</div>' : '') +
-            '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">Somente leitura. O preço do ERP é apenas referência — não altera o preço do site.</p>';
+            '</div><div id="solid-lista"></div>' +
+            '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">Somente leitura. O preço do ERP é apenas referência — não altera o preço do site.</p></details>';
 
-        $('#solid-busca').addEventListener('input', function (ev) {
-            solid.busca = ev.target.value; desenharSolidLista();
-        });
+        var det = alvo.querySelector('details');
+        det.addEventListener('toggle', function () { solid.listaAberta = det.open; });
+        $('#solid-busca').addEventListener('input', function (ev) { solid.busca = ev.target.value; desenharSolidLista(); });
         alvo.querySelectorAll('[data-solid-sit]').forEach(function (b) {
-            b.addEventListener('click', function () { solid.situacao = b.getAttribute('data-solid-sit'); desenharSolidcon(); });
+            b.addEventListener('click', function () { solid.situacao = b.getAttribute('data-solid-sit'); solid.listaAberta = true; desenharVitrineErp(); });
         });
         alvo.querySelectorAll('[data-solid-cx]').forEach(function (b) {
-            b.addEventListener('click', function () { solid.caixa = b.getAttribute('data-solid-cx'); desenharSolidcon(); });
+            b.addEventListener('click', function () { solid.caixa = b.getAttribute('data-solid-cx'); solid.listaAberta = true; desenharVitrineErp(); });
         });
-        alvo.querySelectorAll('[data-solid-tipo]').forEach(function (b) {
-            b.addEventListener('click', function () { solid.tipoEvento = b.getAttribute('data-solid-tipo'); desenharSolidcon(); });
-        });
-        var sv = $('#solid-limite-salvar');
-        if (sv) sv.addEventListener('click', salvarSolidLimite);
         desenharSolidLista();
+    }
+
+    function desenharVitrine() {
+        var alvo = $('#painel-vitrine');
+        desenharVitrineBase();
+        alvo.insertAdjacentHTML('afterbegin', '<section id="vitrine-erp" class="mb-10"></section>' +
+            '<div class="flex items-center gap-2 mb-4"><span class="adm-selo adm-selo-confirmado">Site</span><p class="font-bold">Destaques de clientes</p></div>');
+        desenharVitrineErp();
     }
 
     function desenharSolidLista() {
@@ -1055,8 +1214,6 @@
         var baixo = solid.produtos.filter(function (p) {
             var e = Number(p.estoque_disponivel); return !solidEsgotado(p) && e > 0 && e <= lim;
         });
-        var corte = Date.now() - 86400000;
-        var ev24 = solid.eventos.filter(function (e) { return new Date(e.em).getTime() >= corte; });
 
         function lista(itens, fn) {
             if (!itens.length) return '<p class="text-xs" style="color:var(--adm-tinta-3)">Nenhum.</p>';
@@ -1070,16 +1227,15 @@
         }
         function prod(p) { return '<li>' + esc(p.nome) + ' <span style="color:var(--adm-tinta-3)">(' + esc(p.id_produto) + ')</span></li>'; }
 
-        return '<div class="adm-card p-5 mb-5"><p class="font-bold mb-4"><i class="fa-solid fa-bell mr-2" style="color:var(--adm-marca)"></i>Atenção</p>' +
-            '<div class="grid sm:grid-cols-3 gap-5">' +
+        return '<div class="adm-card p-5 mb-5"><p class="font-bold mb-4"><i class="fa-solid fa-bell mr-2" style="color:var(--adm-marca)"></i>Alertas de estoque</p>' +
+            '<div class="grid sm:grid-cols-2 gap-5">' +
             col('Esgotados', esg.length, lista(esg, prod)) +
             col('Estoque baixo (≤ ' + NUM.format(lim) + ')', baixo.length,
                 lista(baixo, function (p) {
                     return '<li>' + esc(p.nome) + ' <span style="color:var(--adm-tinta-3)">— ' + esc(NUM.format(Number(p.estoque_disponivel))) + ' cx</span></li>';
                 })) +
-            col('Eventos nas últimas 24h', ev24.length,
-                lista(ev24, function (e) { return '<li>' + solidSeloTipo(e.tipo) + ' ' + esc(e.nome) + '</li>'; })) +
-            '</div>' + solidControleLimite() + '</div>';
+            '</div><p class="text-xs mt-4 pt-3" style="border-top:1px solid var(--adm-borda);color:var(--adm-tinta-3)">' +
+            'Limite de estoque baixo: <strong>' + esc(NUM.format(lim)) + '</strong> caixas. O ajuste fica na aba Integração.</p></div>';
     }
 
     function solidControleLimite() {
@@ -1112,7 +1268,7 @@
                 return;
             }
             solid.limite = Number(r.data);
-            desenharSolidcon();
+            solidRedesenhar();
         });
     }
 
@@ -1222,14 +1378,13 @@
 
     function carregarVendas() {
         vend.carregando = true;
-        $('#painel-vendassolid').innerHTML = '<div class="adm-card p-8 text-center text-sm" style="color:var(--adm-tinta-2)">' +
-            '<i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando vendas do SOLIDCON…</div>';
+        vendRedesenhar();
 
         Promise.all([
             vendPaginar(function () { return sb.from('solidcon_vendas_por_mes').select('mes,valor_centavos,potes,dias_com_venda').order('mes', { ascending: true }); }),
             vendPaginar(function () { return sb.from('solidcon_vendas_por_dia').select('dia,valor_centavos,potes').order('dia', { ascending: true }); }),
             vendPaginar(function () { return sb.from('solidcon_vendas_familia_mes').select('mes,familia,nome_familia,formato,qtd,valor_centavos,potes').order('mes', { ascending: true }).order('familia', { ascending: true }).order('formato', { ascending: true }); }),
-            sb.from('solidcon_vendas_sync').select('status,coletado_em,em,mensagem').order('em', { ascending: false }).limit(100)
+            sb.from('solidcon_vendas_sync').select('dia,linhas,status,coletado_em,em,mensagem').order('em', { ascending: false }).limit(100)
         ]).then(function (rs) {
             vend.carregando = false;
             var falha = rs.filter(function (r) { return r.error; })[0];
@@ -1244,12 +1399,22 @@
                 var ult = vend.meses.length ? vend.meses[vend.meses.length - 1].mes : null;
                 if (!vend.mesFoco || !vend.meses.some(function (m) { return m.mes === vend.mesFoco; })) vend.mesFoco = ult;
             }
-            desenharVendasSolid();
+            vend.carregando = false;
+            vendRedesenhar();
         }).catch(function (e) {
             vend.carregando = false;
             vend.erro = String(e && e.message || e);
-            desenharVendasSolid();
+            vendRedesenhar();
         });
+    }
+
+    // Vendas do ERP aparecem em Pedidos, Dashboard de vendas e Integração (saúde).
+    function vendRedesenhar() {
+        abasParaRedesenhar.pedidos = true;
+        abasParaRedesenhar.solidcon = true;
+        if (abaAtual === 'vendas' && $('#vendas-erp')) desenharVendasErp();
+        else abasParaRedesenhar.vendas = true;
+        desenharAbaSeSuja(abaAtual);
     }
 
     function vendNum(v) { return Number(v) || 0; }
@@ -1338,8 +1503,14 @@
         return { txt: txt, alerta: alerta };
     }
 
-    function desenharVendasSolid() {
-        var alvo = $('#painel-vendassolid');
+    function desenharVendasErp() {
+        var alvo = $('#vendas-erp');
+        if (!alvo) return;
+        if (vend.carregando && !vend.carregado) {
+            alvo.innerHTML = '<div class="adm-card p-8 text-center text-sm" style="color:var(--adm-tinta-2)">' +
+                '<i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando vendas do SOLIDCON…</div>';
+            return;
+        }
         if (vend.ausente) {
             alvo.innerHTML = cartaoVazio('Vendas ainda não instaladas',
                 'As views de vendas do SOLIDCON não existem neste banco. A migração 022 está pendente de implantação.');
@@ -1456,7 +1627,222 @@
             '</div>' +
             '<p class="text-xs mt-4" style="color:var(--adm-tinta-3)">Somente leitura. Valores do ERP SOLIDCON, em reais.</p>';
 
-        $('#vend-mes').addEventListener('change', function (ev) { vend.mesFoco = ev.target.value; desenharVendasSolid(); });
+        $('#vend-mes').addEventListener('change', function (ev) { vend.mesFoco = ev.target.value; desenharVendasErp(); });
+    }
+
+
+    /* ===================================================================
+     * Painel por assunto — junção site x ERP SOLIDCON (somente leitura)
+     * Cada aba de assunto ganha um bloco do ERP, com etiqueta de origem.
+     * =================================================================== */
+    var SELO_ERP = '<span class="adm-selo" style="background:rgba(168,85,247,.14);color:#D8B4FE">ERP SOLIDCON</span>';
+    var SELO_SITE = '<span class="adm-selo adm-selo-confirmado">Site</span>';
+
+    // Carrega sob demanda o que a aba precisa do ERP (uma vez; "Atualizar" força de novo).
+    function carregarErpDaAba(qual, forcar) {
+        function precisa(o) { return forcar ? !o.carregando : (!o.carregado && !o.carregando && !o.ausente && !o.erro); }
+        if ((qual === 'solidcon' || qual === 'vitrine') && precisa(solid)) carregarSolidcon();
+        if ((qual === 'solidcon' || qual === 'pedidos' || qual === 'vendas') && precisa(vend)) carregarVendas();
+        if (qual === 'clientes' && precisa(scli)) carregarSolidClientes();
+    }
+    function recarregarErp() { carregarErpDaAba(abaAtual, true); }
+
+    // ---- Pedidos: vendas registradas no ERP (totais, não pedidos) ----
+    function desenharPedidos() {
+        var alvo = $('#painel-pedidos');
+        desenharPedidosBase();
+        alvo.insertAdjacentHTML('beforeend', '<section id="pedidos-erp" class="mt-10"></section>');
+        desenharPedidosErp();
+    }
+
+    function desenharPedidosErp() {
+        var alvo = $('#pedidos-erp');
+        if (!alvo) return;
+        var cab = '<div class="flex items-center gap-2 mb-2">' + SELO_ERP + '<p class="font-bold">Vendas registradas no SOLIDCON</p></div>' +
+            '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">O ERP informa apenas o total vendido por dia e por produto — ele não traz pedido nem cliente. ' +
+            'Por isso estes números não se cruzam linha a linha com os pedidos do site acima.</p>';
+        if (vend.carregando && !vend.carregado) {
+            alvo.innerHTML = cab + '<div class="adm-card p-6 text-center text-sm" style="color:var(--adm-tinta-2)"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando vendas do SOLIDCON…</div>';
+            return;
+        }
+        if (vend.ausente) {
+            alvo.innerHTML = cab + cartaoVazio('Vendas do ERP ainda não instaladas', 'As views solidcon_vendas_* não existem neste banco.');
+            return;
+        }
+        if (vend.erro) {
+            alvo.innerHTML = cab + '<div class="adm-card p-6"><p class="text-sm mb-3" style="color:var(--adm-tinta-2)">Não foi possível carregar: ' + esc(vend.erro) + '</p>' +
+                '<button type="button" class="adm-botao-fantasma" id="pedidos-erp-tentar">Tentar de novo</button></div>';
+            $('#pedidos-erp-tentar').addEventListener('click', carregarVendas);
+            return;
+        }
+        if (!vend.carregado) return;
+        if (!vend.meses.length) {
+            alvo.innerHTML = cab + cartaoVazio('Nenhuma venda sincronizada ainda', 'Quando a rotina de vendas rodar, os totais aparecem aqui.');
+            return;
+        }
+
+        var ult = vend.meses[vend.meses.length - 1];
+        var ant = vend.meses.filter(function (m) { return m.mes === vendMesAnterior(ult.mes); })[0];
+        var ult7 = vend.dias.slice(-7).reduce(function (a, d) { return a + vendNum(d.valor_centavos); }, 0);
+        var ultimosDias = vend.dias.slice(-10).reverse();
+        var porSabor = {};
+        vend.fam.filter(function (f) { return f.mes === ult.mes; }).forEach(function (x) {
+            var o = porSabor[x.familia] || (porSabor[x.familia] = { rot: vendLimparNome(x.nome_familia), v: 0 });
+            o.v += vendNum(x.valor_centavos);
+        });
+        var top = Object.keys(porSabor).map(function (k) { return porSabor[k]; })
+            .filter(function (s) { return s.v > 0; }).sort(function (a, b) { return b.v - a.v; }).slice(0, 5);
+        var fmtDia = function (iso) { var q = String(iso).split('-'); return q[2] + '/' + q[1] + '/' + q[0]; };
+        function kpi(r, v, nota) {
+            return '<div class="adm-card p-4"><p class="adm-tile-rotulo mb-1">' + r + '</p><p class="adm-tile-valor">' + esc(v) + '</p>' +
+                   (nota ? '<p class="text-xs mt-1" style="color:var(--adm-tinta-3)">' + esc(nota) + '</p>' : '') + '</div>';
+        }
+        var podeVerGraficos = papel !== 'vendedor';
+
+        alvo.innerHTML = cab +
+            '<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">' +
+                kpi(vendMesRotulo(ult.mes), brl(vendNum(ult.valor_centavos)), ult.mes >= vendMesAtual() ? 'mês em andamento' : 'mês fechado') +
+                kpi('Mês anterior', ant ? brl(vendNum(ant.valor_centavos)) : '—', ant ? vendMesRotulo(ant.mes) : 'sem histórico') +
+                kpi('Últimos 7 dias', brl(ult7), 'dias com dado no ERP') +
+                kpi('Potes no mês', NUM.format(Math.round(vendNum(ult.potes))), 'caixas contadas em potes') +
+            '</div>' +
+            '<div class="grid lg:grid-cols-2 gap-5">' +
+                '<div class="adm-card p-5"><p class="font-bold mb-3">Total por dia</p>' +
+                    '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Dia</th><th class="num">Valor</th><th class="num">Potes</th></tr></thead><tbody>' +
+                    ultimosDias.map(function (d) {
+                        return '<tr><td>' + esc(fmtDia(d.dia)) + '</td><td class="num">' + esc(brl(vendNum(d.valor_centavos))) + '</td><td class="num">' + esc(NUM.format(Math.round(vendNum(d.potes)))) + '</td></tr>';
+                    }).join('') + '</tbody></table></div></div>' +
+                '<div class="adm-card p-5"><p class="font-bold">Top 5 produtos</p><p class="text-xs mb-3" style="color:var(--adm-tinta-3)">' + esc(vendMesRotulo(ult.mes)) + '</p>' +
+                    vendLista(top, vendNum(ult.valor_centavos)) + '</div>' +
+            '</div>' +
+            (podeVerGraficos ? '<p class="text-xs mt-4" style="color:var(--adm-tinta-3)">Gráficos e comparativos completos: <button type="button" class="underline" id="pedidos-erp-ir" style="color:var(--adm-marca)">Dashboard de vendas</button>.</p>' : '');
+        var ir = $('#pedidos-erp-ir');
+        if (ir) ir.addEventListener('click', function () { trocarAba('vendas'); });
+    }
+
+    // ---- Dashboard de vendas: Site x ERP ----
+    function desenharVendas() {
+        var alvo = $('#painel-vendas');
+        alvo.innerHTML =
+            '<section><div class="flex items-center gap-2 mb-4">' + SELO_SITE + '<p class="font-bold text-lg">Vendas pelo site</p></div><div id="vendas-site"></div></section>' +
+            '<section class="mt-12 pt-8" style="border-top:1px solid var(--adm-borda)"><div class="flex items-center gap-2 mb-1">' + SELO_ERP +
+                '<p class="font-bold text-lg">Vendas no ERP</p></div>' +
+                '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Total de todas as vendas registradas no SOLIDCON (inclui o que não veio pelo site).</p><div id="vendas-erp"></div></section>';
+        desenharVendasBase();
+        desenharVendasErp();
+    }
+
+    // ---- Clientes: cadastros no ERP (tabela solidcon_clientes, ainda a instalar) ----
+    var scli = { carregado: false, carregando: false, ausente: false, erro: null, lista: [], docs: null, busca: '', mostrar: 50 };
+
+    function docDigitos(s) { return String(s == null ? '' : s).replace(/\D/g, ''); }
+
+    function carregarSolidClientes() {
+        scli.carregando = true;
+        scliRedesenhar();
+        vendPaginar(function () {
+            return sb.from('solidcon_clientes')
+                .select('documento,tipo,nome,telefone,celular,email,cidade,bairro,estado,coletado_em')
+                .order('nome', { ascending: true });
+        }).then(function (r) {
+            scli.carregando = false;
+            scli.ausente = false; scli.erro = null;
+            if (r.error) {
+                if (solidTabelaAusente(r.error)) scli.ausente = true; else scli.erro = String(r.error.message || r.error);
+                scli.carregado = false; scli.docs = null;
+            } else {
+                scli.lista = r.data || [];
+                scli.docs = {};
+                scli.lista.forEach(function (c) { var d = docDigitos(c.documento); if (d) scli.docs[d] = true; });
+                scli.carregado = true;
+            }
+            scliRedesenhar();
+        }).catch(function (e) {
+            scli.carregando = false; scli.erro = String(e && e.message || e); scliRedesenhar();
+        });
+    }
+
+    function scliRedesenhar() {
+        abasParaRedesenhar.clientes = true;
+        desenharAbaSeSuja(abaAtual);
+    }
+
+    // true se o documento (CNPJ/CPF) do cliente do site já existe no ERP
+    function jaNoErp(doc) {
+        var d = docDigitos(doc);
+        return !!(scli.docs && d && scli.docs[d]);
+    }
+
+    function desenharClientes() {
+        var alvo = $('#painel-clientes');
+        desenharClientesBase();
+        alvo.insertAdjacentHTML('beforeend', '<section id="clientes-erp" class="mt-10"></section>');
+        desenharClientesErp();
+    }
+
+    function desenharClientesErp() {
+        var alvo = $('#clientes-erp');
+        if (!alvo) return;
+        var cab = '<div class="flex items-center gap-2 mb-2">' + SELO_ERP + '<p class="font-bold">Cadastros no SOLIDCON</p></div>' +
+            '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Clientes que já existem no ERP (somente leitura). Quem aparece nas duas listas recebe o aviso “Já no ERP” na lista do site.</p>';
+        if (scli.carregando && !scli.carregado) {
+            alvo.innerHTML = cab + '<div class="adm-card p-6 text-center text-sm" style="color:var(--adm-tinta-2)"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando cadastros do SOLIDCON…</div>';
+            return;
+        }
+        if (scli.ausente) {
+            alvo.innerHTML = cab + cartaoVazio('Cadastros do SOLIDCON ainda não instalados',
+                'A tabela solidcon_clientes ainda não existe neste banco. Quando a rotina de clientes for instalada, os cadastros do ERP aparecem aqui.');
+            return;
+        }
+        if (scli.erro) {
+            alvo.innerHTML = cab + '<div class="adm-card p-6"><p class="text-sm mb-3" style="color:var(--adm-tinta-2)">Não foi possível carregar: ' + esc(scli.erro) + '</p>' +
+                '<button type="button" class="adm-botao-fantasma" id="scli-tentar">Tentar de novo</button></div>';
+            $('#scli-tentar').addEventListener('click', carregarSolidClientes);
+            return;
+        }
+        if (!scli.carregado) return;
+        if (!scli.lista.length) {
+            alvo.innerHTML = cab + cartaoVazio('Nenhum cadastro sincronizado ainda', 'Quando a rotina de clientes rodar, os cadastros do ERP aparecem aqui.');
+            return;
+        }
+        alvo.innerHTML = cab +
+            '<div class="flex items-center flex-wrap gap-3 mb-4">' +
+                '<input type="search" id="scli-busca" class="adm-input" style="max-width:18rem;padding:.55rem .7rem" placeholder="Buscar por nome ou documento" aria-label="Buscar cadastro do ERP" value="' + esc(scli.busca) + '">' +
+            '</div><div id="scli-lista"></div>';
+        $('#scli-busca').addEventListener('input', function (ev) { scli.busca = ev.target.value; scli.mostrar = 50; desenharScliLista(); });
+        desenharScliLista();
+    }
+
+    function desenharScliLista() {
+        var alvo = $('#scli-lista');
+        if (!alvo) return;
+        var q = scli.busca.trim().toLowerCase(), qd = docDigitos(q);
+        var lista = scli.lista.filter(function (c) {
+            if (!q) return true;
+            return String(c.nome || '').toLowerCase().indexOf(q) >= 0 || (qd && docDigitos(c.documento).indexOf(qd) >= 0);
+        });
+        if (!lista.length) { alvo.innerHTML = cartaoVazio('Nenhum cadastro com essa busca', 'Tente outro nome ou documento.'); return; }
+        var siteDocs = {};
+        listaClientesCombinada().forEach(function (c) { var d = docDigitos(c.cnpj || c.cpf); if (d) siteDocs[d] = true; });
+        var parte = lista.slice(0, scli.mostrar);
+        alvo.innerHTML = '<div class="adm-card p-5"><div class="overflow-x-auto"><table class="adm-tabela"><thead><tr>' +
+            '<th>Nome</th><th>Documento</th><th>Contato</th><th>Local</th><th>Coletado</th></tr></thead><tbody>' +
+            parte.map(function (c) {
+                var tipo = String(c.tipo || '').toUpperCase();
+                var contato = [c.telefone, c.celular].filter(Boolean).join(' / ');
+                var local = [c.bairro, c.cidade].filter(Boolean).join(', ') + (c.estado ? '/' + c.estado : '');
+                var noSite = siteDocs[docDigitos(c.documento)];
+                return '<tr><td>' + esc(c.nome || '—') + ' ' + SELO_ERP +
+                       (noSite ? ' <span class="adm-selo adm-selo-confirmado" title="Também é cliente do site">Também no site</span>' : '') + '</td>' +
+                    '<td>' + (tipo ? '<span class="text-xs" style="color:var(--adm-tinta-3)">' + esc(tipo) + '</span> ' : '') + esc(c.documento || '—') + '</td>' +
+                    '<td>' + esc(contato || '—') + (c.email ? '<br><span class="text-xs" style="color:var(--adm-tinta-3)">' + esc(c.email) + '</span>' : '') + '</td>' +
+                    '<td>' + esc(local || '—') + '</td>' +
+                    '<td>' + esc(c.coletado_em ? dataHora(c.coletado_em) : '—') + '</td></tr>';
+            }).join('') + '</tbody></table></div>' +
+            '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">' + NUM.format(parte.length) + ' de ' + NUM.format(lista.length) + ' cadastros</p>' +
+            (lista.length > parte.length ? '<button type="button" class="adm-botao-fantasma mt-3" id="scli-mais">Mostrar mais</button>' : '') + '</div>';
+        var mais = $('#scli-mais');
+        if (mais) mais.addEventListener('click', function () { scli.mostrar += 50; desenharScliLista(); });
     }
 
 
@@ -1741,7 +2127,7 @@
         { status: 'cancelado',  titulo: 'Cancelado' }
     ];
 
-    function desenharPedidos() {
+    function desenharPedidosBase() {
         var alvo = $('#painel-pedidos');
         var filtrados = dados.pedidos.filter(pedidoPassaNoFiltro);
 
@@ -2346,7 +2732,7 @@
         return true;
     }
 
-    function desenharClientes() {
+    function desenharClientesBase() {
         var alvo = $('#painel-clientes');
         var todos = listaClientesCombinada();
 
@@ -2459,7 +2845,9 @@
 
     function linhaCliente(c) {
         return '<tr>' +
-            '<td>' + esc(c.nome) + (c.ativo ? '' : ' <span class="adm-selo adm-selo-cancelado" style="margin-left:.4rem">Inativo</span>') + '</td>' +
+            '<td>' + esc(c.nome) + ' ' + SELO_SITE +
+                (jaNoErp(c.cnpj || c.cpf) ? ' <span class="adm-selo" style="background:rgba(168,85,247,.14);color:#D8B4FE" title="Este documento já tem cadastro no SOLIDCON"><i class="fa-solid fa-link"></i>Já no ERP</span>' : '') +
+                (c.ativo ? '' : ' <span class="adm-selo adm-selo-cancelado" style="margin-left:.4rem">Inativo</span>') + '</td>' +
             '<td>' + esc(c.telefone || '—') + '</td>' +
             '<td>' + esc(c.tipo) + '</td>' +
             '<td class="num">' + NUM.format(c.pedidos) + '</td>' +
@@ -2712,8 +3100,8 @@
      * visitas_por_regiao) já existem desde as migrações 007 e 008 — nasceram
      * pensando exatamente nesta tela, que só chegou agora.
      * =================================================================== */
-    function desenharVendas() {
-        var alvo = $('#painel-vendas');
+    function desenharVendasBase() {
+        var alvo = $('#vendas-site');
 
         if (!dados.resumo.length) {
             alvo.innerHTML = cartaoVazio('Nenhuma venda ainda',
@@ -3031,7 +3419,7 @@
         return v.status === 'aprovado' && diasRestantes(v.data_fim) > 0;
     }
 
-    function desenharVitrine() {
+    function desenharVitrineBase() {
         var alvo = $('#painel-vitrine');
         var lista = dados.vitrines;
 
