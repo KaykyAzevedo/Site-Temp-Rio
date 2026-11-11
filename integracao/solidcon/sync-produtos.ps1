@@ -32,6 +32,9 @@ $VendasFalhou = $false
 $ClientesFalhou = $false
 $FichaFalhou = $false
 $VendasClientesFalhou = $false
+$VcHttpStatus = $null
+# Teto de GETs GetVendasResumo por execucao (blocos + divisoes por HTTP 500).
+$VendasClientesMaxGets = 60
 $EstoqueOk = $false
 $jsonComSaldo = $null
 $jsonSemSaldo = $null
@@ -920,17 +923,36 @@ function Ler-VendasClientesErp([string]$Inicio, [string]$Fim) {
     if ($Inicio -notmatch '^\d{4}-\d{2}-\d{2}$' -or $Fim -notmatch '^\d{4}-\d{2}-\d{2}$') {
         throw 'datas vendas-clientes invalidas'
     }
-    # Unica rota de vendas por cliente autorizada. Sem proxy ou redirecionamento.
+    # Unica rota de vendas por cliente autorizada. GET, sem proxy ou redirecionamento.
     $url = ('http://localhost:5100/api/Vendas/CNPJ/63671696000106/INICIO/{0}/FIM/{1}/GetVendasResumo' -f $Inicio, $Fim)
     $pedido = [Net.HttpWebRequest]::Create($url)
     $pedido.Method = 'GET'; $pedido.Proxy = $null; $pedido.AllowAutoRedirect = $false
     $pedido.Timeout = 120000; $pedido.ReadWriteTimeout = 120000; $pedido.Accept = 'application/json'
-    $resposta = $pedido.GetResponse()
+    $script:VcHttpStatus = $null
     try {
-        if ([int]$resposta.StatusCode -ne 200) { throw 'status vendas-clientes inesperado' }
+        $resposta = $pedido.GetResponse()
+    } catch {
+        # 4xx/5xx: guardar status e corpo para a decisao exata; sem resposta (rede/timeout) = falha.
+        # PS 5.1 embrulha a WebException (MethodInvocationException): procurar na cadeia.
+        $ex = $_.Exception
+        while ($null -ne $ex -and $ex -isnot [Net.WebException]) { $ex = $ex.InnerException }
+        if ($null -eq $ex -or $null -eq $ex.Response) { throw 'ERP vendas-clientes sem resposta' }
+        $resposta = $ex.Response
+    }
+    try {
+        $script:VcHttpStatus = [int]$resposta.StatusCode
         $leitor = New-Object IO.StreamReader($resposta.GetResponseStream(), [Text.Encoding]::UTF8, $true)
-        try { return $leitor.ReadToEnd() } finally { $leitor.Dispose() }
+        try { $corpo = $leitor.ReadToEnd() } finally { $leitor.Dispose() }
     } finally { $resposta.Dispose() }
+    return [pscustomobject]@{ status = $script:VcHttpStatus; corpo = [string]$corpo }
+}
+
+# So 200 com corpo array segue (periodo sem vendas = 200 "[]"). Todo o resto lanca (exit 6).
+# HTTP 500 e tratado antes, em Sincronizar-VendasClientes (divisao do intervalo).
+function Corpo-VendasClientes($Http) {
+    $corpo = if ($null -eq $Http.corpo) { '' } else { [string]$Http.corpo }
+    if ($Http.status -eq 200 -and $corpo.TrimStart().StartsWith('[')) { return $corpo }
+    throw 'resposta vendas-clientes nao reconhecida'
 }
 
 function Sincronizar-VendasClientes {
@@ -968,6 +990,9 @@ function Sincronizar-VendasClientes {
         $totalItensSincronizados = 0
         $totalCentavosSincronizados = [decimal]0
         $itensArquivoUsados = 0
+        $intervalosGravados = 0
+        $getsErp = 0
+        $diasComErroErp = New-Object Collections.ArrayList
         for ($b = 0; $b -lt $blocos.Count; $b++) {
             $bInicio = [string]$blocos[$b].Inicio
             $bFim = [string]$blocos[$b].Fim
@@ -975,49 +1000,70 @@ function Sincronizar-VendasClientes {
                 throw 'bloco vendas-clientes invalido'
             }
 
-            $faseVc = 'leitura'
-            if ($ArquivoVendasClientes) {
-                $itensBloco = @($itensArquivo | Where-Object { $_.dia -ge $bInicio -and $_.dia -le $bFim })
-                [decimal]$somaBloco = 0
-                foreach ($it in $itensBloco) { $somaBloco += $it.valor_centavos }
-                $itensArquivoUsados += $itensBloco.Count
-                $normal = [pscustomobject]@{ itens = $itensBloco; valor_total_centavos = [long]$somaBloco; sem_documento = 0 }
-            } else {
-                $jsonErp = Ler-VendasClientesErp $bInicio $bFim
-                $faseVc = 'normalizacao'
-                $normal = Normalizar-VendasClientes $jsonErp $bInicio $bFim
-            }
-
-            $coleta = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", $Invariant)
-            $execucao = [guid]::NewGuid().ToString('D')
-
-            if ($Real) {
-                $faseVc = 'rpc'
-                if (-not $script:Token) { $script:Token = Entrar-Supabase }
-                $r = Chamar-Rpc 'solidcon_receber_vendas_clientes' @{
-                    p_inicio      = $bInicio
-                    p_fim         = $bFim
-                    p_itens       = @($normal.itens)
-                    p_coletado_em = $coleta
-                    p_execucao_id = $execucao
+            # Pilha de sub-intervalos: HTTP 500 divide o intervalo ao meio ate 1 dia.
+            # Primeira metade sempre processada antes (ordem cronologica).
+            $pilha = New-Object Collections.Stack
+            $pilha.Push([pscustomobject]@{ Inicio = $bInicio; Fim = $bFim })
+            while ($pilha.Count -gt 0) {
+                $iv = $pilha.Pop()
+                $faseVc = 'leitura'
+                if ($ArquivoVendasClientes) {
+                    $itensBloco = @($itensArquivo | Where-Object { $_.dia -ge $iv.Inicio -and $_.dia -le $iv.Fim })
+                    [decimal]$somaBloco = 0
+                    foreach ($it in $itensBloco) { $somaBloco += $it.valor_centavos }
+                    $itensArquivoUsados += $itensBloco.Count
+                    $normal = [pscustomobject]@{ itens = $itensBloco; valor_total_centavos = [long]$somaBloco; sem_documento = 0 }
+                } else {
+                    if ($getsErp -ge $VendasClientesMaxGets) { throw 'teto de GETs vendas-clientes' }
+                    # Pausa de 700ms entre GETs ao ERP (blocos e sub-intervalos).
+                    if ($getsErp -gt 0) { Start-Sleep -Milliseconds 700 }
+                    $getsErp++
+                    $http = Ler-VendasClientesErp $iv.Inicio $iv.Fim
+                    if ($http.status -eq 500) {
+                        if ($iv.Inicio -ceq $iv.Fim) {
+                            # Dia que quebra o ERP: pulado, sem RPC; dados ja gravados desse dia ficam.
+                            [void]$diasComErroErp.Add($iv.Inicio)
+                            Log ('AVISO vendas-clientes ERP http=500 dia={0}; dia pulado, dados existentes preservados.' -f $iv.Inicio)
+                            continue
+                        }
+                        $d0 = [DateTime]::ParseExact($iv.Inicio, 'yyyy-MM-dd', $Invariant)
+                        $d1 = [DateTime]::ParseExact($iv.Fim, 'yyyy-MM-dd', $Invariant)
+                        $meio = $d0.AddDays([Math]::Floor(($d1 - $d0).TotalDays / 2))
+                        $pilha.Push([pscustomobject]@{ Inicio = $meio.AddDays(1).ToString('yyyy-MM-dd', $Invariant); Fim = $iv.Fim })
+                        $pilha.Push([pscustomobject]@{ Inicio = $iv.Inicio; Fim = $meio.ToString('yyyy-MM-dd', $Invariant) })
+                        continue
+                    }
+                    $jsonErp = Corpo-VendasClientes $http
+                    $faseVc = 'normalizacao'
+                    $normal = Normalizar-VendasClientes $jsonErp $iv.Inicio $iv.Fim
                 }
-                if ($r.status -cne 'ok' -or $r.execucao_id -cne $execucao -or
-                    $r.inicio -cne $bInicio -or $r.fim -cne $bFim -or
-                    $r.linhas -ne @($normal.itens).Count -or
-                    $r.valor_total_centavos -ne $normal.valor_total_centavos) {
-                    throw 'vendas-clientes nao confirmadas pela RPC'
+
+                $coleta = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", $Invariant)
+                $execucao = [guid]::NewGuid().ToString('D')
+
+                if ($Real) {
+                    $faseVc = 'rpc'
+                    if (-not $script:Token) { $script:Token = Entrar-Supabase }
+                    $r = Chamar-Rpc 'solidcon_receber_vendas_clientes' @{
+                        p_inicio      = $iv.Inicio
+                        p_fim         = $iv.Fim
+                        p_itens       = @($normal.itens)
+                        p_coletado_em = $coleta
+                        p_execucao_id = $execucao
+                    }
+                    if ($r.status -cne 'ok' -or $r.execucao_id -cne $execucao -or
+                        $r.inicio -cne $iv.Inicio -or $r.fim -cne $iv.Fim -or
+                        $r.linhas -ne @($normal.itens).Count -or
+                        $r.valor_total_centavos -ne $normal.valor_total_centavos) {
+                        throw 'vendas-clientes nao confirmadas pela RPC'
+                    }
+                } else {
+                    $faseVc = 'saida-teste'
+                    Salvar-Json @($normal.itens) (Join-Path $Pasta ('vendas-clientes-normalizadas-' + $iv.Inicio + '_' + $iv.Fim + '.json'))
                 }
-            } else {
-                $faseVc = 'saida-teste'
-                Salvar-Json @($normal.itens) (Join-Path $Pasta ('vendas-clientes-normalizadas-' + $bInicio + '_' + $bFim + '.json'))
-            }
-
-            $totalItensSincronizados += @($normal.itens).Count
-            $totalCentavosSincronizados += $normal.valor_total_centavos
-
-            # Pausa de 700ms entre blocos mensais no ERP
-            if (-not $ArquivoVendasClientes -and ($b + 1) -lt $blocos.Count) {
-                Start-Sleep -Milliseconds 700
+                $intervalosGravados++
+                $totalItensSincronizados += @($normal.itens).Count
+                $totalCentavosSincronizados += $normal.valor_total_centavos
             }
         }
         if ($ArquivoVendasClientes -and $itensArquivoUsados -ne $itensArquivo.Count) {
@@ -1029,18 +1075,28 @@ function Sincronizar-VendasClientes {
             $faseVc = 'saida-teste'
             Salvar-Json ([ordered]@{
                 blocos               = $blocos.Count
+                intervalos_gravados  = $intervalosGravados
+                gets_erp             = $getsErp
                 itens_total          = $totalItensSincronizados
                 valor_total_centavos = [long]$totalCentavosSincronizados
+                dias_com_erro_erp    = @($diasComErroErp)
                 execucao_id          = $ExecucaoId
             }) (Join-Path $Pasta 'vendas-clientes-resumo.json')
         }
 
-        Log ('OK vendas-clientes blocos={0} cupons_clientes={1} total_centavos={2}' -f $blocos.Count, $totalItensSincronizados, [long]$totalCentavosSincronizados)
+        if ($diasComErroErp.Count -gt 0) {
+            Log ('AVISO vendas-clientes dias_com_erro_erp={0} dias={1}' -f $diasComErroErp.Count, ($diasComErroErp -join ','))
+            # Nada gravado e so dias com erro: falha (exit 6). Com algo gravado: exit 0 com aviso.
+            if ($intervalosGravados -eq 0) { $faseVc = 'erp-500'; throw 'nenhum intervalo gravado' }
+        }
+        Log ('OK vendas-clientes blocos={0} intervalos={1} gets={2} cupons_clientes={3} total_centavos={4}' -f $blocos.Count, $intervalosGravados, $getsErp, $totalItensSincronizados, [long]$totalCentavosSincronizados)
     } catch {
         $script:VendasClientesFalhou = $true
         if ($faseVc -ceq 'rpc') { $script:Token = $null }
-        # Mensagem fixa por fase: nunca $_ (poderia conter documento/valor recebido).
-        try { Log ('ERRO vendas-clientes fase={0}; outros fluxos preservados.' -f $faseVc) } catch {}
+        # Mensagem fixa por fase: nunca $_ nem corpo (poderia conter documento/valor recebido).
+        # So o numero do status HTTP: diagnostico de erro do ERP.
+        $httpLog = if ($null -ne $script:VcHttpStatus) { ' http=' + [int]$script:VcHttpStatus } else { '' }
+        try { Log ('ERRO vendas-clientes fase={0}{1}; outros fluxos preservados.' -f $faseVc, $httpLog) } catch {}
     }
 }
 
