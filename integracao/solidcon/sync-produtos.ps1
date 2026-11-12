@@ -448,13 +448,25 @@ function Texto-Cliente($Valor, [int]$Limite, [bool]$Obrigatorio = $false) {
     return $texto
 }
 
+function Endereco-Opcional($Valor, [int]$Limite) {
+    # 027: endereco e opcional. Valor de tipo/tamanho inesperado vira null em vez de derrubar a coleta.
+    if ($null -eq $Valor) { return $null }
+    if ($Valor -is [string]) { $t = $Valor }
+    elseif ($Valor -is [int] -or $Valor -is [long] -or $Valor -is [decimal] -or $Valor -is [double]) { $t = ([IFormattable]$Valor).ToString($null, $Invariant) }
+    else { $script:EnderecoDescartados++; return $null }
+    $t = ($t -replace '[\x00-\x1F\x7F]', ' ').Trim()
+    if (-not $t) { return $null }
+    if ($t.Length -gt $Limite) { $script:EnderecoDescartados++; return $null }
+    return $t
+}
+
 function Normalizar-Clientes([string]$Json) {
     if (-not $Json.TrimStart().StartsWith('[') -or $Json.Length -gt 32MB) { throw 'resposta clientes invalida' }
     # PS 5.1 pode devolver um unico objeto que e o array inteiro. Desembrulhar.
     $linhas = @(ConvertFrom-Json -InputObject $Json)
     if ($linhas.Count -eq 1 -and $linhas[0] -is [array]) { $linhas = @($linhas[0]) }
     if ($linhas.Count -eq 0 -or $linhas.Count -gt 10000) { throw 'quantidade clientes invalida' }
-    $vistos = @{}; $itens = New-Object Collections.ArrayList
+    $vistos = @{}; $itens = New-Object Collections.ArrayList; $script:EnderecoDescartados = 0
     # Digitos verificadores (modulo 11) de CPF/CNPJ: p1/p2 sao os pesos dos 2 DVs.
     $DvValido = {
         param([string]$d, [int[]]$p1, [int[]]$p2)
@@ -501,16 +513,20 @@ function Normalizar-Clientes([string]$Json) {
         $logradouro = $null; $numero = $null; $complemento = $null; $cep = $null
         if ($null -ne $endereco -and $tipo -ceq 'cnpj') {
             # 027: endereco SO de pessoa juridica (limites do vmEndereco do ERP). CPF nunca le/envia.
-            $logradouro = Texto-Cliente (Campo-Cliente $endereco 'logradouro') 100
-            $numero = Texto-Cliente (Campo-Cliente $endereco 'numero') 30
-            $complemento = Texto-Cliente (Campo-Cliente $endereco 'complemento') 60
+            $logradouro = Endereco-Opcional (Campo-Cliente $endereco 'logradouro') 100
+            $numero = Endereco-Opcional (Campo-Cliente $endereco 'numero') 30
+            $complemento = Endereco-Opcional (Campo-Cliente $endereco 'complemento') 60
             $cepBruto = Campo-Cliente $endereco 'cep'
-            if ($null -ne $cepBruto) {
-                if ($cepBruto -isnot [string]) { throw 'cep cliente invalido' }
-                # So digitos, sem completar zeros: exatamente 8 ou null.
-                $cepDig = $cepBruto -replace '[^0-9]', ''
-                if ($cepDig.Length -eq 8) { $cep = $cepDig }
-            }
+            if ($cepBruto -is [int] -or $cepBruto -is [long]) {
+                # CEP numerico perde zero a esquerda: so inteiro de 7 ou 8 digitos.
+                if ($cepBruto -ge 1000000 -and $cepBruto -le 99999999) { $cep = ([long]$cepBruto).ToString('00000000', $Invariant) }
+                else { $script:EnderecoDescartados++ }
+            } elseif ($cepBruto -is [string]) {
+                # Texto: so 00000000, 00000-000 ou 00.000-000.
+                $cepLimpo = $cepBruto.Trim()
+                if ($cepLimpo -cmatch '^[0-9]{2}\.?[0-9]{3}-?[0-9]{3}$') { $cep = $cepLimpo -replace '[^0-9]', '' }
+                elseif ($cepLimpo) { $script:EnderecoDescartados++ }
+            } elseif ($null -ne $cepBruto) { $script:EnderecoDescartados++ }
         }
         if ($null -ne $endereco) {
             $cidade = Texto-Cliente (Campo-Cliente $endereco 'cidade') 100
@@ -622,7 +638,7 @@ function Sincronizar-Clientes {
             linhas=$normal.itens.Count; coletado_em=$coleta; execucao_id=$execucao
         }) $estadoPathClientes
         if ($reservaGravada) { $consulta.status='ok'; Salvar-Json $consulta $consultaPath }
-        Log ('OK clientes modo={0} linhas={1} execucao={2} coletado_em={3}' -f $Cfg.modo,$normal.itens.Count,$execucao,$coleta)
+        Log ('OK clientes modo={0} linhas={1} com_endereco={4} endereco_descartados={5} execucao={2} coletado_em={3}' -f $Cfg.modo,$normal.itens.Count,$execucao,$coleta,@($normal.itens | Where-Object { $_.logradouro -or $_.cep }).Count,$script:EnderecoDescartados)
     } catch {
         $script:ClientesFalhou = $true
         if ($faseClientes -ceq 'rpc') { $script:Token = $null }
@@ -630,7 +646,10 @@ function Sincronizar-Clientes {
             try { $consulta.status='erro'; Salvar-Json $consulta $consultaPath } catch {}
         }
         # Nunca corpo ERP/erro bruto: pode conter dado pessoal ou credencial.
-        try { Log ('ERRO clientes fase={0}; estoque e vendas preservados; sem novo GET hoje.' -f $faseClientes) } catch {}
+        # So mensagens fixas proprias (lista exata) vao para o log; qualquer outra vira 'excecao'.
+        $motivosFixos = @('resposta clientes invalida','quantidade clientes invalida','cliente invalido','documento ausente ou impreciso','documento invalido','tipo cliente invalido','tipo e documento divergentes','documento duplicado','endereco invalido','campo cliente obrigatorio','campo cliente invalido','estado cliente invalido','payload clientes fora do limite','status clientes inesperado','estado clientes invalido','estado clientes futuro')
+        $motivo = [string]$_.Exception.Message; if ($motivosFixos -cnotcontains $motivo) { $motivo = 'excecao' }
+        try { Log ('ERRO clientes fase={0} motivo={1}; estoque e vendas preservados; sem novo GET hoje.' -f $faseClientes, $motivo) } catch {}
     }
 }
 
