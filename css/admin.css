@@ -780,3 +780,92 @@ body.admin {
     #tela-painel header .adm-rotulo-painel, #tela-painel header .adm-txt-btn { display: none; }
     #tela-painel header .flex { gap: 0.5rem; }
 }
+
+/* =====================================================================
+ * P5 — Polimento visual: menu recolhido, animações de entrada, estados vazios discretos.
+ * ===================================================================== */
+
+/* Estados vazios: uma linha só, sem altura de cartão */
+.adm-vazio-linha { display: flex; align-items: center; gap: 0.6rem; margin: 0.15rem 0; padding: 0.3rem 0; font-size: 0.8125rem; color: var(--adm-tinta-3); min-width: 0; }
+.adm-vazio-linha .adm-selo { flex-shrink: 0; }
+.adm-vazio-titulo { color: var(--adm-tinta-2); white-space: nowrap; flex-shrink: 0; }
+.adm-vazio-texto { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+@media (max-width: 760px) {
+    .adm-vazio-linha { flex-wrap: wrap; row-gap: 0.15rem; }
+    .adm-vazio-titulo, .adm-vazio-texto { white-space: normal; }
+}
+
+/* Menu lateral recolhido (desktop) */
+.adm-fixar-menu { display: none; }
+@media (min-width: 1024px) {
+    .adm-layout { grid-template-columns: 4rem minmax(0, 1fr); transition: grid-template-columns 0.2s ease; }
+    .adm-layout.is-menu-fixo { grid-template-columns: 14rem minmax(0, 1fr); }
+    .adm-lateral {
+        width: 4rem; justify-self: start; z-index: 30; padding: 0.75rem 0.5rem; overflow-x: hidden;
+        transition: width 0.2s ease, padding 0.2s ease, box-shadow 0.2s ease;
+    }
+    .adm-layout.is-menu-fixo .adm-lateral { width: 14rem; padding: 1rem 0.75rem; }
+    .adm-layout:not(.is-menu-fixo) .adm-lateral:hover,
+    .adm-layout:not(.is-menu-fixo) .adm-lateral:has(:focus-visible) { width: 14rem; padding: 0.75rem; box-shadow: 8px 0 24px rgba(0, 0, 0, 0.35); }
+    .adm-fixar-menu {
+        display: flex; align-items: center; gap: 0.55rem; width: 100%; padding: 0.5rem 0.85rem; margin-bottom: 0.4rem;
+        font-size: 0.75rem; color: var(--adm-tinta-3); background: transparent; border: 1px solid transparent; border-radius: 0.6rem; cursor: pointer; white-space: nowrap;
+    }
+    .adm-fixar-menu:hover { color: var(--adm-tinta); background: var(--adm-neutro-fundo); }
+    .adm-fixar-menu[aria-pressed="true"] { color: var(--adm-acao); }
+    .adm-fixar-menu i { width: 1.1rem; text-align: center; }
+    /* Recolhido: só ícones (os textos ficam na página para leitores de tela, mas sem largura) */
+    .adm-layout:not(.is-menu-fixo) .adm-lateral:not(:hover):not(:has(:focus-visible)) .adm-aba { justify-content: center; padding-left: 0; padding-right: 0; gap: 0; }
+    .adm-layout:not(.is-menu-fixo) .adm-lateral:not(:hover):not(:has(:focus-visible)) :is(.adm-aba, .adm-fixar-menu) span,
+    .adm-layout:not(.is-menu-fixo) .adm-lateral:not(:hover):not(:has(:focus-visible)) .adm-mais-seta { max-width: 0; opacity: 0; overflow: hidden; }
+    .adm-layout:not(.is-menu-fixo) .adm-lateral:not(:hover):not(:has(:focus-visible)) .adm-fixar-menu { justify-content: center; padding-left: 0; padding-right: 0; gap: 0; }
+    .adm-lateral .adm-aba span, .adm-fixar-menu span { transition: opacity 0.15s ease; }
+    .adm-menu-mais { padding-left: 0; }
+}
+
+/* Entrada animada (só roda quando o elemento aparece; JS marca as classes) */
+@keyframes adm-sobe { from { opacity: 0; transform: translateY(10px); } }
+@keyframes adm-cresce { from { transform: scaleY(0); } }
+@keyframes adm-desenha { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes adm-varre { from { opacity: 0; transform: rotate(-30deg) scale(0.9); } }
+@keyframes adm-preenche { from { transform: scaleX(0); } }
+@keyframes adm-fade { from { opacity: 0; } }
+@keyframes adm-novo {
+    0% { opacity: 0; transform: scale(0.92); box-shadow: 0 0 0 0 var(--adm-acao-borda); }
+    30% { opacity: 1; transform: none; box-shadow: 0 0 0 4px var(--adm-acao-borda); }
+    100% { box-shadow: 0 0 0 0 transparent; }
+}
+@keyframes adm-moveu {
+    0% { opacity: 0.2; transform: translateX(-28px); }
+    40% { opacity: 1; transform: none; border-color: var(--adm-acao); }
+    75% { border-color: var(--adm-acao); }
+}
+
+.adm-anim:not(.is-vista) { opacity: 0; }
+.adm-anim.is-vista { animation: adm-sobe 0.45s ease var(--atraso, 0ms) backwards; }
+
+.adm-svg-anim:not(.is-vista) :is(.adm-barra, rect[rx], .adm-fatia, polyline, path.adm-linha) { opacity: 0; }
+.adm-svg-anim.is-vista :is(.adm-barra, rect[rx]) {
+    transform-box: fill-box; transform-origin: 50% 100%;
+    animation: adm-cresce 0.55s cubic-bezier(0.2, 0.7, 0.2, 1) calc(var(--i, 0) * 28ms) backwards;
+}
+.adm-svg-anim.is-vista :is(polyline, path.adm-linha) { stroke-dasharray: 1; animation: adm-desenha 0.7s ease backwards; }
+.adm-svg-anim.is-vista .adm-fatia { transform-box: view-box; transform-origin: 50% 50%; animation: adm-varre 0.5s ease calc(var(--i, 0) * 70ms) backwards; }
+
+.adm-hbarra { transform-origin: left center; }
+.adm-hbarra:not(.is-vista) { transform: scaleX(0); }
+.adm-hbarra.is-vista { animation: adm-preenche 0.6s ease calc(var(--i, 0) * 40ms) backwards; }
+
+.adm-heat:not(.is-vista) td { opacity: 0; }
+.adm-heat.is-vista td { animation: adm-fade 0.4s ease calc(var(--i, 0) * 30ms) backwards; }
+
+.adm-kanban-novo { animation: adm-novo 1.4s ease; }
+.adm-kanban-moveu { animation: adm-moveu 0.9s ease; }
+
+@media (prefers-reduced-motion: reduce) {
+    .adm-anim, .adm-anim.is-vista { opacity: 1 !important; animation: none !important; }
+    .adm-svg-anim *, .adm-heat td { opacity: 1 !important; animation: none !important; }
+    .adm-hbarra, .adm-hbarra:not(.is-vista) { transform: none !important; animation: none !important; }
+    .adm-kanban-novo, .adm-kanban-moveu { animation: none !important; }
+    .adm-layout, .adm-lateral, .adm-lateral .adm-aba span { transition: none !important; }
+}

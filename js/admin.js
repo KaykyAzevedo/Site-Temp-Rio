@@ -441,6 +441,7 @@
         $('#form-login').addEventListener('submit', entrar);
         $('#btn-sair').addEventListener('click', sair);
         $('#btn-atualizar').addEventListener('click', function () {
+            abrirJanelaAnim();
             carregar();
             recarregarErp();
             saudeAtualizar();
@@ -491,6 +492,7 @@
             else if (!ev.shiftKey && ativo === ultimo) { ev.preventDefault(); primeiro.focus(); }
         });
         ligarTabelasEmCartoes();
+        ligarMenuFixo();
         $('#btn-sino').addEventListener('click', function () {
             marcarNotificacoesLidas();
             trocarAba('pedidos', true);
@@ -507,6 +509,24 @@
     /* Folha "Mais" e gaveta de filtros (celular): uma por vez, foco vai para dentro ao abrir, Esc fecha e devolve o foco ao botão. */
     var sobrepos = { atual: null, opener: null };
     function celular() { return window.innerWidth < 1024; }
+    // Menu lateral recolhido (desktop): expande por hover/foco; "Fixar" deixa aberto e lembra no localStorage.
+    function ligarMenuFixo() {
+        var layout = document.querySelector('.adm-layout'), btn = document.getElementById('btn-fixar-menu');
+        document.querySelectorAll('.adm-lateral .adm-aba').forEach(function (b) {
+            var sp = b.querySelector('span');
+            if (sp && !b.getAttribute('title')) b.setAttribute('title', sp.textContent.trim());
+        });
+        if (!layout || !btn) return;
+        function aplicar(fixo) { layout.classList.toggle('is-menu-fixo', fixo); btn.setAttribute('aria-pressed', String(fixo)); }
+        var fixo = false;
+        try { fixo = localStorage.getItem('adm.menuFixo') === '1'; } catch (e) { fixo = false; }
+        aplicar(fixo);
+        btn.addEventListener('click', function () {
+            fixo = !fixo; aplicar(fixo);
+            try { localStorage.setItem('adm.menuFixo', fixo ? '1' : '0'); } catch (e) { /* sem armazenamento: vale só nesta sessão */ }
+        });
+    }
+
     // Cruzar 1024px (rotação, redimensionar): fecha a folha/gaveta e limpa atributos, para não deixar foco preso nem role=dialog no desktop.
     var eraCelular = window.innerWidth < 1024;
     window.addEventListener('resize', function () {
@@ -912,6 +932,7 @@
             }
         }
         setTimeout(ajustarSvgCelular, 60);
+        abrirJanelaAnim(); setTimeout(reanimarAtivas, 40);
         mostrarSecoes();
         secoesDe(qual).forEach(function (s) { carregarErpDaAba(s); });
 
@@ -1864,9 +1885,105 @@
         new MutationObserver(function () {
             if (agendado) return;
             agendado = true;
-            requestAnimationFrame(function () { agendado = false; tabelasEmCartoes(raiz); ajustarSvgCelular(); });
+            requestAnimationFrame(function () { agendado = false; tabelasEmCartoes(raiz); ajustarSvgCelular(); prepararAnimacoes(raiz); });
         }).observe(raiz, { childList: true, subtree: true });
-        tabelasEmCartoes(raiz); ajustarSvgCelular();
+        abrirJanelaAnim(); tabelasEmCartoes(raiz); ajustarSvgCelular(); prepararAnimacoes(raiz);
+    }
+
+    /* ===================================================================
+     * Animações de entrada (P5). Só classes e propriedades CSS (--i / --atraso via CSSOM); nada de style inline novo.
+     * Rodam quando o elemento aparece (IntersectionObserver), uma vez por renderização, dentro de uma janela curta aberta
+     * ao trocar de aba / carregar / Atualizar (para não reanimar a cada digitação). prefers-reduced-motion: nada é marcado.
+     * =================================================================== */
+    var janelaAnim = 0, ioAnim = null;
+    function animOk() {
+        if (typeof IntersectionObserver === 'undefined') return false;
+        try { return !window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return true; }
+    }
+    function abrirJanelaAnim() { janelaAnim = Date.now() + 2500; }
+    var alvosAnim = new Set();
+    // Solta do observer o que saiu do DOM (redesenhos substituem os elementos): nada acumula.
+    function limparAlvosAnim() {
+        alvosAnim.forEach(function (e) {
+            if (!e.isConnected) { if (ioAnim) ioAnim.unobserve(e); alvosAnim.delete(e); }
+        });
+    }
+    function ioObs() {
+        if (!ioAnim) ioAnim = new IntersectionObserver(function (es) {
+            es.forEach(function (e) {
+                if (!e.isIntersecting) return;
+                ioAnim.unobserve(e.target); alvosAnim.delete(e.target);
+                if (e.target.classList.contains('adm-tile-valor')) contarAte(e.target);
+                else e.target.classList.add('is-vista');
+            });
+        }, { threshold: 0.08 });
+        return ioAnim;
+    }
+    function marcarAnim(el, classe, i) {
+        el.setAttribute('data-anim', '1');
+        if (classe) el.classList.add(classe);
+        if (i != null) el.style.setProperty('--i', String(Math.min(i, 14)));
+        ioObs().observe(el); alvosAnim.add(el);
+    }
+    // Números dos KPIs contam de 0 até o valor (~600ms). Só texto com um número só ("R$ 1.234,56", "45%", "12 dias").
+    function contarAte(el) {
+        if (el._contando || el.children.length) { return; }
+        var txt = el.textContent, m = /^\s*([^\d-]*)(\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+(?:,\d+)?)([^\d]*)$/.exec(txt);
+        if (!m) return;
+        var alvo = parseFloat(m[2].replace(/\./g, '').replace(',', '.'));
+        if (!isFinite(alvo) || alvo === 0) return;
+        var dec = (m[2].split(',')[1] || '').length, t0 = null, ult = null, dur = 600;
+        el._contando = true;
+        function fmt(v) { return m[1] + v.toLocaleString('pt-BR', { minimumFractionDigits: dec, maximumFractionDigits: dec }) + m[3]; }
+        function fim() { if (el.textContent === ult) el.textContent = txt; el._contando = false; }
+        function passo(t) {
+            if (!el._contando) return;
+            if (el.textContent !== ult) { el._contando = false; return; } // outro código atualizou o valor: não sobrescrever
+            if (t0 === null) t0 = t;
+            var k = Math.min(1, (t - t0) / dur), v = alvo * (1 - Math.pow(1 - k, 3));
+            if (k >= 1) { fim(); return; }
+            ult = fmt(v); el.textContent = ult; requestAnimationFrame(passo);
+        }
+        el.textContent = fmt(0); ult = el.textContent;
+        requestAnimationFrame(passo);
+        setTimeout(function () { if (el._contando) fim(); }, dur + 400); // rede de segurança: o valor final sempre volta
+    }
+    function prepararAnimacoes(raiz) {
+        limparAlvosAnim();
+        if (Date.now() > janelaAnim || !animOk()) return;
+        var ordem = 0;
+        raiz.querySelectorAll('.adm-card:not([data-anim]), .adm-agora:not([data-anim])').forEach(function (c) {
+            if (c.id === 'cartao-filtros' || c.closest('#modal-detalhe')) return;
+            var topo = !c.parentElement.closest('.adm-card');
+            if (topo) { marcarAnim(c, 'adm-anim', ordem); ordem++; c.style.setProperty('--atraso', Math.min(ordem, 8) * 45 + 'ms'); }
+            else c.setAttribute('data-anim', '1');
+        });
+        raiz.querySelectorAll('.adm-tile-valor:not([data-anim])').forEach(function (v) { if (v.namespaceURI === 'http://www.w3.org/1999/xhtml') marcarAnim(v, '', null); });
+        raiz.querySelectorAll('svg[viewBox]:not([data-anim])').forEach(function (svg) {
+            marcarAnim(svg, 'adm-svg-anim', null);
+            svg.querySelectorAll('.adm-barra, rect[rx]').forEach(function (r, i) { r.style.setProperty('--i', String(Math.min(i, 24))); });
+            svg.querySelectorAll('.adm-fatia').forEach(function (r, i) { r.style.setProperty('--i', String(Math.min(i, 12))); });
+            svg.querySelectorAll('polyline, path.adm-linha').forEach(function (l) { l.setAttribute('pathLength', '1'); });
+        });
+        raiz.querySelectorAll('div[style*="border-radius:99px"] > div[style*="width:"]:not([data-anim])').forEach(function (b, i) { marcarAnim(b, 'adm-hbarra', i); });
+        raiz.querySelectorAll('table[style*=".72rem"]:not([data-anim])').forEach(function (t) {
+            t.querySelectorAll('tbody tr').forEach(function (tr, r) {
+                tr.querySelectorAll('td').forEach(function (td, c) { td.style.setProperty('--i', String(Math.min(r + c, 20))); });
+            });
+            marcarAnim(t, 'adm-heat', null);
+        });
+    }
+    // Ao voltar para uma aba já desenhada: reinicia a entrada dos elementos dela.
+    function reanimarAtivas() {
+        if (!animOk()) return;
+        limparAlvosAnim();
+        secoesDe(abaAtual).forEach(function (sec) {
+            var raiz = document.getElementById('painel-' + sec);
+            if (!raiz) return;
+            raiz.querySelectorAll('.adm-anim[data-anim], .adm-svg-anim[data-anim], .adm-hbarra[data-anim], .adm-heat[data-anim], .adm-tile-valor[data-anim]').forEach(function (e) {
+                e.classList.remove('is-vista'); ioObs().observe(e); alvosAnim.add(e);
+            });
+        });
     }
 
     // Celular: texto dos gráficos SVG com 13px reais (o viewBox é escalado para a largura do contêiner).
@@ -5034,12 +5151,15 @@
         destino.innerHTML = html;
     }
 
-    function cartaoVazio(titulo, texto) {
-        return '<div class="adm-card p-10 text-center">' +
-               '<i class="fa-regular fa-folder-open text-2xl mb-4" style="color:var(--adm-tinta-3)"></i>' +
-               '<p class="font-bold mb-2">' + esc(titulo) + '</p>' +
-               '<p class="text-sm max-w-md mx-auto" style="color:var(--adm-tinta-2)">' + esc(texto) + '</p>' +
-               '</div>';
+    // Estado vazio discreto: UMA linha (tag de origem + título + texto em cinza); não ocupa altura de cartão.
+    function cartaoVazio(titulo, texto, origem) {
+        var ref = String(titulo || '') + ' ' + String(texto || '');
+        var o = origem || (/erp|solidcon|instalad|rotina de|sincroniz|migra[cç][aã]o/i.test(ref) ? 'erp'
+            : /pedido|venda|vitrine|lead|visita|espera|site/i.test(ref) ? 'site' : '');
+        var tag = o === 'erp' ? SELO_ERP : o === 'site' ? SELO_SITE : '';
+        return '<p class="adm-vazio-linha" title="' + esc(ref.trim()) + '">' + tag +
+            '<span class="adm-vazio-titulo">' + esc(titulo) + '</span>' +
+            (texto ? '<span class="adm-vazio-texto">' + esc(texto) + '</span>' : '') + '</p>';
     }
 
     /* ===================================================================
@@ -5129,7 +5249,22 @@
      * já depende de aguardando/confirmado/entregue/cancelado em toda parte,
      * do dashboard ao resumo_mensal do banco).
      * =================================================================== */
+    // Cartão novo entra com destaque; cartão que mudou de coluna desliza/pisca (comparado ao desenho anterior, sem depender dos filtros).
+    var kanbanAnt = null, marcaKanban = {}, marcasValidas = {};
     function htmlKanban(lista) {
+        var atual = {}, n = 0, agora = Date.now();
+        dados.pedidos.forEach(function (p) { atual[p.id] = p.status; n++; });
+        if (kanbanAnt && Object.keys(kanbanAnt).length) {
+            dados.pedidos.forEach(function (p) {
+                if (kanbanAnt[p.id] === undefined) marcasValidas[p.id] = { c: ' adm-kanban-novo', ate: agora + 4000 };
+                else if (kanbanAnt[p.id] !== p.status) marcasValidas[p.id] = { c: ' adm-kanban-moveu', ate: agora + 4000 };
+            });
+        }
+        marcaKanban = {}; // redesenhos seguidos (chegada de dados do ERP) mantêm o destaque por alguns segundos
+        Object.keys(marcasValidas).forEach(function (k) {
+            if (marcasValidas[k].ate < agora) delete marcasValidas[k]; else marcaKanban[k] = marcasValidas[k].c;
+        });
+        if (n) kanbanAnt = atual;
         return '<div class="adm-kanban-segmentos" role="tablist" aria-label="Status dos pedidos">' +
             COLUNAS_KANBAN.map(function (col) {
                 var n = lista.filter(function (p) { return p.status === col.status; }).length;
@@ -5145,15 +5280,15 @@
                         '<span class="adm-kanban-contagem">' + itens.length + '</span>' +
                     '</div>' +
                     '<div class="adm-kanban-corpo" data-coluna="' + col.status + '">' +
-                        itens.map(cartaoKanban).join('') +
+                        itens.map(function (p) { return cartaoKanban(p, marcaKanban[p.id] || ''); }).join('') +
                     '</div>' +
                 '</div>';
             }).join('') +
         '</div>';
     }
 
-    function cartaoKanban(p) {
-        return '<div class="adm-kanban-cartao" draggable="true" data-id="' + esc(p.id) +
+    function cartaoKanban(p, extra) {
+        return '<div class="adm-kanban-cartao' + (extra || '') + '" draggable="true" data-id="' + esc(p.id) +
                 '" data-status-atual="' + esc(p.status) + '">' +
             '<div class="flex items-start justify-between gap-2">' +
                 '<p class="text-sm font-bold truncate">' + esc(p.razao_social) + '</p>' +
