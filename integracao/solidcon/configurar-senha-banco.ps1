@@ -22,48 +22,72 @@ $PrefixoArquivo = 'temprio-dpapi-v1:'
 $NomeArquivoSenha = 'banco-senha.dpapi'
 $SidSystem = New-Object Security.Principal.SecurityIdentifier('S-1-5-18')
 $SidAdmins = New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')
-# Permissoes EFETIVAS do login (base, schema, objeto, coluna, papeis). Qualquer 1 = pode gravar;
-# NULL = nao deu para conferir. Os dois casos falham fechado. O login so enxerga objetos em que
-# tem algum privilegio (visibilidade de metadados), justamente os que poderiam ser gravados.
+# Permissoes EFETIVAS do login (base, schema, objeto, coluna, papeis). Qualquer 1 = pode gravar
+# ou executar; NULL = nao deu para conferir. Os dois casos falham fechado. O login so enxerga
+# objetos em que tem algum privilegio (visibilidade de metadados), justamente os que poderiam
+# ser gravados. Unica excecao: INSERT/UPDATE/DELETE/EXECUTE de nivel SCHEMA em schema cujo dono
+# e um papel fixo do banco (principal_id 16384-16393, ex.: 'db_datareader') e que NAO tem nenhum
+# objeto (sem objeto, esses direitos nao alcancam nada; um objeto faz voltar a contar).
+# ALTER/CONTROL/TAKE OWNERSHIP/CREATE SEQUENCE de schema contam SEMPRE, inclusive nesses schemas:
+# CREATE SEQUENCE so exige ALTER/CONTROL no schema (sem CREATE na base) = DDL real.
+# Devolve contagens por nivel/tipo.
 # Mesmo texto no configurar-senha-banco.ps1. NAO substitui a confirmacao do DBA da SOLIDCON.
 $SqlPermissoes = @'
 SELECT
   SUM(CASE WHEN t.v = 1 THEN 1 ELSE 0 END) AS escrita,
   SUM(CASE WHEN t.v IS NULL THEN 1 ELSE 0 END) AS inconclusivo,
-  COUNT(*) AS verificados
+  COUNT(*) AS verificados,
+  SUM(CASE WHEN t.v = 1 AND t.nivel = 'base' AND t.tipo = 'e' THEN 1 ELSE 0 END) AS base_execucao,
+  SUM(CASE WHEN t.v = 1 AND t.nivel = 'base' AND t.tipo = 'g' THEN 1 ELSE 0 END) AS base_gravacao,
+  SUM(CASE WHEN t.v = 1 AND t.nivel = 'schema' AND t.tipo = 'e' THEN 1 ELSE 0 END) AS schema_execucao,
+  SUM(CASE WHEN t.v = 1 AND t.nivel = 'schema' AND t.tipo = 'g' THEN 1 ELSE 0 END) AS schema_gravacao,
+  SUM(CASE WHEN t.v = 1 AND t.nivel = 'objeto' AND t.tipo = 'e' THEN 1 ELSE 0 END) AS objeto_execucao,
+  SUM(CASE WHEN t.v = 1 AND t.nivel = 'objeto' AND t.tipo = 'g' THEN 1 ELSE 0 END) AS objeto_gravacao,
+  SUM(CASE WHEN t.v = 1 AND t.nivel = 'coluna' THEN 1 ELSE 0 END) AS coluna_gravacao,
+  SUM(CASE WHEN t.v = 1 AND t.nivel = 'papel' THEN 1 ELSE 0 END) AS papel_gravacao
 FROM (
-  SELECT HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', p.n) AS v
+  SELECT 'base' AS nivel, CASE WHEN p.n = 'EXECUTE' THEN 'e' ELSE 'g' END AS tipo,
+         HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', p.n) AS v
     FROM (VALUES ('INSERT'),('UPDATE'),('DELETE'),('EXECUTE'),('ALTER'),('CONTROL'),('TAKE OWNERSHIP'),
                  ('CREATE TABLE'),('CREATE VIEW'),('CREATE PROCEDURE'),('CREATE FUNCTION'),('CREATE SCHEMA'),
                  ('ALTER ANY SCHEMA'),('ALTER ANY USER'),('ALTER ANY ROLE')) AS p(n)
   UNION ALL
-  SELECT HAS_PERMS_BY_NAME(QUOTENAME(s.name), 'SCHEMA', p.n)
+  SELECT 'schema', 'g', HAS_PERMS_BY_NAME(QUOTENAME(s.name), 'SCHEMA', p.n)
     FROM sys.schemas AS s
-   CROSS JOIN (VALUES ('INSERT'),('UPDATE'),('DELETE'),('EXECUTE'),('ALTER'),('CONTROL'),('TAKE OWNERSHIP')) AS p(n)
+   CROSS JOIN (VALUES ('ALTER'),('CONTROL'),('TAKE OWNERSHIP'),('CREATE SEQUENCE')) AS p(n)
   UNION ALL
-  SELECT HAS_PERMS_BY_NAME(QUOTENAME(SCHEMA_NAME(o.schema_id)) + '.' + QUOTENAME(o.name), 'OBJECT', p.n)
+  SELECT 'schema', CASE WHEN p.n = 'EXECUTE' THEN 'e' ELSE 'g' END,
+         HAS_PERMS_BY_NAME(QUOTENAME(s.name), 'SCHEMA', p.n)
+    FROM sys.schemas AS s
+   CROSS JOIN (VALUES ('INSERT'),('UPDATE'),('DELETE'),('EXECUTE')) AS p(n)
+   WHERE NOT (s.principal_id BETWEEN 16384 AND 16393
+              AND NOT EXISTS (SELECT 1 FROM sys.objects AS so WHERE so.schema_id = s.schema_id))
+  UNION ALL
+  SELECT 'objeto', 'g', HAS_PERMS_BY_NAME(QUOTENAME(SCHEMA_NAME(o.schema_id)) + '.' + QUOTENAME(o.name), 'OBJECT', p.n)
     FROM sys.objects AS o
    CROSS JOIN (VALUES ('INSERT'),('UPDATE'),('DELETE'),('ALTER'),('CONTROL'),('TAKE OWNERSHIP')) AS p(n)
    WHERE o.type IN ('U', 'V')
   UNION ALL
-  SELECT HAS_PERMS_BY_NAME(QUOTENAME(SCHEMA_NAME(o.schema_id)) + '.' + QUOTENAME(o.name), 'OBJECT', p.n)
+  SELECT 'objeto', CASE WHEN p.n = 'EXECUTE' THEN 'e' ELSE 'g' END,
+         HAS_PERMS_BY_NAME(QUOTENAME(SCHEMA_NAME(o.schema_id)) + '.' + QUOTENAME(o.name), 'OBJECT', p.n)
     FROM sys.objects AS o
    CROSS JOIN (VALUES ('EXECUTE'),('ALTER'),('CONTROL'),('TAKE OWNERSHIP')) AS p(n)
    WHERE o.type IN ('P', 'PC', 'X')
   UNION ALL
-  SELECT HAS_PERMS_BY_NAME(QUOTENAME(SCHEMA_NAME(o.schema_id)) + '.' + QUOTENAME(o.name), 'OBJECT', p.n)
+  SELECT 'objeto', 'g', HAS_PERMS_BY_NAME(QUOTENAME(SCHEMA_NAME(o.schema_id)) + '.' + QUOTENAME(o.name), 'OBJECT', p.n)
     FROM sys.objects AS o
    CROSS JOIN (VALUES ('UPDATE'),('ALTER'),('CONTROL'),('TAKE OWNERSHIP')) AS p(n)
    WHERE o.type = 'SO'
   UNION ALL
-  SELECT HAS_PERMS_BY_NAME(QUOTENAME(SCHEMA_NAME(o.schema_id)) + '.' + QUOTENAME(o.name), 'OBJECT', 'UPDATE', c.name, 'COLUMN')
+  SELECT 'coluna', 'g', HAS_PERMS_BY_NAME(QUOTENAME(SCHEMA_NAME(o.schema_id)) + '.' + QUOTENAME(o.name), 'OBJECT', 'UPDATE', c.name, 'COLUMN')
     FROM sys.columns AS c
     JOIN sys.objects AS o ON o.object_id = c.object_id
    WHERE o.type IN ('U', 'V')
   UNION ALL
-  SELECT CASE WHEN IS_SRVROLEMEMBER('sysadmin') = 1 THEN 1 WHEN IS_SRVROLEMEMBER('sysadmin') = 0 THEN 0 END
+  SELECT 'papel', 'g', CASE WHEN IS_SRVROLEMEMBER('sysadmin') = 1 THEN 1 WHEN IS_SRVROLEMEMBER('sysadmin') = 0 THEN 0 END
   UNION ALL
-  SELECT CASE WHEN IS_ROLEMEMBER('db_owner') = 1 OR IS_ROLEMEMBER('db_datawriter') = 1 OR IS_ROLEMEMBER('db_ddladmin') = 1 THEN 1
+  SELECT 'papel', 'g',
+         CASE WHEN IS_ROLEMEMBER('db_owner') = 1 OR IS_ROLEMEMBER('db_datawriter') = 1 OR IS_ROLEMEMBER('db_ddladmin') = 1 THEN 1
               WHEN IS_ROLEMEMBER('db_owner') = 0 AND IS_ROLEMEMBER('db_datawriter') = 0 AND IS_ROLEMEMBER('db_ddladmin') = 0 THEN 0 END
 ) AS t
 '@
@@ -194,12 +218,24 @@ function Testar-Conexao($Cb) {
         # Mesma conferencia do sync-banco: permissoes efetivas em base/schema/objeto/coluna/papeis.
         $cmd = $con.CreateCommand(); $cmd.CommandTimeout = 30; $cmd.CommandText = $SqlPermissoes
         $r = $cmd.ExecuteReader()
+        $c = @{}
         try {
-            if (-not $r.Read() -or $r.IsDBNull(0) -or $r.IsDBNull(1) -or $r.IsDBNull(2)) { $escrita = -1; $nulos = -1; $total = 0 }
-            else { $escrita = [int]$r.GetValue(0); $nulos = [int]$r.GetValue(1); $total = [int]$r.GetValue(2) }
+            if ($r.Read()) {
+                foreach ($nome in @('escrita', 'inconclusivo', 'verificados', 'base_execucao', 'base_gravacao', 'schema_execucao',
+                                    'schema_gravacao', 'objeto_execucao', 'objeto_gravacao', 'coluna_gravacao', 'papel_gravacao')) {
+                    $i = $r.GetOrdinal($nome)
+                    $c[$nome] = if ($r.IsDBNull($i)) { $null } else { [int]$r.GetValue($i) }
+                }
+            }
         } finally { $r.Close() }
+        if ($null -eq $c['escrita'] -or $null -eq $c['inconclusivo'] -or $null -eq $c['verificados']) { $escrita = -1; $nulos = -1; $total = 0 }
+        else { $escrita = $c['escrita']; $nulos = $c['inconclusivo']; $total = $c['verificados'] }
         if ($escrita -gt 0) {
-            Write-Host ('ATENCAO: o login PODE gravar (' + $escrita + ' permissoes de escrita encontradas). Peca a SOLIDCON para remover; o sync-banco se recusa a rodar assim.')
+            # So contagens por nivel e tipo (nunca nomes de schema/objeto).
+            function N($v) { if ($null -eq $v) { '?' } else { [string]$v } }
+            Write-Host ('ATENCAO: o login PODE gravar ou executar (' + $escrita + ' permissoes encontradas). Peca a SOLIDCON para remover; o sync-banco se recusa a rodar assim.')
+            Write-Host ('  EXECUTE (rodar procedures):  base {0} | schema {1} | objeto {2}' -f (N $c['base_execucao']), (N $c['schema_execucao']), (N $c['objeto_execucao']))
+            Write-Host ('  GRAVACAO/ALTERACAO:          base {0} | schema {1} | objeto {2} | coluna {3} | papel {4}' -f (N $c['base_gravacao']), (N $c['schema_gravacao']), (N $c['objeto_gravacao']), (N $c['coluna_gravacao']), (N $c['papel_gravacao']))
             return 3
         }
         if ($escrita -lt 0 -or $nulos -ne 0 -or $total -lt 17) {

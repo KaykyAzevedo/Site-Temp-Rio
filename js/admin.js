@@ -1211,6 +1211,7 @@
             '<div id="vitrine-giro"></div>' +
             '<div id="vitrine-entradas"></div>' +
             '<div id="vitrine-insumos"></div>' +
+            '<div id="vitrine-margem"></div>' +
             '<div class="adm-card p-5 mb-5"><p class="font-bold mb-3">Produtos do site e estoque correspondente</p>' + solidTabelaPorProduto() +
             '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">O vínculo usa só o código ERP confirmado (família de 12 dígitos, id ou EAN). Estoque em caixas; o total soma as caixas convertidas em potes.</p></div>' +
             '<details class="mb-2"' + (solid.listaAberta ? ' open' : '') + '><summary class="text-sm font-bold cursor-pointer mb-3">Todos os produtos do ERP (' + NUM.format(solid.produtos.length) + ')</summary>' +
@@ -1241,6 +1242,8 @@
         desenharGiro();
         desenharEntradas();
         desenharInsumos();
+        mgLigar($('#vitrine-margem'));
+        desenharMargem();
     }
 
     /* ---- Vincular ao SOLIDCON: o admin confirma a família ERP de cada produto do site ---- */
@@ -2141,6 +2144,7 @@
         if (qual === 'vitrine' && precisa(giro)) carregarGiro();
         if (qual === 'vitrine' && precisa(ent)) carregarEntradas();
         if (qual === 'vitrine' && precisa(ins)) carregarInsumos();
+        if (qual === 'vitrine' && papel === 'admin' && precisa(mg)) carregarMargem();
         if (qual === 'vendas' && precisa(pag)) carregarPagamentos();
         if (qual === 'dashboard') dashCarregarProgressivo(forcar);
     }
@@ -3680,6 +3684,258 @@
         return '<div class="grid sm:grid-cols-3 gap-4 mb-4">' + ficha('Em aberto (ERP)', brl(g.aberto), NUM.format(g.n) + (g.n === 1 ? ' parcela' : ' parcelas')) +
             ficha('Vencido (ERP)', brl(g.vencido), g.atraso > 0 ? 'maior atraso: ' + recDias(g.atraso) : 'nada vencido') +
             ficha('Próx. vencimento', g.prox ? giroFmtData(g.prox) : '—', 'contas a receber') + '</div>';
+    }
+
+    /* ===================================================================
+     * Vitrine — Margem por produto (ERP, migração 031) — SOMENTE LEITURA, só admin
+     * Fontes: solidcon_margem_diaria (vendas/custo por dia e código, COM SINAL), solidcon_custos (custo e preço atuais)
+     * e solidcon_margem_sync (saúde por parte). Código do ERP casado com solidcon_produtos.id_produto (vínculo não
+     * confirmado): sem correspondência aparece como "Produto ERP <código>", nunca escondido. Sem a 031: não aparece.
+     * =================================================================== */
+    var MG_LIMITE = 50000, MG_JANELA = 90, MG_CUSTOS_LIMITE = 20000, MG_POR_PAGINA = 50, MG_STALE_MS = 2 * 60 * 60 * 1000;
+    var mg = { carregado: false, carregando: false, ausente: false, erro: null, diario: [], custos: [], sync: {}, cobertura: {}, truncado: false,
+               dias: 30, ord: { col: 'venda', dir: -1 }, abertos: {}, mostrar: MG_POR_PAGINA, todosCustos: false, memo: null };
+
+    function carregarMargem() {
+        mg.carregando = true;
+        mgRedesenhar();
+        var desde = entIso(giroDiaUtc(recHoje()) - (MG_JANELA - 1) * 86400000);
+        return Promise.all([
+            vendPaginar(function () {
+                return sb.from('solidcon_margem_diaria').select('dia,codigo_produto,quantidade,venda_centavos,custo_centavos')
+                    .gte('dia', desde).order('dia', { ascending: true }).order('codigo_produto', { ascending: true });
+            }, MG_LIMITE),
+            vendPaginar(function () {
+                return sb.from('solidcon_custos').select('codigo_produto,unidade,custo_medio_centavos,custo_reposicao_centavos,preco_venda_centavos,ultimo_recebimento')
+                    .order('codigo_produto', { ascending: true }).order('unidade', { ascending: true });
+            }, MG_CUSTOS_LIMITE),
+            // Saúde buscada SEPARADO por parte: última tentativa (qualquer status) e último OK de cada uma.
+            mgSync('vendas', false), mgSync('vendas', true), mgSync('custos', false), mgSync('custos', true),
+            vendPaginar(function () { return sb.from('solidcon_margem_cobertura').select('dia').gte('dia', desde).order('dia', { ascending: true }); }, 1000)
+        ]).then(function (rs) {
+            mg.carregando = false;
+            var falha = rs.filter(function (r) { return r.error; })[0];
+            mg.ausente = false; mg.erro = null;
+            if (falha) {
+                if (solidTabelaAusente(falha.error)) mg.ausente = true; else mg.erro = String(falha.error.message || falha.error);
+                mg.carregado = false;
+            } else {
+                mg.diario = rs[0].data || []; mg.custos = rs[1].data || [];
+                var um = function (r) { return (r.data || [])[0] || null; };
+                mg.sync = { vendas: { ult: um(rs[2]), ok: um(rs[3]) }, custos: { ult: um(rs[4]), ok: um(rs[5]) } };
+                mg.cobertura = {}; (rs[6].data || []).forEach(function (l) { mg.cobertura[String(l.dia).slice(0, 10)] = true; });
+                // No teto não há como provar que o período está completo: nada é calculado.
+                mg.truncado = mg.diario.length >= MG_LIMITE || mg.custos.length >= MG_CUSTOS_LIMITE;
+                mg.memo = null; mg.carregado = true;
+            }
+            mgRedesenhar();
+        }).catch(function (e) {
+            mg.carregando = false; mg.erro = String(e && e.message || e); mg.carregado = false; mgRedesenhar();
+        });
+    }
+
+    function mgSync(parte, soOk) {
+        var q = sb.from('solidcon_margem_sync').select('parte,status,linhas,desde,ate,coletado_em,mensagem,em').eq('parte', parte);
+        if (soOk) q = q.eq('status', 'ok');
+        return q.order('em', { ascending: false }).limit(1);
+    }
+
+    function mgRedesenhar() {
+        abasParaRedesenhar.vitrine = true;
+        desenharAbaSeSuja(abaAtual);
+    }
+
+    var mgMapa = { ref: null, por: {} };
+    function mgNome(cod) {
+        if (mgMapa.ref !== solid.produtos) { mgMapa = { ref: solid.produtos, por: {} }; solid.produtos.forEach(function (x) { mgMapa.por[String(x.id_produto)] = x; }); }
+        var p = mgMapa.por[String(cod)];
+        return p ? { nome: String(p.nome), achou: true } : { nome: 'Produto ERP ' + cod, achou: false };
+    }
+
+    // Por código no período: quantidade, venda, custo (somas com sinal) e margem; memoizado.
+    function mgAgregar() {
+        var hoje = recHoje();
+        if (mg.memo && mg.memo.d === mg.diario && mg.memo.n === mg.dias && mg.memo.h === hoje && mg.memo.s === solid.produtos && mg.memo.c === mg.cobertura) return mg.memo.r;
+        var corte = entIso(giroDiaUtc(hoje) - (mg.dias - 1) * 86400000), por = {}, tot = { qtd: 0, venda: 0, custo: 0 };
+        var porId = {}; solid.produtos.forEach(function (p) { porId[String(p.id_produto)] = p; });
+        mg.diario.forEach(function (l) {
+            var dia = String(l.dia).slice(0, 10);
+            if (dia < corte || dia > hoje || !mg.cobertura[dia]) return; // só dias com cobertura confirmada entram nos números
+            var k = String(l.codigo_produto), o = por[k];
+            if (!o) {
+                var p = porId[k];
+                o = por[k] = { cod: k, nome: p ? String(p.nome) : 'Produto ERP ' + k, achou: !!p, qtd: 0, venda: 0, custo: 0 };
+            }
+            var q = Number(l.quantidade) || 0, v = vendNum(l.venda_centavos), c = vendNum(l.custo_centavos);
+            o.qtd += q; o.venda += v; o.custo += c; tot.qtd += q; tot.venda += v; tot.custo += c;
+        });
+        var linhas = Object.keys(por).map(function (k) {
+            var o = por[k]; o.margem = o.venda - o.custo; o.pct = o.venda > 0 ? o.margem / o.venda * 100 : null; return o;
+        });
+        tot.margem = tot.venda - tot.custo; tot.pct = tot.venda > 0 ? tot.margem / tot.venda * 100 : null;
+        var r = { linhas: linhas, tot: tot, cob: mgCobertura(hoje) };
+        mg.memo = { d: mg.diario, n: mg.dias, h: hoje, s: solid.produtos, c: mg.cobertura, r: r };
+        return r;
+    }
+
+    // Cobertura do período escolhido: dias confirmados em solidcon_margem_cobertura (hoje incluso) e início do trecho contíguo.
+    function mgCobertura(hoje) {
+        var n = mg.dias, base = giroDiaUtc(hoje), dias = [], cobertos = 0;
+        for (var i = 0; i < n; i++) { var d = entIso(base - i * 86400000); dias.push(d); if (mg.cobertura[d]) cobertos++; }
+        // Trecho contíguo: do dia mais recente coberto para trás.
+        var ini = null, i0 = 0;
+        while (i0 < n && !mg.cobertura[dias[i0]]) i0++;
+        for (var k = i0; k < n && mg.cobertura[dias[k]]; k++) ini = dias[k];
+        return { n: n, cobertos: cobertos, completo: cobertos === n, desde: ini };
+    }
+
+    function mgOrdenar(linhas) {
+        var c = mg.ord.col, d = mg.ord.dir;
+        return linhas.slice().sort(function (a, b) {
+            var x = c === 'nome' ? String(a.nome).localeCompare(String(b.nome)) : (c === 'pct' ? (a.pct == null ? -1e18 : a.pct) - (b.pct == null ? -1e18 : b.pct) : a[c] - b[c]);
+            return (x * d) || String(a.nome).localeCompare(String(b.nome));
+        });
+    }
+
+    function mgPct(v) { return v == null ? '—' : giroFmt(v, 1) + '%'; }
+    function mgNeg(v) { return v < 0 ? ' style="color:#FCA5A5"' : ''; }
+
+    // Linhas de custo/preço atuais. cods = lista de códigos (ou null = todos), ordenadas com alertas primeiro.
+    function mgCustos(cods) {
+        var lista = mg.custos.filter(function (c) { return !cods || cods.indexOf(String(c.codigo_produto)) >= 0; }).map(function (c) {
+            var preco = c.preco_venda_centavos == null ? null : vendNum(c.preco_venda_centavos), med = c.custo_medio_centavos == null ? null : vendNum(c.custo_medio_centavos);
+            return { c: c, preco: preco, med: med, rep: c.custo_reposicao_centavos == null ? null : vendNum(c.custo_reposicao_centavos),
+                     alerta: preco != null && med != null && med > preco,
+                     teorica: preco != null && preco > 0 && med != null ? (preco - med) / preco * 100 : null };
+        });
+        lista.sort(function (a, b) { return (b.alerta ? 1 : 0) - (a.alerta ? 1 : 0) || String(mgNome(a.c.codigo_produto).nome).localeCompare(String(mgNome(b.c.codigo_produto).nome)); });
+        return lista;
+    }
+
+    function mgTabelaCustos(lista, comNome) {
+        function m(v) { return v == null ? '—' : esc(brl(v)); }
+        return '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr>' + (comNome ? '<th>Produto</th>' : '') +
+            '<th>Unidade</th><th class="num">Custo médio</th><th class="num">Custo reposição</th><th class="num">Preço de venda</th><th class="num">Margem teórica</th><th>Último recebimento</th><th>Alerta</th></tr></thead><tbody>' +
+            lista.map(function (i) {
+                var n = mgNome(i.c.codigo_produto);
+                return '<tr>' + (comNome ? '<td>' + esc(n.nome) + (n.achou ? '' : ' <span class="text-xs" style="color:var(--adm-tinta-3)">(sem correspondência)</span>') + '</td>' : '') +
+                    '<td>' + esc(i.c.unidade || '—') + '</td><td class="num">' + m(i.med) + '</td><td class="num">' + m(i.rep) + '</td><td class="num">' + m(i.preco) + '</td>' +
+                    '<td class="num"' + mgNeg(i.teorica == null ? 0 : i.teorica) + '>' + esc(mgPct(i.teorica)) + '</td>' +
+                    '<td>' + (i.c.ultimo_recebimento ? esc(giroFmtData(String(i.c.ultimo_recebimento).slice(0, 10))) : '—') + '</td>' +
+                    '<td>' + (i.alerta ? '<span class="adm-selo adm-selo-cancelado"><i class="fa-solid fa-triangle-exclamation"></i>Custo acima do preço</span>' : '') + '</td></tr>';
+            }).join('') + '</tbody></table></div>';
+    }
+
+    // Saúde por parte (vendas / custos), de buscas separadas: última tentativa e último OK. Alerta se a última tentativa
+    // é erro, se o último OK passou de 2 h ou se nunca houve OK. Vendas sem nenhum registro só alerta quando já há dados diários.
+    function mgSaude() {
+        var linhas = [], alertas = [];
+        [['vendas', 'Vendas'], ['custos', 'Custos']].forEach(function (pt) {
+            var s = mg.sync[pt[0]] || {}, ult = s.ult, ok = s.ok;
+            if (!ult) {
+                if (pt[0] === 'custos') { linhas.push('Custos: sem atualização registrada'); alertas.push('Custos: nenhuma atualização registrada ainda.'); }
+                else if (mg.diario.length) { linhas.push('Vendas: sem atualização registrada'); alertas.push('Vendas: há dados diários, mas nenhum registro de atualização da rotina.'); }
+                return;
+            }
+            var t = ok ? new Date(ok.coletado_em || ok.em).getTime() : NaN;
+            linhas.push(pt[1] + ': ' + (isFinite(t) ? 'atualizado há ' + recIdadeTxt(Date.now() - t) : 'sem atualização com sucesso'));
+            if (ult.status !== 'ok') alertas.push(pt[1] + ': a última atualização falhou' + (ult.mensagem ? ' — ' + String(ult.mensagem).slice(0, 300) : '') + '.');
+            else if (isFinite(t) && Date.now() - t > MG_STALE_MS) alertas.push(pt[1] + ': dados com mais de 2 horas; a rotina pode estar parada.');
+            else if (!isFinite(t)) alertas.push(pt[1] + ': nenhuma atualização com sucesso.');
+        });
+        return (linhas.length ? '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">' + esc(linhas.join(' · ')) + '</p>' : '') +
+            (alertas.length ? '<div class="adm-card p-4 mb-4" role="alert" style="border-color:rgba(239,68,68,.45)">' + alertas.map(function (a) {
+                return '<p class="text-sm"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:#FCA5A5"></i>' + esc(a) + '</p>';
+            }).join('') + '</div>' : '');
+    }
+
+    function desenharMargem() {
+        var alvo = $('#vitrine-margem');
+        if (!alvo) return;
+        if (papel !== 'admin' || mg.ausente) { alvo.innerHTML = ''; return; } // sem permissão ou sem a 031: não aparece
+        var cab = '<div class="flex items-center gap-2 mb-1">' + SELO_ERP + '<p class="font-bold">Margem por produto</p></div>' +
+            '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Venda menos custo do ERP, por código de produto (somente leitura). Devoluções entram com sinal negativo.</p>';
+        if (mg.erro && !mg.carregando) {
+            alvo.innerHTML = cab + '<div class="adm-card p-5 mb-5"><p class="text-sm mb-3" style="color:var(--adm-tinta-2)">Não foi possível carregar a margem: ' + esc(mg.erro) + '</p>' +
+                '<button type="button" class="adm-botao-fantasma" data-mg-tentar="1">Tentar de novo</button></div>';
+            return;
+        }
+        if (!mg.carregado) {
+            alvo.innerHTML = cab + '<div class="adm-card p-5 mb-5 text-center text-sm" style="color:var(--adm-tinta-2)"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando margem…</div>';
+            return;
+        }
+        if (mg.truncado) {
+            alvo.innerHTML = cab + '<div class="adm-card p-5 mb-5" role="alert" style="border-color:rgba(239,68,68,.45)"><p class="text-sm"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:#FCA5A5"></i>' +
+                'Margem indisponível: o limite de linhas foi atingido e os totais ficariam incompletos.</p></div>';
+            return;
+        }
+        var html = cab + mgSaude() + '<div class="adm-card p-5 mb-5">';
+        if (!mg.diario.length) {
+            html += '<p class="text-sm mb-1"><strong>Vendas por produto ainda não disponíveis.</strong></p>' +
+                '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Enquanto a leitura de venda e custo por produto não for confirmada, só custos e preços atuais são exibidos.</p>';
+        } else {
+            var A = mgAgregar(), chips = [7, 30, 90].map(function (d) {
+                return '<button type="button" class="adm-chip' + (mg.dias === d ? ' is-ativo' : '') + '" data-mg-dias="' + d + '">' + d + ' dias</button>';
+            }).join('');
+            var corte = entIso(giroDiaUtc(recHoje()) - (mg.dias - 1) * 86400000);
+            var cob = A.cob;
+            html += '<div class="flex items-center justify-between flex-wrap gap-3 mb-3"><p class="text-sm" style="color:var(--adm-tinta-2)">Período: ' + esc(giroFmtData(corte)) + ' a ' + esc(giroFmtData(recHoje())) + ' (horário de São Paulo)</p>' +
+                '<div class="flex gap-1 flex-wrap">' + chips + '</div></div>' +
+                (cob.completo ? '' : '<div class="adm-card p-4 mb-4" role="alert" style="border-color:rgba(245,158,11,.5)"><p class="text-sm"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:#FCD34D"></i>' +
+                    esc('Histórico parcial: ' + NUM.format(cob.cobertos) + ' de ' + NUM.format(cob.n) + ' dias confirmados' + (cob.desde ? ' (desde ' + giroFmtData(cob.desde) + ')' : '') +
+                    '. Os números abaixo são só dos dias confirmados, não do período inteiro. Rodar o backfill da margem para completar.') + '</p></div>') +
+                '<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">' +
+                resKpi('Venda', brl(A.tot.venda), (cob.completo ? '' : 'dias confirmados · ') + 'quantidade: ' + giroFmt(A.tot.qtd, 3)) + resKpi('Custo', brl(A.tot.custo), 'custo das vendas') +
+                resKpi('Margem', brl(A.tot.margem), 'venda − custo') + resKpi('Margem %', mgPct(A.tot.pct), A.tot.venda > 0 ? 'sobre a venda' : 'sem venda no período') + '</div>';
+            if (!A.linhas.length) {
+                html += '<p class="text-sm" style="color:var(--adm-tinta-3)">' + (cob.cobertos ? 'Nenhuma venda no período.' : 'Nenhum dia do período está confirmado ainda.') + '</p>';
+            } else {
+                var ord = mgOrdenar(A.linhas), vis = ord.slice(0, mg.mostrar);
+                function th(col, rot, num) {
+                    var at = mg.ord.col === col;
+                    return '<th' + (num ? ' class="num"' : '') + '><button type="button" class="text-xs font-bold uppercase" style="color:inherit" data-mg-ord="' + col + '" aria-label="Ordenar por ' + esc(rot) + '">' + esc(rot) +
+                        (at ? (mg.ord.dir < 0 ? ' ↓' : ' ↑') : '') + '</button></th>';
+                }
+                html += '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr>' + th('nome', 'Produto', false) + th('qtd', 'Quantidade', true) + th('venda', 'Venda', true) +
+                    th('custo', 'Custo', true) + th('margem', 'Margem R$', true) + th('pct', 'Margem %', true) + '<th></th></tr></thead><tbody>' +
+                    vis.map(function (o) {
+                        var aberto = !!mg.abertos[o.cod], custos = mgCustos([o.cod]);
+                        return '<tr><td>' + esc(o.nome) + (o.achou ? '' : ' <span class="text-xs" style="color:var(--adm-tinta-3)">(sem correspondência)</span>') + '</td>' +
+                            '<td class="num"' + mgNeg(o.qtd) + '>' + esc(giroFmt(o.qtd, 3)) + '</td><td class="num"' + mgNeg(o.venda) + '>' + esc(brl(o.venda)) + '</td><td class="num"' + mgNeg(o.custo) + '>' + esc(brl(o.custo)) + '</td>' +
+                            '<td class="num"' + mgNeg(o.margem) + '>' + esc(brl(o.margem)) + '</td><td class="num"' + mgNeg(o.pct == null ? 0 : o.pct) + '>' + esc(mgPct(o.pct)) + '</td>' +
+                            '<td><button type="button" class="adm-botao-fantasma" data-mg-cod="' + esc(o.cod) + '" aria-expanded="' + aberto + '"><i class="fa-solid ' + (aberto ? 'fa-chevron-up' : 'fa-chevron-down') + ' mr-1"></i>Custo e preço</button></td></tr>' +
+                            (aberto ? '<tr><td colspan="7">' + (custos.length ? mgTabelaCustos(custos, false) : '<p class="text-sm" style="color:var(--adm-tinta-3)">Sem custo cadastrado para este código.</p>') + '</td></tr>' : '');
+                    }).join('') + '</tbody></table></div>' +
+                    '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">' + NUM.format(vis.length) + ' de ' + NUM.format(ord.length) + ' produtos. Margem % = margem ÷ venda (— quando a venda é zero ou negativa).</p>' +
+                    (ord.length > vis.length ? '<button type="button" class="adm-botao-fantasma mt-3" data-mg-mais="1">Mostrar mais</button>' : '');
+            }
+        }
+        // Custos e preços atuais (sempre que houver), com alerta de custo acima do preço.
+        var cs = mgCustos(null);
+        html += '<p class="adm-tile-rotulo mt-6 mb-2">Custo e preço atuais' + (cs.length ? ' (' + NUM.format(cs.length) + ')' : '') + '</p>';
+        if (!cs.length) html += '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum custo sincronizado ainda.</p>';
+        else {
+            var nal = cs.filter(function (i) { return i.alerta; }).length;
+            html += '<p class="text-xs mb-2" style="color:var(--adm-tinta-3)">' + (nal ? '<strong>' + NUM.format(nal) + '</strong> com custo médio acima do preço de venda (primeiros da lista). ' : '') + 'Margem teórica = (preço − custo médio) ÷ preço.</p>' +
+                mgTabelaCustos(mg.todosCustos ? cs : cs.slice(0, 25), true) +
+                (cs.length > 25 ? '<button type="button" class="adm-botao-fantasma mt-3" data-mg-todos="1">' + (mg.todosCustos ? 'Mostrar só os 25 primeiros' : 'Mostrar todos') + '</button>' : '');
+        }
+        alvo.innerHTML = html + '</div>';
+    }
+
+    // Delegação no contêiner (novo a cada desenho completo da Vitrine, sem ouvintes duplicados).
+    function mgLigar(alvo) {
+        if (!alvo) return;
+        alvo.addEventListener('click', function (ev) {
+            var t = ev.target;
+            var d = t.closest('[data-mg-dias]'), o = t.closest('[data-mg-ord]'), c = t.closest('[data-mg-cod]');
+            if (d) { mg.dias = Number(d.getAttribute('data-mg-dias')) || 30; mg.mostrar = MG_POR_PAGINA; desenharMargem(); return; }
+            if (o) { var col = o.getAttribute('data-mg-ord'); mg.ord = { col: col, dir: mg.ord.col === col ? -mg.ord.dir : (col === 'nome' ? 1 : -1) }; desenharMargem(); return; }
+            if (c) { var k = c.getAttribute('data-mg-cod'); mg.abertos[k] = !mg.abertos[k]; desenharMargem(); return; }
+            if (t.closest('[data-mg-mais]')) { mg.mostrar += MG_POR_PAGINA; desenharMargem(); return; }
+            if (t.closest('[data-mg-todos]')) { mg.todosCustos = !mg.todosCustos; desenharMargem(); return; }
+            if (t.closest('[data-mg-tentar]') && !mg.carregando) carregarMargem();
+        });
     }
 
     /* ===================================================================

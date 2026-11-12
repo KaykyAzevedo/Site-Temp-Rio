@@ -5,18 +5,22 @@
 # Cada modulo: consulta FIXA (texto no codigo, so views da lista $ViewsPermitidas)
 #   -> projecao explicita de colunas -> RPC Supabase propria -> log sem dados pessoais.
 # Falha de um modulo nao impede os outros. Modulos: 'saude' (SELECT 1, toda execucao) e
-# 'receber' (contas a receber abertas da filial 4, 1x/hora; 15 min apos erro).
+# 'receber' (contas a receber abertas da filial 4, 1x/hora; 15 min apos erro) e
+# 'margem' (vendas por dia+produto dos ultimos 3 dias e custos por produto, 1x/hora).
 #   Normal:   sync-banco.ps1 [-Config C:\TempRio\solidcon\config-banco.json]
 # Config PROPRIO (config-banco.json, com modo proprio). O config.json do sync-produtos so e
 # LIDO, e so em modo real, para pegar a conta de integracao do Supabase; nunca e alterado.
 #   Offline:  sync-banco.ps1 -Simular [-SimularFalha] [-Forcar]   (sem banco e sem Supabase)
 #   -Forcar roda todos os modulos agora, ignorando o intervalo proprio de cada um.
+#   Backfill da margem: sync-banco.ps1 -BackfillMargemDesde 2026-05-29 (so vendas da margem,
+#   blocos de 31 dias ate hoje; nao mexe na agenda nem nos outros modulos).
 [CmdletBinding()]
 param(
     [string]$Config = 'C:\TempRio\solidcon\config-banco.json',
     [switch]$Simular,
     [switch]$SimularFalha,
-    [switch]$Forcar
+    [switch]$Forcar,
+    [ValidatePattern('^20[0-9]{2}-[0-9]{2}-[0-9]{2}$')][string]$BackfillMargemDesde
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -33,61 +37,97 @@ $SidSystem = New-Object Security.Principal.SecurityIdentifier('S-1-5-18')
 $SidAdmins = New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')
 
 # Unicas views que qualquer modulo pode ler (nome exato, schema dbo), combinadas com a SOLIDCON.
-$ViewsPermitidas = @('dbo.VW_RDUPHOLD_CONTASRECEBER_ABERTO', 'dbo.VW_MGN_PARCEIRO')
+$ViewsPermitidas = @('dbo.VW_RDUPHOLD_CONTASRECEBER_ABERTO', 'dbo.VW_MGN_PARCEIRO', 'dbo.VW_RDUPHOLD_VENDA_ITENS', 'dbo.VW_MGN_ESTOQUE')
 # Consultas aprovadas na revisao, LITERAIS, por 'modulo.consulta': uma consulta so roda se o
 # texto for identico ao daqui. E a garantia principal; o validador estrutural e defesa auxiliar.
 # Toda consulta de dados filtra a FILIAL 4 (Temp Rio); as outras filiais nunca saem do banco.
 $ConsultasAprovadas = @{
     'saude.ok' = "SELECT 1 AS ok, CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(32)) AS versao"
     'receber.parcelas' = "SELECT r.cdConta AS cd_conta, r.Documento AS documento_titulo, r.Vencimento AS vencimento, r.Valor_Parcela_Aberto AS valor_aberto, r.Valor_Fatura AS valor_fatura, r.Valor_Pago AS valor_pago, r.Valor_Parcela_Mora AS valor_mora, r.Valor_Parcela_Multa AS valor_multa, r.Valor_Parcela_Desconto AS valor_desconto, r.nmReceDesp AS categoria, r.cdNota AS cd_nota, r.Codigo_Fornecedor AS codigo_parceiro FROM dbo.VW_RDUPHOLD_CONTASRECEBER_ABERTO AS r WHERE r.Codigo_Filial = 4"
+    'margem.vendas' = "SELECT CAST(v.DataMovimento AS date) AS dia, v.Codigo_Produto AS codigo_produto, SUM(v.quantidade_produto) AS quantidade, SUM(v.Vlitem) AS venda_soma, SUM(v.Vlitem * v.quantidade_produto) AS venda_x_qtd, SUM(v.Valor_total_unidade * v.quantidade_produto) AS venda_unidade_x_qtd, SUM(v.CustoItem) AS custo_soma, SUM(v.CustoItem * v.quantidade_produto) AS custo_x_qtd, COUNT(*) AS linhas, SUM(CASE WHEN v.quantidade_produto IS NULL THEN 1 ELSE 0 END) AS nulos_qtd, SUM(CASE WHEN v.Vlitem IS NULL THEN 1 ELSE 0 END) AS nulos_venda, SUM(CASE WHEN v.Valor_total_unidade IS NULL THEN 1 ELSE 0 END) AS nulos_unidade, SUM(CASE WHEN v.CustoItem IS NULL THEN 1 ELSE 0 END) AS nulos_custo FROM dbo.VW_RDUPHOLD_VENDA_ITENS AS v WHERE v.CodigoFilial = 4 AND v.DataMovimento >= @desde AND v.DataMovimento < @ate GROUP BY CAST(v.DataMovimento AS date), v.Codigo_Produto"
+    'margem.custos' = "SELECT e.CodigoProduto AS codigo_produto, e.Unidade AS unidade, e.CustoMedioUnitario AS custo_medio, e.CustoReposicaoUnitario AS custo_reposicao, e.PrecoVenda AS preco_venda, e.DataUltimoRecebimento AS ultimo_recebimento FROM dbo.VW_MGN_ESTOQUE AS e WHERE e.CodigoFilial = 4 AND e.EstoqueTipo = 'Produto'"
     'receber.parceiros' = "SELECT p.CodigoParceiro AS codigo_parceiro, p.CNPJ AS documento FROM dbo.VW_MGN_PARCEIRO AS p WHERE p.CodigoParceiro IN (SELECT r.Codigo_Fornecedor FROM dbo.VW_RDUPHOLD_CONTASRECEBER_ABERTO AS r WHERE r.Codigo_Filial = 4)"
 }
-$RpcsPermitidas = @('solidcon_receber_banco_saude', 'solidcon_receber_contas_receber')
+$RpcsPermitidas = @('solidcon_receber_banco_saude', 'solidcon_receber_contas_receber', 'solidcon_receber_margem_vendas', 'solidcon_receber_custos')
+# Semantica de VW_RDUPHOLD_VENDA_ITENS (linha x unitario) AINDA NAO CONFIRMADA: a consulta traz
+# as variantes e aqui se escolhe qual vira venda/custo. Enquanto $null, a parte de vendas da margem
+# nao consulta nem envia nada (log AVISO); custos seguem normais.
+#   venda: 'venda_soma' (Vlitem = total da linha) | 'venda_x_qtd' (Vlitem unitario) | 'venda_unidade_x_qtd'
+#   custo: 'custo_soma' (CustoItem = total da linha) | 'custo_x_qtd' (CustoItem unitario)
+$SemanticaMargem = @{ venda = $null; custo = $null }
+# Variantes aceitas e as contagens de NULL que precisam ser 0 para o agregado valer.
+$VariantesVenda = @{ venda_soma = @('nulos_venda'); venda_x_qtd = @('nulos_venda', 'nulos_qtd'); venda_unidade_x_qtd = @('nulos_unidade', 'nulos_qtd') }
+$VariantesCusto = @{ custo_soma = @('nulos_custo'); custo_x_qtd = @('nulos_custo', 'nulos_qtd') }
+$DataMinimaMargem = [datetime]'2026-05-29'
 
 # Preparacao fixa de toda sessao (texto interno; nao passa pelo validador de modulos).
 $SqlSessao = 'SET NOCOUNT ON; SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED; SET LOCK_TIMEOUT 5000; SET DEADLOCK_PRIORITY LOW;'
-# Permissoes EFETIVAS do login (base, schema, objeto, coluna, papeis). Qualquer 1 = pode gravar;
-# NULL = nao deu para conferir. Os dois casos falham fechado. O login so enxerga objetos em que
-# tem algum privilegio (visibilidade de metadados), justamente os que poderiam ser gravados.
+# Permissoes EFETIVAS do login (base, schema, objeto, coluna, papeis). Qualquer 1 = pode gravar
+# ou executar; NULL = nao deu para conferir. Os dois casos falham fechado. O login so enxerga
+# objetos em que tem algum privilegio (visibilidade de metadados), justamente os que poderiam
+# ser gravados. Unica excecao: INSERT/UPDATE/DELETE/EXECUTE de nivel SCHEMA em schema cujo dono
+# e um papel fixo do banco (principal_id 16384-16393, ex.: 'db_datareader') e que NAO tem nenhum
+# objeto (sem objeto, esses direitos nao alcancam nada; um objeto faz voltar a contar).
+# ALTER/CONTROL/TAKE OWNERSHIP/CREATE SEQUENCE de schema contam SEMPRE, inclusive nesses schemas:
+# CREATE SEQUENCE so exige ALTER/CONTROL no schema (sem CREATE na base) = DDL real.
+# Devolve contagens por nivel/tipo.
 # Mesmo texto no configurar-senha-banco.ps1. NAO substitui a confirmacao do DBA da SOLIDCON.
 $SqlPermissoes = @'
 SELECT
   SUM(CASE WHEN t.v = 1 THEN 1 ELSE 0 END) AS escrita,
   SUM(CASE WHEN t.v IS NULL THEN 1 ELSE 0 END) AS inconclusivo,
-  COUNT(*) AS verificados
+  COUNT(*) AS verificados,
+  SUM(CASE WHEN t.v = 1 AND t.nivel = 'base' AND t.tipo = 'e' THEN 1 ELSE 0 END) AS base_execucao,
+  SUM(CASE WHEN t.v = 1 AND t.nivel = 'base' AND t.tipo = 'g' THEN 1 ELSE 0 END) AS base_gravacao,
+  SUM(CASE WHEN t.v = 1 AND t.nivel = 'schema' AND t.tipo = 'e' THEN 1 ELSE 0 END) AS schema_execucao,
+  SUM(CASE WHEN t.v = 1 AND t.nivel = 'schema' AND t.tipo = 'g' THEN 1 ELSE 0 END) AS schema_gravacao,
+  SUM(CASE WHEN t.v = 1 AND t.nivel = 'objeto' AND t.tipo = 'e' THEN 1 ELSE 0 END) AS objeto_execucao,
+  SUM(CASE WHEN t.v = 1 AND t.nivel = 'objeto' AND t.tipo = 'g' THEN 1 ELSE 0 END) AS objeto_gravacao,
+  SUM(CASE WHEN t.v = 1 AND t.nivel = 'coluna' THEN 1 ELSE 0 END) AS coluna_gravacao,
+  SUM(CASE WHEN t.v = 1 AND t.nivel = 'papel' THEN 1 ELSE 0 END) AS papel_gravacao
 FROM (
-  SELECT HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', p.n) AS v
+  SELECT 'base' AS nivel, CASE WHEN p.n = 'EXECUTE' THEN 'e' ELSE 'g' END AS tipo,
+         HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', p.n) AS v
     FROM (VALUES ('INSERT'),('UPDATE'),('DELETE'),('EXECUTE'),('ALTER'),('CONTROL'),('TAKE OWNERSHIP'),
                  ('CREATE TABLE'),('CREATE VIEW'),('CREATE PROCEDURE'),('CREATE FUNCTION'),('CREATE SCHEMA'),
                  ('ALTER ANY SCHEMA'),('ALTER ANY USER'),('ALTER ANY ROLE')) AS p(n)
   UNION ALL
-  SELECT HAS_PERMS_BY_NAME(QUOTENAME(s.name), 'SCHEMA', p.n)
+  SELECT 'schema', 'g', HAS_PERMS_BY_NAME(QUOTENAME(s.name), 'SCHEMA', p.n)
     FROM sys.schemas AS s
-   CROSS JOIN (VALUES ('INSERT'),('UPDATE'),('DELETE'),('EXECUTE'),('ALTER'),('CONTROL'),('TAKE OWNERSHIP')) AS p(n)
+   CROSS JOIN (VALUES ('ALTER'),('CONTROL'),('TAKE OWNERSHIP'),('CREATE SEQUENCE')) AS p(n)
   UNION ALL
-  SELECT HAS_PERMS_BY_NAME(QUOTENAME(SCHEMA_NAME(o.schema_id)) + '.' + QUOTENAME(o.name), 'OBJECT', p.n)
+  SELECT 'schema', CASE WHEN p.n = 'EXECUTE' THEN 'e' ELSE 'g' END,
+         HAS_PERMS_BY_NAME(QUOTENAME(s.name), 'SCHEMA', p.n)
+    FROM sys.schemas AS s
+   CROSS JOIN (VALUES ('INSERT'),('UPDATE'),('DELETE'),('EXECUTE')) AS p(n)
+   WHERE NOT (s.principal_id BETWEEN 16384 AND 16393
+              AND NOT EXISTS (SELECT 1 FROM sys.objects AS so WHERE so.schema_id = s.schema_id))
+  UNION ALL
+  SELECT 'objeto', 'g', HAS_PERMS_BY_NAME(QUOTENAME(SCHEMA_NAME(o.schema_id)) + '.' + QUOTENAME(o.name), 'OBJECT', p.n)
     FROM sys.objects AS o
    CROSS JOIN (VALUES ('INSERT'),('UPDATE'),('DELETE'),('ALTER'),('CONTROL'),('TAKE OWNERSHIP')) AS p(n)
    WHERE o.type IN ('U', 'V')
   UNION ALL
-  SELECT HAS_PERMS_BY_NAME(QUOTENAME(SCHEMA_NAME(o.schema_id)) + '.' + QUOTENAME(o.name), 'OBJECT', p.n)
+  SELECT 'objeto', CASE WHEN p.n = 'EXECUTE' THEN 'e' ELSE 'g' END,
+         HAS_PERMS_BY_NAME(QUOTENAME(SCHEMA_NAME(o.schema_id)) + '.' + QUOTENAME(o.name), 'OBJECT', p.n)
     FROM sys.objects AS o
    CROSS JOIN (VALUES ('EXECUTE'),('ALTER'),('CONTROL'),('TAKE OWNERSHIP')) AS p(n)
    WHERE o.type IN ('P', 'PC', 'X')
   UNION ALL
-  SELECT HAS_PERMS_BY_NAME(QUOTENAME(SCHEMA_NAME(o.schema_id)) + '.' + QUOTENAME(o.name), 'OBJECT', p.n)
+  SELECT 'objeto', 'g', HAS_PERMS_BY_NAME(QUOTENAME(SCHEMA_NAME(o.schema_id)) + '.' + QUOTENAME(o.name), 'OBJECT', p.n)
     FROM sys.objects AS o
    CROSS JOIN (VALUES ('UPDATE'),('ALTER'),('CONTROL'),('TAKE OWNERSHIP')) AS p(n)
    WHERE o.type = 'SO'
   UNION ALL
-  SELECT HAS_PERMS_BY_NAME(QUOTENAME(SCHEMA_NAME(o.schema_id)) + '.' + QUOTENAME(o.name), 'OBJECT', 'UPDATE', c.name, 'COLUMN')
+  SELECT 'coluna', 'g', HAS_PERMS_BY_NAME(QUOTENAME(SCHEMA_NAME(o.schema_id)) + '.' + QUOTENAME(o.name), 'OBJECT', 'UPDATE', c.name, 'COLUMN')
     FROM sys.columns AS c
     JOIN sys.objects AS o ON o.object_id = c.object_id
    WHERE o.type IN ('U', 'V')
   UNION ALL
-  SELECT CASE WHEN IS_SRVROLEMEMBER('sysadmin') = 1 THEN 1 WHEN IS_SRVROLEMEMBER('sysadmin') = 0 THEN 0 END
+  SELECT 'papel', 'g', CASE WHEN IS_SRVROLEMEMBER('sysadmin') = 1 THEN 1 WHEN IS_SRVROLEMEMBER('sysadmin') = 0 THEN 0 END
   UNION ALL
-  SELECT CASE WHEN IS_ROLEMEMBER('db_owner') = 1 OR IS_ROLEMEMBER('db_datawriter') = 1 OR IS_ROLEMEMBER('db_ddladmin') = 1 THEN 1
+  SELECT 'papel', 'g',
+         CASE WHEN IS_ROLEMEMBER('db_owner') = 1 OR IS_ROLEMEMBER('db_datawriter') = 1 OR IS_ROLEMEMBER('db_ddladmin') = 1 THEN 1
               WHEN IS_ROLEMEMBER('db_owner') = 0 AND IS_ROLEMEMBER('db_datawriter') = 0 AND IS_ROLEMEMBER('db_ddladmin') = 0 THEN 0 END
 ) AS t
 '@
@@ -272,11 +312,11 @@ function Abrir-Sessao {
         $cmd = $con.CreateCommand(); $cmd.CommandTimeout = 15; $cmd.CommandText = $SqlSessao
         [void]$cmd.ExecuteNonQuery()
         $cmd = $con.CreateCommand(); $cmd.CommandTimeout = 30; $cmd.CommandText = $SqlPermissoes
-        $p = Ler-Linhas $cmd @('escrita', 'inconclusivo', 'verificados') 1
+        $p = Ler-Linhas $cmd ($ColunasPermissoes) 1
         # Login de consulta nunca pode gravar: se puder, ou se nao der para conferir, ninguem coleta.
         if ($p.Count -ne 1 -or $null -eq $p[0].escrita -or $null -eq $p[0].inconclusivo -or
             $null -eq $p[0].verificados -or [int]$p[0].verificados -lt 17) { throw 'permissao-inconclusiva' }
-        if ([int]$p[0].escrita -ne 0) { throw 'login-com-escrita' }
+        if ([int]$p[0].escrita -ne 0) { $script:DetalhePermissoes = Resumo-Permissoes $p[0]; throw 'login-com-escrita' }
         if ([int]$p[0].inconclusivo -ne 0) { throw 'permissao-inconclusiva' }
         return @{ simulada = $false; con = $con }
     } catch {
@@ -285,17 +325,37 @@ function Abrir-Sessao {
     } finally { $senha.Dispose() }
 }
 
+$ColunasPermissoes = @('escrita', 'inconclusivo', 'verificados', 'base_execucao', 'base_gravacao', 'schema_execucao',
+    'schema_gravacao', 'objeto_execucao', 'objeto_gravacao', 'coluna_gravacao', 'papel_gravacao')
+$DetalhePermissoes = ''
+
+function Resumo-Permissoes($L) {
+    # So contagens (nunca nomes de schema/objeto): onde e de que tipo.
+    function N($v) { if ($null -eq $v -or $v -is [DBNull]) { '?' } else { [string][int]$v } }
+    return ('execucao: base {0}, schema {1}, objeto {2}; gravacao: base {3}, schema {4}, objeto {5}, coluna {6}, papel {7}' -f
+        (N $L['base_execucao']), (N $L['schema_execucao']), (N $L['objeto_execucao']),
+        (N $L['base_gravacao']), (N $L['schema_gravacao']), (N $L['objeto_gravacao']), (N $L['coluna_gravacao']), (N $L['papel_gravacao']))
+}
+
 function Fechar-Sessao($Sessao) {
     if ($Sessao -and $Sessao.con) { $Sessao.con.Dispose() }
 }
 
-function Executar-Consulta($Sessao, $Modulo, [string]$Nome) {
+function Executar-Consulta($Sessao, $Modulo, [string]$Nome, [hashtable]$Valores = @{}) {
     $c = $Modulo.consultas[$Nome]
     $null = Validar-ConsultaFixa ($Modulo.nome + '.' + $Nome) $c.sql
-    if ($Sessao.simulada) { return ,(& $c.simulacao) }
+    # Parametros: so os declarados na consulta, so datas, sempre tipados (nunca texto no SQL).
+    $declarados = if ($c.ContainsKey('parametros')) { @($c.parametros) } else { @() }
+    foreach ($k in $Valores.Keys) { if ($k -cnotin $declarados) { throw 'parametro-invalido' } }
+    foreach ($k in $declarados) { if (-not $Valores.ContainsKey($k) -or $Valores[$k] -isnot [datetime]) { throw 'parametro-invalido' } }
+    if ($Sessao.simulada) { return ,(& $c.simulacao $Valores) }
     $cmd = $Sessao.con.CreateCommand()
-    $cmd.CommandTimeout = 15
+    $cmd.CommandTimeout = 30
     $cmd.CommandText = $c.sql
+    foreach ($k in $declarados) {
+        $par = $cmd.Parameters.Add('@' + $k, [Data.SqlDbType]::DateTime)
+        $par.Value = $Valores[$k]
+    }
     return ,(Ler-Linhas $cmd $c.colunas $c.maxLinhas)
 }
 
@@ -324,7 +384,7 @@ function Descrever-Erro($Registro) {
         'senha-formato' = 'arquivo de senha invalido'
         'senha-acesso' = 'sem acesso ao arquivo de senha (a tarefa deve rodar como SYSTEM)'
         'senha-decifrar' = 'senha nao decifra neste servidor'
-        'login-com-escrita' = 'login de consulta tem permissao de escrita; coleta suspensa'
+        'login-com-escrita' = 'login de consulta pode gravar ou executar; coleta suspensa'
         'permissao-inconclusiva' = 'nao foi possivel confirmar que o login nao grava; coleta suspensa'
         'coluna-ausente' = 'consulta sem coluna esperada'
         'linhas-demais' = 'consulta devolveu linhas demais'
@@ -332,7 +392,16 @@ function Descrever-Erro($Registro) {
         'simulada' = 'falha simulada'
         'parcelas-duplicadas' = 'parcelas repetidas na view (mesma conta/vencimento/titulo)'
         'parcela-invalida' = 'parcela com conta, vencimento ou valor invalido'
+        'parametro-invalido' = 'parametro de consulta invalido'
+        'margem-invalida' = 'linha de venda com produto, dia, quantidade ou valor invalido'
+        'margem-duplicada' = 'mesmo dia/produto repetido na consulta'
+        'margem-incompleta' = 'venda, custo ou quantidade nulos na janela; janela anterior preservada'
+        'semantica-invalida' = 'semantica de venda/custo invalida no script'
+        'semantica-pendente' = 'semantica de venda/custo pendente'
+        'custos-duplicados' = 'mesmo produto/unidade com custos diferentes'
+        'custo-invalido' = 'linha de custo com produto invalido'
     }
+    if ($m -ceq 'login-com-escrita' -and $script:DetalhePermissoes) { return ($fixas[$m] + ' (' + $script:DetalhePermissoes + ')') }
     if ($fixas.ContainsKey($m)) { return $fixas[$m] }
     return 'falha local'
 }
@@ -605,9 +674,255 @@ function Modulo-Receber($Modulo) {
         $relogio.ElapsedMilliseconds, $enviado, $ExecucaoId)
 }
 
+
+# ---------- margem: vendas por dia+produto e custos por produto da filial 4 ----------
+function Centavos-Assinado($Valor) {
+    # Vendas do dia podem ser negativas (devolucao): sinal preservado, arredondamento simetrico.
+    # Desconhecido nunca vira zero (margem de 100% inventada): falha a janela.
+    if ($null -eq $Valor -or $Valor -is [DBNull]) { throw 'margem-incompleta' }
+    if ($Valor -isnot [decimal] -and $Valor -isnot [int] -and $Valor -isnot [long] -and $Valor -isnot [double]) { throw 'margem-invalida' }
+    $c = [decimal]::Round(([decimal]$Valor) * 100, 0, [MidpointRounding]::AwayFromZero)
+    if ([Math]::Abs($c) -gt 999999999999999) { throw 'margem-invalida' }
+    return [long]$c
+}
+
+function Janelas-Margem([datetime]$Desde, [datetime]$Ate) {
+    # Blocos [desde, ate) de ate 31 dias (a RPC aceita ate 62).
+    $j = New-Object Collections.ArrayList
+    $d = $Desde.Date
+    while ($d -lt $Ate) {
+        $f = $d.AddDays(31); if ($f -gt $Ate) { $f = $Ate }
+        [void]$j.Add(@{ desde = $d; ate = $f }); $d = $f
+    }
+    return ,$j.ToArray()
+}
+
+function Hoje-SaoPaulo {
+    $z = [TimeZoneInfo]::FindSystemTimeZoneById('E. South America Standard Time')
+    return [TimeZoneInfo]::ConvertTimeFromUtc([DateTime]::UtcNow, $z).Date
+}
+
+function Estado-Semantica {
+    # 'pendente' = as duas $null (conhecido, nao falha no ciclo normal); 'ok'; 'invalida' = falha fechado.
+    if ($null -eq $SemanticaMargem.venda -and $null -eq $SemanticaMargem.custo) { return 'pendente' }
+    if ($SemanticaMargem.venda -is [string] -and $SemanticaMargem.custo -is [string] -and
+        $VariantesVenda.ContainsKey($SemanticaMargem.venda) -and $VariantesCusto.ContainsKey($SemanticaMargem.custo)) { return 'ok' }
+    return 'invalida'
+}
+
+function Normalizar-MargemVendas($Linhas, [datetime]$Desde, [datetime]$Ate) {
+    $estado = Estado-Semantica
+    if ($estado -ne 'ok') { throw ('semantica-' + $estado) }
+    $exigidas = @('nulos_qtd') + $VariantesVenda[$SemanticaMargem.venda] + $VariantesCusto[$SemanticaMargem.custo]
+    $itens = New-Object Collections.ArrayList
+    $vistos = @{}
+    foreach ($l in $Linhas) {
+        $cod = Inteiro-Banco $l.codigo_produto
+        if ($null -eq $cod -or $cod -gt 2147483647 -or $l.dia -isnot [datetime]) { throw 'margem-invalida' }
+        if ($l.dia.Date -lt $Desde -or $l.dia.Date -ge $Ate) { throw 'margem-invalida' }
+        $dia = $l.dia.ToString('yyyy-MM-dd', $Invariant)
+        $chave = $dia + '|' + $cod
+        if ($vistos.ContainsKey($chave)) { throw 'margem-duplicada' }
+        $vistos[$chave] = $true
+        if ($null -eq $l.quantidade -or $l.quantidade -is [DBNull] -or $l.quantidade -isnot [decimal]) { throw 'margem-invalida' }
+        $q = [decimal]::Round([decimal]$l.quantidade, 3, [MidpointRounding]::AwayFromZero)
+        if ([Math]::Abs($q) -ge 1000000000000) { throw 'margem-invalida' }
+        $n = Inteiro-Banco $l.linhas
+        if ($null -eq $n) { throw 'margem-invalida' }
+        # Completude: SUM ignora NULL; com qualquer linha nula na variante usada o agregado seria parcial.
+        foreach ($k in ($exigidas | Select-Object -Unique)) {
+            $z = $l[$k]
+            if ($null -eq $z -or $z -is [DBNull] -or ($z -isnot [int] -and $z -isnot [long] -and $z -isnot [decimal])) { throw 'margem-incompleta' }
+            if ([decimal]$z -ne 0) { throw 'margem-incompleta' }
+        }
+        [void]$itens.Add([ordered]@{
+            dia = $dia; codigo_produto = [long]$cod; quantidade = $q
+            venda = Centavos-Assinado $l[$SemanticaMargem.venda]
+            custo = Centavos-Assinado $l[$SemanticaMargem.custo]
+            linhas = [long]$n
+        })
+    }
+    return ,$itens.ToArray()
+}
+
+function Normalizar-Custos($Linhas) {
+    $mapa = [ordered]@{}
+    $negativos = 0
+    foreach ($l in $Linhas) {
+        $cod = Inteiro-Banco $l.codigo_produto
+        if ($null -eq $cod -or $cod -gt 2147483647) { throw 'custo-invalido' }
+        $un = Texto-Curto $l.unidade 20 '^[0-9A-Za-z./ -]+$'
+        if ($null -eq $un) { $un = '-' }
+        $vals = @{}
+        foreach ($k in 'custo_medio', 'custo_reposicao', 'preco_venda') {
+            $v = $l[$k]
+            if ($null -eq $v -or $v -is [DBNull]) { $vals[$k] = $null; continue }
+            if ($v -isnot [decimal] -and $v -isnot [double] -and $v -isnot [int] -and $v -isnot [long]) { throw 'custo-invalido' }
+            # Custo/preco negativo no ERP (estoque negativo etc.): fica sem valor, contado no log.
+            if ([decimal]$v -lt 0) { $vals[$k] = $null; $negativos++; continue }
+            $vals[$k] = Centavos-Banco $v $true
+        }
+        $rec = $null
+        if ($l.ultimo_recebimento -is [datetime] -and $l.ultimo_recebimento.Year -ge 1990 -and $l.ultimo_recebimento.Year -le 2099) {
+            $rec = $l.ultimo_recebimento.ToString('yyyy-MM-dd', $Invariant)
+        }
+        $item = [ordered]@{
+            codigo_produto = [long]$cod; unidade = $un
+            custo_medio = $vals.custo_medio; custo_reposicao = $vals.custo_reposicao; preco_venda = $vals.preco_venda
+            ultimo_recebimento = $rec
+        }
+        $chave = [string]$cod + '|' + $un
+        if ($mapa.Contains($chave)) {
+            # Linha repetida identica e ignorada; repetida com valores diferentes falha a coleta.
+            if ((ConvertTo-Json $mapa[$chave] -Compress) -cne (ConvertTo-Json $item -Compress)) { throw 'custos-duplicados' }
+            continue
+        }
+        $mapa[$chave] = $item
+    }
+    return @{ itens = [object[]]@($mapa.Values); negativos = $negativos }
+}
+
+$ModuloMargem = @{
+    nome = 'margem'; codigo = 4; intervaloMin = 60; intervaloErroMin = 15
+    consultas = [ordered]@{
+        vendas = @{
+            maxLinhas = 50000; parametros = @('desde', 'ate')
+            colunas = @('dia', 'codigo_produto', 'quantidade', 'venda_soma', 'venda_x_qtd', 'venda_unidade_x_qtd', 'custo_soma', 'custo_x_qtd', 'linhas',
+                        'nulos_qtd', 'nulos_venda', 'nulos_unidade', 'nulos_custo')
+            sql = "SELECT CAST(v.DataMovimento AS date) AS dia, v.Codigo_Produto AS codigo_produto, SUM(v.quantidade_produto) AS quantidade, SUM(v.Vlitem) AS venda_soma, SUM(v.Vlitem * v.quantidade_produto) AS venda_x_qtd, SUM(v.Valor_total_unidade * v.quantidade_produto) AS venda_unidade_x_qtd, SUM(v.CustoItem) AS custo_soma, SUM(v.CustoItem * v.quantidade_produto) AS custo_x_qtd, COUNT(*) AS linhas, SUM(CASE WHEN v.quantidade_produto IS NULL THEN 1 ELSE 0 END) AS nulos_qtd, SUM(CASE WHEN v.Vlitem IS NULL THEN 1 ELSE 0 END) AS nulos_venda, SUM(CASE WHEN v.Valor_total_unidade IS NULL THEN 1 ELSE 0 END) AS nulos_unidade, SUM(CASE WHEN v.CustoItem IS NULL THEN 1 ELSE 0 END) AS nulos_custo FROM dbo.VW_RDUPHOLD_VENDA_ITENS AS v WHERE v.CodigoFilial = 4 AND v.DataMovimento >= @desde AND v.DataMovimento < @ate GROUP BY CAST(v.DataMovimento AS date), v.Codigo_Produto"
+            # FICTICIO: 2 produtos por dia da janela (um com devolucao).
+            simulacao = {
+                param($v)
+                $r = New-Object Collections.ArrayList
+                for ($d = $v.desde; $d -lt $v.ate; $d = $d.AddDays(1)) {
+                    [void]$r.Add(@{ dia = $d; codigo_produto = 501; quantidade = [decimal]3; venda_soma = [decimal]90; venda_x_qtd = [decimal]270; venda_unidade_x_qtd = [decimal]90; custo_soma = [decimal]54.3; custo_x_qtd = [decimal]162.9; linhas = 2; nulos_qtd = 0; nulos_venda = 0; nulos_unidade = 0; nulos_custo = 0 })
+                    [void]$r.Add(@{ dia = $d; codigo_produto = 502; quantidade = [decimal]-1; venda_soma = [decimal]-25.5; venda_x_qtd = [decimal]25.5; venda_unidade_x_qtd = [decimal]-25.5; custo_soma = [decimal]-12; custo_x_qtd = [decimal]12; linhas = 1; nulos_qtd = 0; nulos_venda = 0; nulos_unidade = 0; nulos_custo = 0 })
+                }
+                ,$r.ToArray()
+            }
+        }
+        custos = @{
+            maxLinhas = 20000
+            colunas = @('codigo_produto', 'unidade', 'custo_medio', 'custo_reposicao', 'preco_venda', 'ultimo_recebimento')
+            sql = "SELECT e.CodigoProduto AS codigo_produto, e.Unidade AS unidade, e.CustoMedioUnitario AS custo_medio, e.CustoReposicaoUnitario AS custo_reposicao, e.PrecoVenda AS preco_venda, e.DataUltimoRecebimento AS ultimo_recebimento FROM dbo.VW_MGN_ESTOQUE AS e WHERE e.CodigoFilial = 4 AND e.EstoqueTipo = 'Produto'"
+            simulacao = {
+                param($v)
+                ,@(
+                    @{ codigo_produto = 501; unidade = 'CX'; custo_medio = [decimal]18.1; custo_reposicao = [decimal]19; preco_venda = [decimal]30; ultimo_recebimento = [datetime]::Today.AddDays(-4) },
+                    @{ codigo_produto = 502; unidade = 'CX'; custo_medio = [decimal]-2; custo_reposicao = [decimal]12; preco_venda = [decimal]25.5; ultimo_recebimento = [datetime]'1899-12-30' },
+                    @{ codigo_produto = 503; unidade = $null; custo_medio = $null; custo_reposicao = $null; preco_venda = [decimal]10; ultimo_recebimento = $null }
+                )
+            }
+        }
+    }
+}
+
+function Enviar-Lote([string]$Rpc, $Dados, [string]$Rotulo) {
+    $resposta = Chamar-Rpc $Rpc $Dados
+    if ((Campo $resposta 'status') -cne 'ok') {
+        $mot = [string](Campo $resposta 'motivo')
+        if ($mot -notmatch '^[a-z0-9_]{1,40}$') { $mot = 'sem_motivo' }
+        Log ('ERRO margem {0} modo={1} fase=rpc motivo={2} execucao={3}' -f $Rotulo, $Cfg.modo, $mot, $ExecucaoId) | Out-Host
+        return $false
+    }
+    return $true
+}
+
+function Margem-Vendas($Sessao, $Modulo, $Janelas) {
+    $estado = Estado-Semantica
+    if ($estado -eq 'invalida') {
+        Log ('ERRO margem vendas modo={0} fase=configuracao motivo=semantica de venda/custo invalida no script; nada consultado.' -f $Cfg.modo)
+        $script:MargemOk = $false
+        return
+    }
+    if ($estado -eq 'pendente') {
+        # Configuracao conhecida e pendente: avisa sem consultar a view nem enviar.
+        Log ('AVISO margem vendas modo={0}: semantica de Vlitem/CustoItem ainda nao confirmada; nada consultado nem enviado.' -f $Cfg.modo)
+        # No ciclo normal e pendencia conhecida (nao falha); no backfill pedido explicitamente, falha.
+        if ($BackfillMargemDesde) { $script:MargemOk = $false }
+        return
+    }
+    foreach ($j in $Janelas) {
+        $rot = 'vendas {0}..{1}' -f $j.desde.ToString('yyyy-MM-dd'), $j.ate.AddDays(-1).ToString('yyyy-MM-dd')
+        try {
+            $linhas = Executar-Consulta $Sessao $Modulo 'vendas' @{ desde = $j.desde; ate = $j.ate }
+            $coleta = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", $Invariant)
+            $itens = Normalizar-MargemVendas $linhas $j.desde $j.ate
+        } catch {
+            Log ('ERRO margem {0} modo={1} fase=consulta motivo={2} execucao={3}' -f $rot, $Cfg.modo, (Descrever-Erro $_), $ExecucaoId)
+            $script:MargemOk = $false; continue
+        }
+        $enviado = 'nao'
+        $fasePart = 'envio'
+        try {
+            if ($Real -and -not $Simular) {
+                if (-not (Enviar-Lote 'solidcon_receber_margem_vendas' @{ p_desde = $j.desde.ToString('yyyy-MM-dd'); p_ate = $j.ate.ToString('yyyy-MM-dd'); p_itens = [object[]]$itens; p_coletado_em = $coleta; p_execucao_id = $ExecucaoId } $rot)) { $script:MargemOk = $false; continue }
+                $enviado = 'sim'
+            } elseif (-not $Real) {
+                $fasePart = 'estado-local'
+                Salvar-Json ([ordered]@{ desde = $j.desde.ToString('yyyy-MM-dd'); ate = $j.ate.ToString('yyyy-MM-dd'); coletado_em = $coleta; simulado = [bool]$Simular; itens = [object[]]$itens }) (Join-Path $Pasta 'banco-margem-vendas-teste.json')
+            }
+        } catch {
+            # Transporte/HTTP/disco: so fase fixa (nunca corpo/mensagem); segue para os proximos blocos e custos.
+            Log ('ERRO margem {0} modo={1} fase={2} execucao={3}' -f $rot, $Cfg.modo, $fasePart, $ExecucaoId)
+            $script:MargemOk = $false; continue
+        }
+        Log ('OK margem {0} modo={1}{2} linhas={3} enviado={4} execucao={5}' -f $rot, $Cfg.modo, $(if ($Simular) { ' SIMULADO' } else { '' }), $itens.Count, $enviado, $ExecucaoId)
+    }
+}
+
+function Margem-Custos($Sessao, $Modulo) {
+    try {
+        $linhas = Executar-Consulta $Sessao $Modulo 'custos'
+        $coleta = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", $Invariant)
+        $n = Normalizar-Custos $linhas
+    } catch {
+        Log ('ERRO margem custos modo={0} fase=consulta motivo={1} execucao={2}' -f $Cfg.modo, (Descrever-Erro $_), $ExecucaoId)
+        $script:MargemOk = $false; return
+    }
+    $enviado = 'nao'
+    $fasePart = 'envio'
+    try {
+        if ($Real -and -not $Simular) {
+            if (-not (Enviar-Lote 'solidcon_receber_custos' @{ p_itens = $n.itens; p_coletado_em = $coleta; p_execucao_id = $ExecucaoId } 'custos')) { $script:MargemOk = $false; return }
+            $enviado = 'sim'
+        } elseif (-not $Real) {
+            $fasePart = 'estado-local'
+            Salvar-Json ([ordered]@{ coletado_em = $coleta; simulado = [bool]$Simular; itens = $n.itens }) (Join-Path $Pasta 'banco-margem-custos-teste.json')
+        }
+    } catch {
+        Log ('ERRO margem custos modo={0} fase={1} execucao={2}' -f $Cfg.modo, $fasePart, $ExecucaoId)
+        $script:MargemOk = $false; return
+    }
+    Log ('OK margem custos modo={0}{1} linhas={2} valores_negativos_descartados={3} enviado={4} execucao={5}' -f $Cfg.modo, $(if ($Simular) { ' SIMULADO' } else { '' }), $n.itens.Count, $n.negativos, $enviado, $ExecucaoId)
+}
+
+function Modulo-Margem($Modulo) {
+    $sessao = $null
+    try {
+        try { $sessao = Abrir-Sessao }
+        catch {
+            Log ('ERRO margem modo={0} fase=conexao motivo={1} execucao={2}' -f $Cfg.modo, (Descrever-Erro $_), $ExecucaoId)
+            throw 'modulo-com-erro'
+        }
+        # As partes registram falha em $script:MargemOk (o Log escreve na saida: nada de retorno booleano).
+        $script:MargemOk = $true
+        if ($BackfillMargemDesde) {
+            Margem-Vendas $sessao $Modulo $script:JanelasBackfill
+        } else {
+            $hoje = Hoje-SaoPaulo
+            Margem-Vendas $sessao $Modulo (Janelas-Margem $hoje.AddDays(-2) $hoje.AddDays(1))
+            # Partes independentes: falha em vendas nao impede custos (e vice-versa).
+            Margem-Custos $sessao $Modulo
+        }
+    } finally { Fechar-Sessao $sessao }
+    if (-not $script:MargemOk) { throw 'modulo-com-erro' }
+}
+
 $Modulos = @(
     @{ def = $ModuloSaude; funcao = 'Modulo-Saude' }
     @{ def = $ModuloReceber; funcao = 'Modulo-Receber' }
+    @{ def = $ModuloMargem; funcao = 'Modulo-Margem' }
 )
 
 # Dot-source (testes) carrega so as funcoes e definicoes.
@@ -662,13 +977,26 @@ try {
         $SupabaseBase = $supabase.GetLeftPart([UriPartial]::Authority)
     }
     $falhos = @()
-    foreach ($m in $Modulos) {
+    $listaModulos = $Modulos
+    if ($BackfillMargemDesde) {
+        $Fase = 'backfill'
+        $Mensagem = 'Backfill da margem: data invalida (minimo 2026-05-29, nao futura).'
+        $desdeBf = [datetime]::ParseExact($BackfillMargemDesde, 'yyyy-MM-dd', $Invariant)
+        $ateBf = (Hoje-SaoPaulo).AddDays(1)
+        if ($desdeBf -lt $DataMinimaMargem -or $desdeBf -ge $ateBf) { throw 'backfill invalido' }
+        $script:JanelasBackfill = Janelas-Margem $desdeBf $ateBf
+        # Backfill: so a margem, sem agenda (nao adia nem antecipa o ciclo normal).
+        $listaModulos = @($Modulos | Where-Object { $_.def.nome -ceq 'margem' })
+    }
+    foreach ($m in $listaModulos) {
         $Fase = 'modulo-' + $m.def.nome
         # Agenda: ler e RESERVAR antes de consultar (grava o intervalo de erro). Se o estado
         # local nao pode ser lido ou gravado, o modulo nao consulta (sem limite = sem coleta).
         try {
-            if (-not (Modulo-Devido $m.def)) { continue }
-            Agendar-Modulo $m.def $false
+            if (-not $BackfillMargemDesde) {
+                if (-not (Modulo-Devido $m.def)) { continue }
+                Agendar-Modulo $m.def $false
+            }
         } catch {
             $falhos += $m.def
             try { Log ('ERRO {0} fase=agenda: agenda local ilegivel ou sem gravacao; modulo nao rodou.' -f $m.def.nome) } catch {}
@@ -678,7 +1006,7 @@ try {
             # Consulta fora da whitelist/aprovacao: o modulo nem abre conexao.
             foreach ($nc in $m.def.consultas.Keys) { $null = Validar-ConsultaFixa ($m.def.nome + '.' + $nc) $m.def.consultas[$nc].sql }
             & $m.funcao $m.def
-            try { Agendar-Modulo $m.def $true }
+            try { if (-not $BackfillMargemDesde) { Agendar-Modulo $m.def $true } }
             catch {
                 # Coletou, mas a agenda de sucesso nao gravou: vale a reserva (15 min) e o modulo sai com erro.
                 $falhos += $m.def

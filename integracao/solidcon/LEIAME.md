@@ -551,7 +551,16 @@ Tem que aparecer:
 - `erro SQL 18456`: senha ou login errados → repita o Passo 4.
 - `erro SQL 4060`: nome da base errado ou o login não tem acesso a ela → confira o Passo 3.
 - `erro SQL 53`, `-2` ou `258`: o servidor não respondeu → confira o endereço e se o servidor está na rede.
-- `ATENCAO: o login PODE gravar`: **pare** e peça à SOLIDCON para tirar a permissão de gravação.
+- `ATENCAO: o login PODE gravar ou executar`: **pare** e peça à SOLIDCON para tirar a permissão.
+  As duas linhas seguintes dizem **onde** (base, schema, objeto, coluna, papel) e **de que tipo**
+  (EXECUTE = rodar procedures; GRAVAÇÃO/ALTERAÇÃO = inserir, alterar, apagar, mudar estrutura), só
+  com contagens. Exemplo: `EXECUTE ... schema 1` = o login pode executar as procedures de um schema
+  inteiro (`GRANT EXECUTE ON SCHEMA`). O mesmo resumo aparece no log e no painel (`motivo=`).
+  No schema embutido de um papel fixo (por exemplo `db_datareader`) **vazio**, INSERT/UPDATE/
+  DELETE/EXECUTE não contam (sem objeto não alcançam nada). Já ALTER/CONTROL/TAKE OWNERSHIP/
+  CREATE SEQUENCE nesse schema **contam**: com eles o login consegue criar objetos ali (DDL).
+  Quem é membro de `db_datareader` costuma ter isso; a correção recomendada para a SOLIDCON é
+  tirar o login de `db_datareader` e dar SELECT só nas views combinadas.
 - `ATENCAO: nao foi possivel confirmar`: **pare** e mande a mensagem ao DBA da SOLIDCON.
 
 ### Passo 6 — Rodar o coletor uma vez, na mão
@@ -601,6 +610,7 @@ nova deve ter `OK saude` e `status=ok`.
 | 1 | Configuração, pasta ou outra execução em andamento (veja a última linha `ERRO fase=` no log) |
 | 2 | Saúde: o banco não respondeu, ou a batida não chegou ao Supabase (veja `motivo=` ou `fase=` no log) |
 | 3 | Contas a receber (seção 030): consulta, conferência ou envio recusado (veja `ERRO receber` no log) |
+| 4 | Margem (seção 031): vendas ou custos com falha (veja `ERRO margem` no log) |
 | 267009 | A tarefa ainda está rodando; consulte de novo em alguns segundos |
 
 Módulos futuros ganham os próximos códigos (3, 4, ...); vale o do primeiro módulo que falhar.
@@ -726,6 +736,92 @@ O módulo usa o código de saída **3** (vale o do primeiro módulo que falhar:
 vencimento ou valor invalido`), `fase=rpc motivo=...` (recusa do Supabase, por
 exemplo `queda_superior_70_porcento`).
 
-Pendente (opcional da etapa 2): o indicador "costuma pagar atrasado" por mês, a
-partir de `VW_MLP_CONTAS_A_RECEBER`, precisa do nome exato da coluna de filial
-dessa view (não está na especificação). Fica para quando for confirmado.
+Pendente (opcional, sem prioridade): o indicador "costuma pagar atrasado" por mês
+(`VW_MLP_CONTAS_A_RECEBER`); ver seção 031.
+
+## 031 — Margem real por produto (módulo `margem` do sync-banco) (NÃO IMPLANTADA)
+
+Terceiro módulo do `sync-banco.ps1`, uma vez por hora (15 minutos depois de um
+erro). Duas partes independentes; uma falhar não impede a outra:
+
+| Parte | View (só filial 4) | O que vai ao Supabase |
+|---|---|---|
+| Vendas | `dbo.VW_RDUPHOLD_VENDA_ITENS` (`CodigoFilial = 4`) | por **dia + Codigo_Produto**: quantidade, venda e custo em centavos, nº de linhas; janela dos **3 últimos dias** (data de São Paulo), substituída por inteiro em `solidcon_margem_diaria` |
+| Custos | `dbo.VW_MGN_ESTOQUE` (`CodigoFilial = 4`, `EstoqueTipo = 'Produto'`) | por produto + unidade: custo médio, custo de reposição, preço de venda, data do último recebimento; espelho `solidcon_custos` substituído por inteiro |
+
+Nenhum dado de cliente: só produto, dia e valores. Leitura só para a equipe.
+
+### Semântica de venda/custo (pendente)
+
+Ainda não está confirmado se `Vlitem` e `CustoItem` são **total da linha** ou
+**valor unitário**. A consulta aprovada traz as variantes (`SUM(Vlitem)`,
+`SUM(Vlitem × qtd)`, `SUM(Valor_total_unidade × qtd)`, `SUM(CustoItem)`,
+`SUM(CustoItem × qtd)`), e a escolha fica numa linha do script:
+
+```powershell
+$SemanticaMargem = @{ venda = $null; custo = $null }
+```
+
+Enquanto estiver `$null`, a parte de **vendas não consulta nem envia nada** e o
+log mostra `AVISO margem vendas ... semantica ... ainda nao confirmada` (não conta
+como falha; os custos seguem normais). Depois do probe do dono (comparar com o
+faturamento conhecido por dia), o Tech Lead/Forja preenche, por exemplo,
+`@{ venda = 'venda_soma'; custo = 'custo_x_qtd' }`, e essa mudança passa por revisão.
+
+Valores de venda têm **sinal**: devolução pode deixar quantidade, venda ou custo
+do dia negativos. Custos/preços negativos no ERP (estoque negativo etc.) ficam
+sem valor e são contados no log (`valores_negativos_descartados=N`). Datas de
+recebimento antes de 1990 (valor padrão do ERP) ficam vazias.
+
+### Travas no Supabase
+
+- **Vendas** (`solidcon_receber_margem_vendas`): janela de no máximo 62 dias,
+  nunca antes de 2026-05-29 nem depois de amanhã; todo item dentro da janela;
+  sem dia/produto repetido; quantidade com até 3 casas; centavos inteiros.
+  Janela que já tinha 30 ou mais linhas e recebe menos de 30% delas é recusada
+  (`queda_superior_70_porcento`). Só a janela é apagada; os outros dias ficam.
+- **Custos** (`solidcon_receber_custos`): lista vazia ou queda de mais de 50%
+  recusadas; produto + unidade sem repetição; valores ≥ 0.
+- As duas: só a conta de integração; coleta mais antiga que a última aceita,
+  mesma execução repetida, mais de 24 h ou no futuro são recusadas. Log em
+  `solidcon_margem_sync` (90 dias).
+
+### Carga inicial (backfill) desde 2026-05-29
+
+Só depois da 031 aplicada **e** da semântica definida. Roda **só** as vendas da
+margem, em blocos de 31 dias até hoje (um envio por bloco), sem mexer na agenda
+nem nos outros módulos. Em `"modo": "teste"` nada vai ao Supabase.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\TempRio\solidcon\sync-banco.ps1 -Config C:\TempRio\solidcon\config-banco.json -BackfillMargemDesde 2026-05-29
+```
+
+O log mostra uma linha `OK margem vendas AAAA-MM-DD..AAAA-MM-DD linhas=N` por bloco.
+Se algum bloco falhar, o código de saída é 4; rodar de novo é seguro (cada bloco
+substitui só a própria janela). Com a semântica pendente, o backfill sai com 4
+sem consultar nada.
+
+### Correspondência com os produtos do site
+
+`Codigo_Produto` / `CodigoProduto` é o código do produto no ERP. Que ele seja o
+mesmo `id_produto` de `solidcon_produtos` (vindo da API) **não foi confirmado**
+offline. Por isso não há ligação no banco: o painel tenta casar por
+`id_produto` e mostra à parte os códigos sem correspondência. Confirmar no
+primeiro uso real (por exemplo, um produto conhecido nas duas telas).
+
+### Instalar
+
+1. Tech Lead aplica a **031** (depois da 029 e da 030).
+2. Copie o `sync-banco.ps1` novo para `C:\TempRio\solidcon\`.
+3. Teste agora, sem esperar a hora cheia (em teste, os lotes ficam em
+   `banco-margem-vendas-teste.json` e `banco-margem-custos-teste.json`; apague
+   depois de conferir):
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\TempRio\solidcon\sync-banco.ps1 -Config C:\TempRio\solidcon\config-banco.json -Forcar
+```
+
+Código de saída do módulo: **4** (precedência 2 saúde > 3 receber > 4 margem).
+
+Pendente sem prioridade: indicador "costuma pagar atrasado" por mês
+(`VW_MLP_CONTAS_A_RECEBER`, coluna `Codigo_Filial` confirmada) — fica para depois.
