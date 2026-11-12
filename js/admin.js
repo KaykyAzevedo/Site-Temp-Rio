@@ -355,14 +355,38 @@
     var sb = null;
     var usuario = null;
     var papel = null; // 'admin' | 'vendedor' — ver migração 014
-    var abaAtual = 'dashboard';
+    var abaAtual = 'hoje'; // item do menu (ver NAV); cada item mostra uma ou mais SEÇÕES (painéis #painel-<seção>)
     var dados = { resumo: [], visitas: [], pedidos: [], espera: [],
                   regioes: [], faixas: [], vitrines: [], usuarios: [], clientes: [],
                   vendasRegiao: [], vendasProduto: [], visitasBrutas: [], leads: [],
                   solicitacoesLgpd: [] };
 
+    // Seções = painéis (#painel-<seção>) com seus desenhistas; o menu agrupa seções em itens (NAV).
     var ABAS = ['dashboard', 'pedidos', 'clientes', 'historico', 'vendas',
-                'espera', 'vitrine', 'regioes', 'visitas', 'solidcon', 'leads', 'lgpd'];
+                'espera', 'vitrine', 'regioes', 'visitas', 'solidcon', 'leads', 'lgpd', 'lojistas'];
+
+    // Menu: item -> seções que ele mostra. restrito = só admin (mesmo conjunto de antes: vendas, espera, vitrine, regioes,
+    // visitas, leads, lgpd e a nova 'lojistas', que saiu da Vitrine). Histórico agora é a vista "Encerrados" de Pedidos.
+    var NAV = {
+        hoje:     { secoes: ['dashboard'], restrito: false },
+        pedidos:  { secoes: ['pedidos'],   restrito: false },
+        clientes: { secoes: ['clientes'],  restrito: false },
+        estoque:  { secoes: ['vitrine'],   restrito: true },
+        vendas:   { secoes: ['vendas', 'visitas'], restrito: true },
+        demanda:  { secoes: ['leads', 'espera'],   restrito: true },
+        lojistas: { secoes: ['lojistas'],  restrito: true },
+        regioes:  { secoes: ['regioes'],   restrito: true },
+        solidcon: { secoes: ['solidcon'],  restrito: false },
+        lgpd:     { secoes: ['lgpd'],      restrito: true }
+    };
+    // Nomes antigos de aba (links, atalhos, estado antigo) caem no item novo correspondente.
+    var ALIAS_ABA = { dashboard: 'hoje', historico: 'pedidos', vitrine: 'estoque', espera: 'demanda', leads: 'demanda', visitas: 'vendas' };
+    var vistaPedidos = 'andamento'; // 'andamento' | 'encerrados' (antigo Histórico)
+    function secoesDe(nav) {
+        if (nav === 'pedidos' && vistaPedidos === 'encerrados') return ['historico'];
+        return (NAV[nav] || NAV.hoje).secoes;
+    }
+    function secaoVisivel(s) { return secoesDe(abaAtual).indexOf(s) >= 0; }
 
     /* Abas fora do alcance de um vendedor (migração 014: RLS só libera
      * pedidos/clientes/usuarios para quem não é admin). Esconder a aba é
@@ -428,9 +452,22 @@
         });
 
         ligarFiltrosGlobais();
+        document.querySelectorAll('[data-vista-pedidos]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                vistaPedidos = b.getAttribute('data-vista-pedidos') === 'encerrados' ? 'encerrados' : 'andamento';
+                abasParaRedesenhar.pedidos = true; abasParaRedesenhar.historico = true;
+                mostrarSecoes();
+                desenharAbaSeSuja('pedidos');
+            });
+        });
+        var btnMais = document.getElementById('btn-mais'), menuMais = document.getElementById('menu-mais');
+        if (btnMais && menuMais) btnMais.addEventListener('click', function () {
+            var aberto = menuMais.classList.toggle('is-aberto');
+            btnMais.setAttribute('aria-expanded', String(aberto));
+        });
         $('#btn-sino').addEventListener('click', function () {
             marcarNotificacoesLidas();
-            trocarAba('pedidos');
+            trocarAba('pedidos', true);
         });
         $('#btn-fechar-modal').addEventListener('click', fecharModal);
         $('#modal-detalhe').addEventListener('click', function (ev) {
@@ -632,6 +669,7 @@
         sb.rpc('meu_papel').then(function (r) {
             papel = (r.data) || null;
             aplicarPapel();
+            mostrarSecoes();
             saudeIniciar();
             carregar();
             ligarRealtime();
@@ -646,10 +684,13 @@
     function aplicarPapel() {
         var restrito = papel === 'vendedor';
         document.querySelectorAll('.adm-aba').forEach(function (b) {
-            var aba = b.getAttribute('data-aba');
-            b.classList.toggle('hidden', restrito && ABAS_SO_ADMIN.indexOf(aba) !== -1);
+            var item = NAV[b.getAttribute('data-aba')];
+            b.classList.toggle('hidden', !!(restrito && item && item.restrito));
         });
-        if (restrito && ABAS_SO_ADMIN.indexOf(abaAtual) !== -1) {
+        // "Mais" some se nenhum item dele está disponível para o papel.
+        var mais = document.getElementById('grupo-mais');
+        if (mais) mais.classList.toggle('hidden', !document.querySelector('#menu-mais .adm-aba:not(.hidden)'));
+        if (restrito && NAV[abaAtual] && NAV[abaAtual].restrito) {
             trocarAba('pedidos');
         }
     }
@@ -728,7 +769,7 @@
         var msg = String(erro && erro.message || erro);
         // Zero linhas com política ativa é o sintoma de e-mail fora da tabela
         // admins — vale dizer isso em vez de "erro desconhecido".
-        $('#painel-' + abaAtual).innerHTML =
+        $('#painel-' + secoesDe(abaAtual)[0]).innerHTML =
             '<div class="adm-card p-8">' +
             '<p class="font-bold mb-2">Não foi possível carregar os dados</p>' +
             '<p class="text-sm mb-3" style="color:var(--adm-tinta-2)">' + esc(msg) + '</p>' +
@@ -738,29 +779,54 @@
             '</div>';
     }
 
-    function trocarAba(qual) {
+    // Mostra só as seções do item ativo (com o título de cada uma quando há mais de uma), a barra de vista de Pedidos e o
+    // cartão de filtros globais (só Pedidos e Clientes).
+    function mostrarSecoes() {
+        var vis = secoesDe(abaAtual);
+        ABAS.forEach(function (a) {
+            var mostra = vis.indexOf(a) >= 0;
+            $('#painel-' + a).classList.toggle('hidden', !mostra);
+            var cab = document.getElementById('cab-' + a);
+            if (cab) cab.classList.toggle('hidden', !(mostra && (vis.length > 1 || a === 'historico')));
+        });
+        var barra = document.getElementById('barra-pedidos');
+        if (barra) {
+            barra.classList.toggle('hidden', abaAtual !== 'pedidos');
+            barra.querySelectorAll('[data-vista-pedidos]').forEach(function (b) {
+                b.classList.toggle('is-ativo', b.getAttribute('data-vista-pedidos') === vistaPedidos);
+            });
+        }
+        var filtrosCartao = document.getElementById('cartao-filtros');
+        if (filtrosCartao) filtrosCartao.classList.toggle('hidden', abaAtual !== 'pedidos' && abaAtual !== 'clientes');
+    }
+
+    // forcarAndamento: atalhos para AGIR (sino, itens do Hoje) abrem Pedidos em andamento, não na vista "Encerrados" lembrada.
+    function trocarAba(qual, forcarAndamento) {
+        if (qual === 'historico') vistaPedidos = 'encerrados';
+        else if (forcarAndamento && (ALIAS_ABA[qual] || qual) === 'pedidos') vistaPedidos = 'andamento';
+        qual = ALIAS_ABA[qual] || qual;
+        if (!NAV[qual]) qual = 'hoje';
+        if (papel === 'vendedor' && NAV[qual].restrito) qual = 'pedidos';
         abaAtual = qual;
         document.querySelectorAll('.adm-aba').forEach(function (b) {
             b.classList.toggle('is-ativa', b.getAttribute('data-aba') === qual);
         });
-        ABAS.forEach(function (a) {
-            $('#painel-' + a).classList.toggle('hidden', a !== qual);
-        });
-        carregarErpDaAba(qual);
+        // Item dentro de "Mais": abre o grupo para o ativo ficar visível.
+        var menu = document.getElementById('menu-mais'), btnMais = document.getElementById('btn-mais');
+        if (menu && menu.querySelector('.adm-aba.is-ativa')) { menu.classList.add('is-aberto'); if (btnMais) btnMais.setAttribute('aria-expanded', 'true'); }
+        mostrarSecoes();
+        secoesDe(qual).forEach(function (s) { carregarErpDaAba(s); });
 
-        // A aba só é redesenhada de verdade agora, se algo mudou desde a
-        // última vez que ela foi vista (ver desenharAbaSeSuja) — é o que
-        // evita redesenhar as 11 abas inteiras a cada clique em "confirmar
-        // pedido".
+        // Cada seção só é redesenhada de verdade agora, se algo mudou desde a última vez que foi vista
+        // (ver desenharAbaSeSuja) — é o que evita redesenhar tudo a cada clique em "confirmar pedido".
         desenharAbaSeSuja(qual);
 
-        // O mapa nasce em desenharVisitas() — se a aba acabou de aparecer
-        // agora (estava escondida, então media 0x0 e o Leaflet trava nesse
-        // tamanho), pede para recalcular depois que o container já é visível.
-        if (qual === 'visitas' && mapaVisitas) {
+        // Os mapas nascem em desenharVisitas()/desenharRegioes() — se a seção acabou de aparecer (estava escondida, então
+        // media 0x0 e o Leaflet trava nesse tamanho), pede para recalcular depois que o container já é visível.
+        if (secaoVisivel('visitas') && mapaVisitas) {
             setTimeout(function () { mapaVisitas.invalidateSize(); }, 0);
         }
-        if (qual === 'regioes' && mapaClientes) {
+        if (secaoVisivel('regioes') && mapaClientes) {
             setTimeout(function () { if (mapaClientes) mapaClientes.invalidateSize(); }, 0);
         }
     }
@@ -790,14 +856,18 @@
         visitas: desenharVisitas,
         leads: desenharLeads,
         lgpd: desenharLgpd,
-        solidcon: desenharSolidcon
+        solidcon: desenharSolidcon,
+        lojistas: desenharLojistas
     };
 
+    // aba = item do menu: redesenha, entre as seções dele, só as que estão "sujas".
     function desenharAbaSeSuja(aba) {
-        if (!abasParaRedesenhar[aba]) return;
-        abasParaRedesenhar[aba] = false;
-        var fn = DESENHAR_ABA[aba];
-        if (fn) fn();
+        secoesDe(aba).forEach(function (s) {
+            if (!abasParaRedesenhar[s]) return;
+            abasParaRedesenhar[s] = false;
+            var fn = DESENHAR_ABA[s];
+            if (fn) fn();
+        });
     }
 
     /* ===================================================================
@@ -866,6 +936,7 @@
         dashAtualizarResumo();
         abasParaRedesenhar.solidcon = true;
         abasParaRedesenhar.vitrine = true;
+        abasParaRedesenhar.vendas = true; // nomes na margem por produto
         desenharAbaSeSuja(abaAtual);
     }
 
@@ -1219,7 +1290,6 @@
             '<div id="vitrine-giro"></div>' +
             '<div id="vitrine-entradas"></div>' +
             '<div id="vitrine-insumos"></div>' +
-            '<div id="vitrine-margem"></div>' +
             '<div class="adm-card p-5 mb-5"><p class="font-bold mb-3">Produtos do site e estoque correspondente</p>' + solidTabelaPorProduto() +
             '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">O vínculo usa só o código ERP confirmado (família de 12 dígitos, id ou EAN). Estoque em caixas; o total soma as caixas convertidas em potes.</p></div>' +
             '<details class="mb-2"' + (solid.listaAberta ? ' open' : '') + '><summary class="text-sm font-bold cursor-pointer mb-3">Todos os produtos do ERP (' + NUM.format(solid.produtos.length) + ')</summary>' +
@@ -1250,8 +1320,6 @@
         desenharGiro();
         desenharEntradas();
         desenharInsumos();
-        mgLigar($('#vitrine-margem'));
-        desenharMargem();
     }
 
     /* ---- Vincular ao SOLIDCON: o admin confirma a família ERP de cada produto do site ---- */
@@ -1459,12 +1527,16 @@
     }
 
 
+    // Aba Estoque (painel #painel-vitrine): só a parte do ERP. Os destaques de clientes foram para "Vitrines de lojistas".
     function desenharVitrine() {
-        var alvo = $('#painel-vitrine');
-        desenharVitrineBase();
-        alvo.insertAdjacentHTML('afterbegin', '<section id="vitrine-erp" class="mb-10"></section>' +
-            '<div class="flex items-center gap-2 mb-4"><span class="adm-selo adm-selo-neutro">Site</span><p class="font-bold">Destaques de clientes</p></div>');
+        $('#painel-vitrine').innerHTML = '<section id="vitrine-erp" class="mb-10"></section>';
         desenharVitrineErp();
+    }
+
+    // "Vitrines de lojistas" (Mais): pedidos de destaque no catálogo (antes no fim da Vitrine).
+    function desenharLojistas() {
+        $('#painel-lojistas').innerHTML = '<div class="flex items-center gap-2 mb-4"><span class="adm-selo adm-selo-neutro">Site</span><p class="font-bold">Destaques de clientes</p></div><div id="lojistas-corpo"></div>';
+        desenharVitrineBase();
     }
 
     function desenharSolidLista() {
@@ -1752,7 +1824,7 @@
         dashAtualizarResumo();
         abasParaRedesenhar.pedidos = true;
         abasParaRedesenhar.solidcon = true;
-        if (abaAtual === 'vendas' && $('#vendas-erp')) desenharVendasErp();
+        if (secaoVisivel('vendas') && $('#vendas-erp')) desenharVendasErp();
         else abasParaRedesenhar.vendas = true;
         desenharAbaSeSuja(abaAtual);
     }
@@ -2152,11 +2224,12 @@
         if (qual === 'vitrine' && precisa(giro)) carregarGiro();
         if (qual === 'vitrine' && precisa(ent)) carregarEntradas();
         if (qual === 'vitrine' && precisa(ins)) carregarInsumos();
-        if (qual === 'vitrine' && papel === 'admin' && precisa(mg)) carregarMargem();
+        if (qual === 'vendas' && papel === 'admin' && precisa(mg)) carregarMargem();
+        if (qual === 'vendas' && papel === 'admin' && precisa(solid)) carregarSolidcon(); // nomes de produto da margem
         if (qual === 'vendas' && precisa(pag)) carregarPagamentos();
         if (qual === 'dashboard') dashCarregarProgressivo(forcar);
     }
-    function recarregarErp() { carregarErpDaAba(abaAtual, true); }
+    function recarregarErp() { secoesDe(abaAtual).forEach(function (s) { carregarErpDaAba(s, true); }); }
 
     // ---- Pedidos: vendas registradas no ERP (totais, não pedidos) ----
     function desenharPedidos() {
@@ -2240,11 +2313,14 @@
                 '<p class="font-bold text-lg">Vendas no ERP</p></div>' +
                 '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Total de todas as vendas registradas no SOLIDCON (inclui o que não veio pelo site).</p><div id="vendas-erp"></div></section>' +
             '<section id="vendas-clientes" class="mt-12 pt-8" style="border-top:1px solid var(--adm-borda)"></section>' +
-            '<section id="vendas-pagamentos" class="mt-12 pt-8" style="border-top:1px solid var(--adm-borda)"></section>';
+            '<section id="vendas-pagamentos" class="mt-12 pt-8" style="border-top:1px solid var(--adm-borda)"></section>' +
+            '<section id="vendas-margem" class="mt-12 pt-8" style="border-top:1px solid var(--adm-borda)"></section>';
         desenharVendasBase();
         desenharVendasErp();
         desenharVendasClientes();
         desenharVendasPagamentos();
+        mgLigar($('#vendas-margem'));
+        desenharMargem();
     }
 
     // ---- Clientes: cadastros no ERP (tabela solidcon_clientes, ainda a instalar) ----
@@ -2313,45 +2389,11 @@
 
     function desenharClientes() {
         var alvo = $('#painel-clientes');
-        desenharClientesBase();
-        alvo.insertAdjacentHTML('beforeend', '<section id="clientes-financeiro" class="mt-10"></section><section id="clientes-compras" class="mt-10"></section><section id="clientes-erp" class="mt-10"></section>');
+        alvo.innerHTML = '<section id="clientes-lista"></section><section id="clientes-financeiro" class="mt-10"></section><section id="clientes-compras" class="mt-10"></section>';
         recLigar($('#clientes-financeiro'));
+        desenharClientesLista();
         desenharClientesFinanceiro();
         desenharClientesCompras();
-        desenharClientesErp();
-    }
-
-    function desenharClientesErp() {
-        var alvo = $('#clientes-erp');
-        if (!alvo) return;
-        var cab = '<div class="flex items-center gap-2 mb-2">' + SELO_ERP + '<p class="font-bold">Cadastros no SOLIDCON</p></div>' +
-            '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Clientes que já existem no ERP (somente leitura). Quem aparece nas duas listas recebe o aviso “Já no ERP” na lista do site.</p>';
-        if (scli.carregando && !scli.carregado) {
-            alvo.innerHTML = cab + '<div class="adm-card p-6 text-center text-sm" style="color:var(--adm-tinta-2)"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando cadastros do SOLIDCON…</div>';
-            return;
-        }
-        if (scli.ausente) {
-            alvo.innerHTML = cab + cartaoVazio('Cadastros do SOLIDCON ainda não instalados',
-                'A tabela solidcon_clientes ainda não existe neste banco. Quando a rotina de clientes for instalada, os cadastros do ERP aparecem aqui.');
-            return;
-        }
-        if (scli.erro) {
-            alvo.innerHTML = cab + '<div class="adm-card p-6"><p class="text-sm mb-3" style="color:var(--adm-tinta-2)">Não foi possível carregar: ' + esc(scli.erro) + '</p>' +
-                '<button type="button" class="adm-botao-fantasma" id="scli-tentar">Tentar de novo</button></div>';
-            $('#scli-tentar').addEventListener('click', carregarSolidClientes);
-            return;
-        }
-        if (!scli.carregado) return;
-        if (!scli.lista.length) {
-            alvo.innerHTML = cab + cartaoVazio('Nenhum cadastro sincronizado ainda', 'Quando a rotina de clientes rodar, os cadastros do ERP aparecem aqui.');
-            return;
-        }
-        alvo.innerHTML = cab +
-            '<div class="flex items-center flex-wrap gap-3 mb-4">' +
-                '<input type="search" id="scli-busca" class="adm-input" style="max-width:18rem;padding:.55rem .7rem" placeholder="Buscar por nome ou documento" aria-label="Buscar cadastro do ERP" value="' + esc(scli.busca) + '">' +
-            '</div><div id="scli-lista"></div>';
-        $('#scli-busca').addEventListener('input', function (ev) { scli.busca = ev.target.value; scli.mostrar = 50; desenharScliLista(); });
-        desenharScliLista();
     }
 
     // Endereço completo só de CNPJ (CPF nunca é exibido, mesmo que a coluna venha preenchida). Só texto: sem geocodificação.
@@ -2368,40 +2410,6 @@
         return esc(partes || '—') + (cep ? '<br><span class="text-xs" style="color:var(--adm-tinta-3)">CEP ' + esc(cep) + '</span>' : '');
     }
 
-    function desenharScliLista() {
-        var alvo = $('#scli-lista');
-        if (!alvo) return;
-        var q = scli.busca.trim().toLowerCase(), qd = docDigitos(q);
-        var lista = scli.lista.filter(function (c) {
-            if (!q) return true;
-            return String(c.nome || '').toLowerCase().indexOf(q) >= 0 || (qd && docDigitos(c.documento).indexOf(qd) >= 0);
-        });
-        if (!lista.length) { alvo.innerHTML = cartaoVazio('Nenhum cadastro com essa busca', 'Tente outro nome ou documento.'); return; }
-        var siteDocs = {};
-        listaClientesCombinada().forEach(function (c) { var d = docNorm(c.cnpj || c.cpf, c.cnpj ? 'cnpj' : 'cpf'); if (d) siteDocs[d] = true; });
-        var parte = lista.slice(0, scli.mostrar);
-        alvo.innerHTML = '<div class="adm-card p-5"><div class="overflow-x-auto"><table class="adm-tabela"><thead><tr>' +
-            '<th>Nome</th><th>Documento</th><th>Contato</th><th>Local</th><th>Endereço (CNPJ)</th><th>Coletado</th></tr></thead><tbody>' +
-            parte.map(function (c) {
-                var tipo = String(c.tipo || '').toUpperCase();
-                var contato = [c.telefone, c.celular].filter(Boolean).join(' / ');
-                var local = [c.bairro, c.cidade].filter(Boolean).join(', ') + (c.estado ? '/' + c.estado : '');
-                var noSite = siteDocs[docNorm(c.documento, c.tipo)];
-                return '<tr><td>' + esc(c.nome || '—') + ' ' + SELO_ERP +
-                       (noSite ? ' <span class="adm-selo adm-selo-confirmado" title="Também é cliente do site">Também no site</span>' : '') + '</td>' +
-                    '<td>' + (tipo ? '<span class="text-xs" style="color:var(--adm-tinta-3)">' + esc(tipo) + '</span> ' : '') + esc(c.documento || '—') + '</td>' +
-                    '<td>' + esc(contato || '—') + (c.email ? '<br><span class="text-xs" style="color:var(--adm-tinta-3)">' + esc(c.email) + '</span>' : '') + '</td>' +
-                    '<td>' + esc(local || '—') + '</td>' +
-                    '<td>' + scliEndereco(c) + '</td>' +
-                    '<td>' + esc(c.coletado_em ? dataHora(c.coletado_em) : '—') + '</td></tr>';
-            }).join('') + '</tbody></table></div>' +
-            '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">' + NUM.format(parte.length) + ' de ' + NUM.format(lista.length) + ' cadastros</p>' +
-            (lista.length > parte.length ? '<button type="button" class="adm-botao-fantasma mt-3" id="scli-mais">Mostrar mais</button>' : '') + '</div>';
-        var mais = $('#scli-mais');
-        if (mais) mais.addEventListener('click', function () { scli.mostrar += 50; desenharScliLista(); });
-    }
-
-
     /* ===================================================================
      * Compras por cliente (ERP) — SOMENTE LEITURA — tabela solidcon_vendas_clientes (migração 026)
      * Uma consulta só (dia, documento, tipo, valor), sob demanda e em cache; tudo o mais é calculado
@@ -2410,7 +2418,7 @@
      * =================================================================== */
     var CMP_LIMITE = 20000, CMP_MIN_COMPRAS = 3, CMP_FATOR = 1.5, CMP_MIN_DIAS = 30, CMP_PERDIDO = 90, CMP_MESES_VALOR = 6;
     var cmp = { carregado: false, carregando: false, ausente: false, erro: null, truncado: false, por: null, semDoc: 0,
-                hoje: '', corte: '', ordem: { col: 'ultima', dir: -1 }, busca: '', mostrar: 50, mostrarSumindo: 30 };
+                hoje: '', corte: '', mostrarSumindo: 30 };
 
     function cmpIso(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
     function cmpUtc(iso) { var p = String(iso).split('-'); return Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2])); }
@@ -2546,57 +2554,9 @@
                 }).join('') + '</tbody></table></div>' +
                 (sum.length > parteSum.length ? '<button type="button" class="adm-botao-fantasma mt-3" id="cmp-mais-sum">Mostrar mais</button>' : '')
               : '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum cliente nessa situação.</p>') + '</div>' +
-            '<div class="flex items-center flex-wrap gap-3 mb-3"><input type="search" id="cmp-busca" class="adm-input" style="max-width:18rem;padding:.55rem .7rem" placeholder="Buscar cliente ou documento" aria-label="Buscar no histórico de compras" value="' + esc(cmp.busca) + '"></div>' +
-            '<div id="cmp-tabela"></div>' +
             (cmp.semDoc ? '<p class="text-xs mt-2" style="color:var(--adm-tinta-3)">' + NUM.format(cmp.semDoc) + ' compras sem CNPJ/CPF informado ficaram de fora.</p>' : '');
         var ms = $('#cmp-mais-sum');
         if (ms) ms.addEventListener('click', function () { cmp.mostrarSumindo += 30; desenharClientesCompras(); });
-        $('#cmp-busca').addEventListener('input', function (ev) { cmp.busca = ev.target.value; cmp.mostrar = 50; desenharCmpTabela(); });
-        desenharCmpTabela();
-    }
-
-    function desenharCmpTabela() {
-        var alvo = $('#cmp-tabela');
-        if (!alvo || !cmpPronto()) return;
-        var cad = cmpCadastros(), q = cmp.busca.trim().toLowerCase(), qd = docDigitos(q), sum = {};
-        cmpSumindo().forEach(function (o) { sum[o.doc] = true; });
-        var lista = Object.keys(cmp.por).map(function (k) { return cmp.por[k]; }).filter(function (o) {
-            if (!q) return true;
-            return cmpNome(o, cad).toLowerCase().indexOf(q) >= 0 || (qd && o.doc.indexOf(qd) >= 0);
-        });
-        var od = cmp.ordem;
-        lista.sort(function (a, b) {
-            var va, vb;
-            if (od.col === 'nome') { va = cmpNome(a, cad).toLowerCase(); vb = cmpNome(b, cad).toLowerCase(); return va < vb ? -od.dir : va > vb ? od.dir : 0; }
-            if (od.col === 'ultima') { va = a.ultima; vb = b.ultima; return va < vb ? -od.dir : va > vb ? od.dir : 0; }
-            va = a[od.col]; vb = b[od.col];
-            if (va == null && vb == null) return 0;
-            if (va == null) return 1; if (vb == null) return -1; // sem valor vai sempre para o fim
-            return (va - vb) * od.dir;
-        });
-        function th(col, rot, num) {
-            return '<th' + (num ? ' class="num"' : '') + ' style="cursor:pointer" data-cmp-ord="' + col + '" aria-sort="' + (od.col === col ? (od.dir > 0 ? 'ascending' : 'descending') : 'none') + '">' + rot + (od.col === col ? (od.dir > 0 ? ' ▲' : ' ▼') : '') + '</th>';
-        }
-        var parte = lista.slice(0, cmp.mostrar);
-        alvo.innerHTML = '<div class="adm-card p-5"><div class="overflow-x-auto"><table class="adm-tabela"><thead><tr>' +
-            th('nome', 'Cliente') + th('ultima', 'Última compra') + th('n', 'Compras', true) + th('total6', 'Total 6 meses', true) + th('ticket6', 'Ticket médio 6 meses', true) + th('freq', 'Frequência típica', true) +
-            '</tr></thead><tbody>' + (parte.length ? parte.map(function (o) {
-                return '<tr><td>' + esc(cmpNome(o, cad)) + (sum[o.doc] ? ' <span class="adm-selo adm-selo-aguardando" title="Parou de comprar no ritmo habitual">Sumindo</span>' : '') + '</td>' +
-                    '<td>' + esc(cmpData(o.ultima)) + '</td><td class="num">' + NUM.format(o.n) + '</td>' +
-                    '<td class="num">' + (o.n6 ? esc(brl(o.total6)) : '—') + '</td><td class="num">' + (o.ticket6 != null ? esc(brl(Math.round(o.ticket6))) : '—') + '</td>' +
-                    '<td class="num">' + (o.freq != null ? 'a cada ' + NUM.format(Math.round(o.freq)) + ' dias' : '—') + '</td></tr>';
-            }).join('') : '<tr><td colspan="6" class="text-sm" style="color:var(--adm-tinta-3)">Nenhum cliente com essa busca.</td></tr>') +
-            '</tbody></table></div><p class="text-xs mt-3" style="color:var(--adm-tinta-3)">' + NUM.format(parte.length) + ' de ' + NUM.format(lista.length) + ' clientes</p>' +
-            (lista.length > parte.length ? '<button type="button" class="adm-botao-fantasma mt-3" id="cmp-mais">Mostrar mais</button>' : '') + '</div>';
-        alvo.querySelectorAll('[data-cmp-ord]').forEach(function (h) {
-            h.addEventListener('click', function () {
-                var c = h.getAttribute('data-cmp-ord');
-                cmp.ordem = { col: c, dir: cmp.ordem.col === c ? -cmp.ordem.dir : (c === 'nome' ? 1 : -1) };
-                desenharCmpTabela();
-            });
-        });
-        var mais = $('#cmp-mais');
-        if (mais) mais.addEventListener('click', function () { cmp.mostrar += 50; desenharCmpTabela(); });
     }
 
     // Ativos, novos e perdidos por mês (14 meses terminando no atual). null se não há clientes identificados.
@@ -3331,20 +3291,6 @@
     }
 
     // Card do Resumão: contagens e os itens mais urgentes (mesma conta da Vitrine).
-    function resCardInsumos() {
-        if (!dashVe('vitrine')) return [];
-        var tit = 'Estoque da fábrica', est = resEstado(ins, 'estoque da fábrica', 'ins');
-        if (est) return [resCard(tit, 'vitrine', 'Matéria-prima e embalagens.', est)];
-        var itens = insItens(), n = insContagens(itens), al = insOrdenar(itens).filter(insEhAlerta).slice(0, 6);
-        return [resCard(tit, 'vitrine', 'Matéria-prima e embalagens · histórico diário começa na instalação',
-            '<p class="text-sm mb-3"><strong>' + NUM.format(n.negativo) + '</strong> negativo(s) · <strong>' + NUM.format(n.zerado) + '</strong> zerado(s) · <strong>' + NUM.format(n.critico) +
-            '</strong> crítico(s) · <strong>' + NUM.format(n.atencao) + '</strong> em atenção</p>' +
-            (al.length ? '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Insumo</th><th class="num">Estoque</th><th class="num">Acaba em</th><th>Situação</th></tr></thead><tbody>' +
-                al.map(function (i) {
-                    return '<tr><td>' + esc(i.p.nome) + '</td><td class="num">' + esc(insFmt(i.est)) + ' ' + esc(i.p.unidade || '') + '</td><td class="num">' + (i.dias == null ? '—' : esc(giroFmt(i.dias, 0) + ' dias')) + '</td><td>' + insSelo(i.sit) + '</td></tr>';
-                }).join('') + '</tbody></table></div>'
-                : '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum insumo em alerta.</p>'))];
-    }
 
     /* ===================================================================
      * Dashboard de vendas (ERP) — Formas de pagamento (solidcon_vendas_modalidade, migração 027)
@@ -3382,7 +3328,7 @@
 
     function pagRedesenhar() {
         dashAtualizarResumo();
-        if (abaAtual === 'vendas' && $('#vendas-pagamentos')) desenharVendasPagamentos();
+        if (secaoVisivel('vendas') && $('#vendas-pagamentos')) desenharVendasPagamentos();
         else abasParaRedesenhar.vendas = true;
         desenharAbaSeSuja(abaAtual);
     }
@@ -3484,15 +3430,6 @@
     }
 
     // Card do Resumão: últimos 6 meses (valor) e principais formas.
-    function resCardPagamentos() {
-        if (!dashVe('vendas')) return [];
-        var tit = 'Formas de pagamento', est = resEstado(pag, 'formas de pagamento', 'pag');
-        if (est) return [resCard(tit, 'vendas', 'Valor e quantidade por forma e por mês.', est, true)];
-        var D = pagDados(6);
-        if (!D.series.length) return [resCard(tit, 'vendas', null, '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum pagamento sincronizado ainda.</p>', true)];
-        return [resCard(tit, 'vendas', 'ERP · ' + pagPeriodoTxt(D) + ' · valor por mês (mês corrente parcial)',
-            pagLegenda(D) + pagBarras(D, 'v') + '<div class="mt-4">' + pagTabela(D, 5) + '</div>', true)];
-    }
 
     /* ===================================================================
      * Clientes — Financeiro: contas a receber do ERP (solidcon_receber, migração 030) — SOMENTE LEITURA
@@ -3535,6 +3472,7 @@
     function recDias(n) { return NUM.format(n) + (n === 1 ? ' dia' : ' dias'); }
 
     function recRedesenhar() {
+        dashAtualizarResumo(); // o Hoje usa as parcelas vencidas (início, fim e erro do carregamento)
         abasParaRedesenhar.clientes = true;
         desenharAbaSeSuja(abaAtual);
     }
@@ -3684,10 +3622,10 @@
         });
     }
 
-    // Resumo do cliente PJ (aba Clientes, linha de detalhe); vazio se não houver dado.
-    function recFichasDoCliente(c) {
-        if (papel !== 'admin' || c.tipo !== 'PJ' || !rec.carregado || rec.erro || rec.ausente || rec.truncado) return '';
-        var d = docNorm(c.cnpj, 'cnpj'), g = d ? recAgregar().porDoc[d] : null;
+    // Resumo de contas a receber de um CNPJ (já normalizado) para o detalhe do cliente; só admin; vazio se não houver dado.
+    function recFichasDoDoc(d) {
+        if (!recPronto() || !d || d.length !== 14) return '';
+        var g = recAgregar().porDoc[d];
         if (!g) return '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Financeiro (ERP): nenhuma parcela em aberto.</p>';
         return '<div class="grid sm:grid-cols-3 gap-4 mb-4">' + ficha('Em aberto (ERP)', brl(g.aberto), NUM.format(g.n) + (g.n === 1 ? ' parcela' : ' parcelas')) +
             ficha('Vencido (ERP)', brl(g.vencido), g.atraso > 0 ? 'maior atraso: ' + recDias(g.atraso) : 'nada vencido') +
@@ -3749,7 +3687,7 @@
     }
 
     function mgRedesenhar() {
-        abasParaRedesenhar.vitrine = true;
+        abasParaRedesenhar.vendas = true;
         desenharAbaSeSuja(abaAtual);
     }
 
@@ -3858,7 +3796,7 @@
     }
 
     function desenharMargem() {
-        var alvo = $('#vitrine-margem');
+        var alvo = $('#vendas-margem');
         if (!alvo) return;
         if (papel !== 'admin' || mg.ausente) { alvo.innerHTML = ''; return; } // sem permissão ou sem a 031: não aparece
         var cab = '<div class="flex items-center gap-2 mb-1">' + SELO_ERP + '<p class="font-bold">Margem por produto</p></div>' +
@@ -4058,6 +3996,7 @@
     }
 
     function saudeDesenhar() {
+        dashAtualizarResumo();
         var el = saudeContainer();
         if (!el) return;
         var o = saudeLerOculto();
@@ -4535,10 +4474,9 @@
     }
 
     /* ===================================================================
-     * Dashboard — "Resumão": KPIs e cards por tema, montados SÓ com o que as abas de origem já
-     * calculam (mesmas funções e mesmo cache). Nada de consulta nova: os carregadores existentes
-     * rodam em fila (um por vez, sob demanda) e cada bloco aparece quando seus dados chegam.
-     * Vendedor vê só o que as abas dele mostram (ABAS_SO_ADMIN fica de fora).
+     * Hoje — "Precisa de você agora", 4 KPIs do mês e 1 gráfico de vendas (6 meses).
+     * Só usa o que as abas de origem já calculam (mesmo cache, mesmas funções); carrega em fila serial, uma fonte por vez.
+     * Cada item só aparece para quem já vê aquela informação hoje (admin x vendedor inalterado). Sem dado = linha discreta.
      * =================================================================== */
     var dash = { iniciado: false, rodando: false };
 
@@ -4546,19 +4484,19 @@
     function dashVe(aba) { return papel === 'admin' || ABAS_SO_ADMIN.indexOf(aba) === -1; }
 
     function dashAtualizarResumo() {
-        if (abaAtual === 'dashboard' && $('#resumao')) desenharResumao();
+        if (secaoVisivel('dashboard') && $('#hoje')) desenharHoje();
         else abasParaRedesenhar.dashboard = true;
     }
 
-    // Carrega, um após o outro, o que o Resumão usa. Não repete o que já está em cache (salvo forcar).
+    // Carrega, um após o outro, o que o Hoje usa. Não repete o que já está em cache (salvo forcar).
     function dashCarregarProgressivo(forcar) {
         if (dash.rodando) return;
         var adm = papel === 'admin';
         var passos = [];
-        if (adm) { passos.push([vend, carregarVendas]); passos.push([pag, carregarPagamentos]); }
+        if (adm) passos.push([vend, carregarVendas]);
         passos.push([cmp, carregarCompras]);
         passos.push([scli, carregarSolidClientes]);
-        if (adm) { passos.push([solid, carregarSolidcon]); passos.push([giro, carregarGiro]); passos.push([ent, carregarEntradas]); passos.push([ins, carregarInsumos]); passos.push([geo, carregarGeoClientes]); }
+        if (adm) { passos.push([solid, carregarSolidcon]); passos.push([giro, carregarGiro]); passos.push([ins, carregarInsumos]); passos.push([rec, carregarReceber]); }
         dash.rodando = true;
         (function prox(i) {
             if (i >= passos.length) { dash.rodando = false; return; }
@@ -4574,7 +4512,8 @@
     // Single-flight: clique repetido em "Tentar de novo" não dispara consulta enquanto a anterior roda.
     function resUma(o, fn) { return function () { if (!o.carregando) fn(); }; }
     var RES_CARREGADORES = { vend: resUma(vend, carregarVendas), cmp: resUma(cmp, carregarCompras), scli: resUma(scli, carregarSolidClientes),
-                             solid: resUma(solid, carregarSolidcon), giro: resUma(giro, carregarGiro), ent: resUma(ent, carregarEntradas), ins: resUma(ins, carregarInsumos), pag: resUma(pag, carregarPagamentos), geo: resUma(geo, carregarGeoClientes) };
+                             solid: resUma(solid, carregarSolidcon), giro: resUma(giro, carregarGiro), ent: resUma(ent, carregarEntradas), ins: resUma(ins, carregarInsumos),
+                             pag: resUma(pag, carregarPagamentos), geo: resUma(geo, carregarGeoClientes) };
 
     function resMotivo(o) {
         return o.ausente ? 'ainda não instalado' : o.erro ? 'falha ao carregar' : o.truncado ? 'histórico grande demais' : 'carregando…';
@@ -4592,7 +4531,7 @@
 
     function resSeguro(fn) {
         try { return fn(); } catch (e) {
-            if (window.console) console.error('[painel] resumão:', e);
+            if (window.console) console.error('[painel] hoje:', e);
             return '<div class="adm-card p-5"><p class="text-sm" style="color:var(--adm-tinta-3)">Não foi possível montar este bloco.</p></div>';
         }
     }
@@ -4602,34 +4541,72 @@
                (nota ? '<p class="text-xs mt-1" style="color:var(--adm-tinta-3)">' + esc(nota) + '</p>' : '') + '</div>';
     }
 
-    function resCard(titulo, aba, sub, corpo, largo) {
-        return '<div class="adm-card p-5' + (largo ? ' lg:col-span-2' : '') + '"><div class="flex items-start justify-between gap-3 mb-1"><p class="font-bold">' + esc(titulo) + '</p>' +
-            '<button type="button" class="text-xs underline shrink-0" style="color:var(--adm-acao)" data-ir-aba="' + aba + '">ver detalhes →</button></div>' +
-            (sub ? '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">' + esc(sub) + '</p>' : '<div class="mb-3"></div>') + corpo + '</div>';
+    function pronto(o) { return o.carregado && !o.erro && !o.ausente && !o.truncado; }
+
+    // "Precisa de você agora": só entram itens com algo a fazer; fontes indisponíveis viram uma linha discreta.
+    function hojeAgora() {
+        var itens = [], discretos = [], adm = papel === 'admin';
+        function item(icone, cor, txt, nav) {
+            itens.push('<li><button type="button" class="adm-agora" data-ir-aba="' + nav + '"><i class="fa-solid ' + icone + '" style="color:' + cor + '"></i>' +
+                '<span class="flex-1">' + esc(txt) + '</span><i class="fa-solid fa-chevron-right text-xs" style="color:var(--adm-tinta-3)"></i></button></li>');
+        }
+        var ag = dados.pedidos.filter(function (p) { return p.status === 'aguardando'; }).length;
+        if (ag) item('fa-hourglass-half', 'var(--adm-atencao)', NUM.format(ag) + (ag === 1 ? ' pedido aguardando confirmação' : ' pedidos aguardando confirmação'), 'pedidos');
+
+        if (pronto(scli)) {
+            var faltam = {}; // clientes distintos (documento tipado), não pedidos
+            dados.pedidos.forEach(function (p) {
+                if (cadastroErpDoPedido(p) !== 'falta') return;
+                var tp = p.cnpj ? 'cnpj' : 'cpf';
+                faltam[tp + ':' + docNorm(p.cnpj || p.cpf, tp)] = true;
+            });
+            var nf = Object.keys(faltam).length;
+            if (nf) item('fa-user-plus', 'var(--adm-atencao)', NUM.format(nf) + (nf === 1 ? ' cliente a cadastrar no ERP antes de faturar' : ' clientes a cadastrar no ERP antes de faturar'), 'pedidos');
+        } else discretos.push('Cadastros do ERP: ' + resMotivo(scli));
+
+        if (adm) {
+            if (pronto(rec)) {
+                var A = recAgregar(), nc = A.cnpjs.filter(function (g) { return g.vencido > 0; }).length, outros = (A.pf && A.pf.vencido > 0) || (A.sd && A.sd.vencido > 0);
+                if (A.tot.vencido > 0) item('fa-file-invoice-dollar', 'var(--adm-ruim)', brl(A.tot.vencido) + ' em parcelas vencidas' +
+                    (nc ? ' · ' + NUM.format(nc) + (nc === 1 ? ' cliente CNPJ' : ' clientes CNPJ') : '') + (outros ? ' · e pessoa física/sem documento' : ''), 'clientes');
+            } else if (!rec.ausente) discretos.push('Contas a receber: ' + resMotivo(rec));
+
+            var partes = [];
+            if (pronto(solid) && pronto(giro)) {
+                if (giro.linhas.length) {
+                    var crit = giroItensCobertura().filter(function (i) { return !i.semGiro && i.dias <= GIRO_CRITICO; }).length;
+                    if (crit) partes.push(NUM.format(crit) + (crit === 1 ? ' sabor acaba' : ' sabores acabam') + ' em até ' + GIRO_CRITICO + ' dias');
+                }
+            } else discretos.push('Estoque e giro: ' + resMotivo(!pronto(solid) ? solid : giro));
+            if (pronto(ins)) {
+                var n = insContagens(insItens()), ni = n.negativo + n.zerado;
+                if (ni) partes.push(NUM.format(ni) + (ni === 1 ? ' insumo zerado/negativo' : ' insumos zerados/negativos'));
+            } else if (!ins.ausente) discretos.push('Estoque da fábrica: ' + resMotivo(ins));
+            if (partes.length) item('fa-boxes-stacked', 'var(--adm-ruim)', partes.join(' · '), 'estoque');
+        }
+
+        if (saude.itens.length) {
+            var vm = saude.nivel >= 2;
+            item(vm ? 'fa-circle-exclamation' : 'fa-triangle-exclamation', vm ? 'var(--adm-ruim)' : 'var(--adm-atencao)',
+                'Integração SOLIDCON: ' + NUM.format(saude.itens.length) + (saude.itens.length === 1 ? ' aviso' : ' avisos') + ' — ' + saude.itens[0].txt, 'solidcon');
+        }
+
+        return '<ul class="adm-agora-lista">' + (itens.length ? itens.join('') :
+                '<li class="text-sm flex items-center gap-2" style="color:var(--adm-tinta-2)"><i class="fa-solid fa-circle-check" style="color:var(--adm-ok)"></i>Nada pendente agora.</li>') + '</ul>' +
+            (discretos.length ? '<p class="text-xs mt-2" style="color:var(--adm-tinta-3)">' + esc(discretos.join(' · ')) + '</p>' : '');
     }
 
-    function resSecao(icone, titulo, cards) {
-        var c = cards.filter(Boolean).join('');
-        if (!c) return '';
-        return '<section class="mb-8"><div class="flex items-center gap-2 mb-3"><i class="fa-solid ' + icone + '" style="color:var(--adm-tinta-3)"></i>' +
-               '<p class="font-bold text-lg">' + esc(titulo) + '</p></div><div class="grid lg:grid-cols-2 gap-5">' + c + '</div></section>';
-    }
-
-    function resKpis() {
-        var adm = dashVe('vendas'), atual = vendMesAtual(), k = [];
+    function hojeKpis() {
+        var adm = papel === 'admin', atual = vendMesAtual(), k = [];
         var abertos = dados.pedidos.filter(function (p) { return p.status === 'aguardando' || p.status === 'confirmado'; });
         var aguard = abertos.filter(function (p) { return p.status === 'aguardando'; }).length;
         if (adm) {
-            if (vend.carregado && !vend.erro && !vend.ausente) {
+            if (pronto(vend)) {
                 var mf = vend.meses.filter(function (m) { return m.mes === atual; })[0], ma = vend.meses.filter(function (m) { return m.mes === vendMesAnterior(atual); })[0];
                 var vf = mf ? vendNum(mf.valor_centavos) : 0, va = ma ? vendNum(ma.valor_centavos) : 0;
                 var nota = va > 0 ? ((vf >= va ? '+' : '') + ((vf - va) / va * 100).toFixed(1).replace('.', ',') + '% vs ' + vendMesRotulo(vendMesAnterior(atual)) + ' inteiro') : 'sem mês anterior para comparar';
                 k.push(resKpi('Vendas do mês (ERP)', brl(vf), nota + ' · mês parcial'));
-                k.push(resKpi('Potes vendidos no mês', NUM.format(Math.round(mf ? vendNum(mf.potes) : 0)), 'caixas contadas em potes'));
-            } else {
-                k.push(resKpi('Vendas do mês (ERP)', '—', 'vendas do ERP: ' + resMotivo(vend)));
-                k.push(resKpi('Potes vendidos no mês', '—', 'vendas do ERP: ' + resMotivo(vend)));
-            }
+            } else k.push(resKpi('Vendas do mês (ERP)', '—', 'vendas do ERP: ' + resMotivo(vend)));
         } else {
             var mesSite = atual.slice(0, 7);
             var fat = dados.resumo.filter(function (r) { return String(r.mes).slice(0, 7) === mesSite; })[0];
@@ -4639,209 +4616,55 @@
             var d = cmpDadosMensais();
             k.push(d ? resKpi('Clientes ativos no mês', NUM.format(d.ativos[d.atual] || 0), NUM.format(d.novos[d.atual] || 0) + ' novos · ' + NUM.format(d.perdidos[d.atual] || 0) + ' perdidos')
                      : resKpi('Clientes ativos no mês', '0', 'nenhuma compra identificada'));
-        } else {
-            k.push(resKpi('Clientes ativos no mês', '—', 'histórico de compras: ' + resMotivo(cmp)));
-        }
+        } else k.push(resKpi('Clientes ativos no mês', '—', 'histórico de compras: ' + resMotivo(cmp)));
+        k.push(resKpi('Pedidos abertos', NUM.format(abertos.length), NUM.format(aguard) + ' aguardando confirmação'));
         if (adm) {
-            if (solid.carregado && !solid.erro && !solid.ausente && giro.carregado && !giro.erro && !giro.ausente && !giro.truncado && giro.linhas.length) {
-                var it = giroItensCobertura();
-                var crit = it.filter(function (i) { return !i.semGiro && i.dias <= GIRO_CRITICO; }).length;
+            if (pronto(solid) && pronto(giro) && giro.linhas.length) {
+                var it = giroItensCobertura(), crit = it.filter(function (i) { return !i.semGiro && i.dias <= GIRO_CRITICO; }).length;
                 var aten = it.filter(function (i) { return !i.semGiro && i.dias > GIRO_CRITICO && i.dias <= GIRO_ATENCAO; }).length;
                 k.push(resKpi('Itens críticos de estoque', NUM.format(crit), 'acabam em até ' + GIRO_CRITICO + ' dias · ' + NUM.format(aten) + ' em atenção'));
             } else {
-                var fonte = !(solid.carregado && !solid.erro && !solid.ausente) ? ['estoque do ERP', resMotivo(solid)] : ['giro', giro.carregado && !giro.truncado && !giro.linhas.length ? 'sem vendas' : resMotivo(giro)];
+                var fonte = !pronto(solid) ? ['estoque do ERP', resMotivo(solid)] : ['giro', pronto(giro) && !giro.linhas.length ? 'sem vendas' : resMotivo(giro)];
                 k.push(resKpi('Itens críticos de estoque', '—', fonte[0] + ': ' + fonte[1]));
             }
         }
-        k.push(resKpi('Pedidos abertos', NUM.format(abertos.length), NUM.format(aguard) + ' aguardando confirmação'));
         return k;
     }
 
-    function resCardsVendas() {
-        if (!dashVe('vendas')) return [];
+    // 1 gráfico: vendas por mês do ERP, últimos 6 meses (admin). O vendedor já vê o faturamento do site no "Detalhe do site".
+    function hojeGrafico() {
+        if (papel !== 'admin') return '';
         var est = resEstado(vend, 'vendas do ERP', 'vend');
-        if (est) return [resCard('Vendas no ERP', 'vendas', 'Vendas por mês, preço praticado e sazonalidade.', est, true)];
-        if (!vend.meses.length) return [resCard('Vendas no ERP', 'vendas', null, '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhuma venda sincronizada ainda.</p>', true)];
-        var cards = [resCard('Vendas por mês', 'vendas', 'ERP SOLIDCON · mês corrente em cinza (parcial)', vendBarras(vendItensMes(), 'Vendas por mês em reais', 1))];
-        var D = vendPrecoDados();
-        if (!D) {
-            cards.push(resCard('Preço médio praticado', 'vendas', null, '<p class="text-sm" style="color:var(--adm-tinta-3)">Sem vendas com potes para calcular.</p>'));
-        } else {
-            var pior = D.linhas.slice().sort(function (a, b) { return a.valor / a.potes - b.valor / b.potes; }).slice(0, 5);
-            var pm = D.tot.potes > 0 ? D.tot.valor / D.tot.potes : 0, dsc = D.site > 0 ? (1 - pm / D.site) * 100 : 0;
-            cards.push(resCard('Preço médio praticado', 'vendas',
-                'Últimos ' + D.cols.length + ' meses · site ' + brl(D.site) + '/pote · mínimo ' + brl(VEND_PRECO_MIN),
-                '<p class="text-sm mb-3"><strong>' + esc(brl(Math.round(pm))) + '</strong> por pote (' + esc(vendPct(Math.abs(dsc)) + '%' + (dsc < 0 ? ' acima' : ' abaixo') + ' do site') + ') · <strong>' +
-                NUM.format(D.abaixo.length) + '</strong> sabor(es) abaixo do mínimo</p>' +
-                '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Sabor (menores preços)</th><th class="num">Preço</th></tr></thead><tbody>' +
-                pior.map(function (l) { return '<tr><td>' + esc(l.rot) + '</td>' + vendCelulaPreco(l.potes, l.valor, D.site) + '</tr>'; }).join('') + '</tbody></table></div>'));
-        }
-        cards.push('<div class="lg:col-span-2">' + vendHtmlSazonalidade('res-metrica', 10, 12) +
-            '<p class="text-right mt-2"><button type="button" class="text-xs underline" style="color:var(--adm-acao)" data-ir-aba="vendas">ver detalhes →</button></p></div>');
-        return cards;
+        var corpo = est ? est
+            : (!vend.meses.length ? '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhuma venda sincronizada ainda.</p>'
+                : vendBarras(vendItensMes().slice(-6), 'Vendas por mês em reais, últimos 6 meses', 1));
+        return '<div class="adm-card p-5 mt-5"><div class="flex items-start justify-between gap-3 mb-1"><p class="font-bold">Vendas por mês</p>' +
+            '<button type="button" class="text-xs underline shrink-0" style="color:var(--adm-acao)" data-ir-aba="vendas">ver vendas →</button></div>' +
+            '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">ERP SOLIDCON · últimos 6 meses · mês corrente em cinza (parcial)</p>' + corpo + '</div>';
     }
 
-    function resCardsEstoque() {
-        if (!dashVe('vitrine')) return [];
-        var est = resEstado(solid, 'estoque do ERP', 'solid') || resEstado(giro, 'vendas do ERP (giro)', 'giro');
-        if (est) return [resCard('Estoque e giro', 'vitrine', 'Quanto tempo o estoque dura, produtos parados e ranking.', est, true)];
-        // Sem vendas sincronizadas (cache válido e vazio) as entradas ainda existem: só o giro fica vazio.
-        if (!giro.linhas.length) return [resCard('Estoque e giro', 'vitrine', null, '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhuma venda sincronizada ainda.</p>', true), resCardEntradas()];
-        var it = giroItensCobertura(), crit = it.filter(function (i) { return !i.semGiro && i.dias <= GIRO_CRITICO; }).length;
-        var aten = it.filter(function (i) { return !i.semGiro && i.dias > GIRO_CRITICO && i.dias <= GIRO_ATENCAO; }).length;
-        var par = giroItensParados(), rk = giroRankingLista(30), totRk = rk.reduce(function (a, x) { return a + x.potes; }, 0), topo = rk.slice(0, 8), mx = topo.length ? topo[0].potes : 1;
-        var cardEnt = resCardEntradas();
-        return [
-            resCard('Estoque acaba em quantos dias', 'vitrine', 'Cobertura por sabor, em potes · crítico ≤ ' + GIRO_CRITICO + ' dias, atenção ≤ ' + GIRO_ATENCAO,
-                '<p class="text-sm mb-3"><strong>' + NUM.format(crit) + '</strong> crítico(s) · <strong>' + NUM.format(aten) + '</strong> em atenção</p>' +
-                (it.length ? '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Sabor</th><th class="num">Estoque</th><th class="num">Acaba em</th><th>Situação</th></tr></thead><tbody>' +
-                    it.slice(0, 6).map(function (i) {
-                        return '<tr><td>' + esc(i.gr.nome) + '</td><td class="num">' + esc(NUM.format(i.est)) + '</td><td class="num">' + (i.semGiro ? '—' : esc(giroFmt(i.dias, 0) + ' dias')) + '</td><td>' + giroSeloCobertura(i.dias, i.semGiro) + '</td></tr>';
-                    }).join('') + '</tbody></table></div>' : '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum sabor com estoque ou giro no período.</p>')),
-            resCard('Produtos parados', 'vitrine', 'Com estoque e sem venda há ' + GIRO_PARADO + ' dias ou mais',
-                '<p class="text-sm mb-3"><strong>' + NUM.format(par.length) + '</strong> sabor(es) parado(s)</p>' +
-                (par.length ? '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Sabor</th><th class="num">Estoque</th><th class="num">Sem venda há</th></tr></thead><tbody>' +
-                    par.slice(0, 5).map(function (i) { return '<tr><td>' + esc(i.gr.nome) + '</td><td class="num">' + esc(NUM.format(i.est)) + '</td><td class="num">' + (i.dias == null ? '—' : esc(NUM.format(i.dias) + ' dias')) + '</td></tr>'; }).join('') +
-                    '</tbody></table></div>' : '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum produto parado com estoque.</p>')),
-            resCard('Ranking real de vendas (30 dias)', 'vitrine', 'Potes vendidos no ERP, pote + caixa 24 + caixa 48 do mesmo sabor',
-                topo.length ? topo.map(function (x, i) {
-                    var pct = totRk > 0 ? x.potes / totRk * 100 : 0;
-                    return '<div class="mb-2"><div class="flex justify-between gap-3 text-xs mb-1"><span style="color:var(--adm-tinta-2)">' + (i + 1) + '. ' + esc(x.rot) + '</span>' +
-                        '<span class="font-bold">' + esc(NUM.format(Math.round(x.potes))) + ' <span class="font-normal" style="color:var(--adm-tinta-3)">' + esc(giroFmt(pct, 1) + '%') + '</span></span></div>' +
-                        '<div style="height:6px;border-radius:99px;background:var(--adm-borda)"><div style="height:6px;border-radius:99px;background:var(--adm-dados);width:' + (x.potes / mx * 100).toFixed(1) + '%"></div></div></div>';
-                }).join('') : '<p class="text-sm" style="color:var(--adm-tinta-3)">Sem vendas nesse período.</p>', true),
-            cardEnt
-        ];
-    }
-
-    // Card resumido das entradas de estoque (últimos 7 dias); mesma conta e mesmo cache da Vitrine.
-    function resCardEntradas() {
-        var tit = 'Entradas de estoque (7 dias)', est = resEstado(ent, 'fotos diárias do estoque', 'ent');
-        if (est) return resCard(tit, 'vitrine', ENT_SUBTITULO, est, true);
-        var A = entAgregar(7), n = Object.keys(A.porDia).length;
-        if (!n) return resCard(tit, 'vitrine', ENT_SUBTITULO, '<p class="text-sm" style="color:var(--adm-tinta-3)">Ainda sem estimativa: são necessárias duas fotos diárias consecutivas (histórico desde ' + ENT_DESDE_TXT + ').</p>', true);
-        var top = A.sabores.slice(0, 5), saldo = A.tot.ent - A.tot.vend;
-        return resCard(tit, 'vitrine', ENT_SUBTITULO + ' · histórico desde ' + ENT_DESDE_TXT,
-            '<div class="grid grid-cols-3 gap-3 mb-3"><div><p class="adm-tile-rotulo mb-1">Entradas</p><p class="adm-tile-valor">' + esc(entFmt(A.tot.ent)) + '</p></div>' +
-            '<div><p class="adm-tile-rotulo mb-1">Vendas</p><p class="adm-tile-valor">' + esc(entFmt(A.tot.vend)) + '</p></div>' +
-            '<div><p class="adm-tile-rotulo mb-1">Saldo</p><p class="adm-tile-valor">' + (saldo > 0 ? '+' : '') + esc(entFmt(saldo)) + '</p></div></div>' +
-            '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">Potes em ' + NUM.format(n) + ' dia(s) com estimativa · ' + esc(entFmt(A.tot.sai)) + ' em saídas sem venda</p>' +
-            (top.length ? '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Sabor</th><th class="num">Entradas (potes)</th></tr></thead><tbody>' +
-                top.map(function (o) { return '<tr><td>' + esc(o.nome) + '</td><td class="num">' + esc(entFmt(o.ent)) + '</td></tr>'; }).join('') + '</tbody></table></div>'
-                : '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhuma entrada no período.</p>'), true);
-    }
-
-    function resCardsClientes() {
-        var cards = [], est = resEstado(cmp, 'histórico de compras', 'cmp');
-        if (est) {
-            cards.push(resCard('Clientes ativos, novos e perdidos', 'clientes', 'Histórico de compras por cliente (ERP).', est));
-        } else {
-            var d = cmpDadosMensais();
-            cards.push(resCard('Clientes ativos, novos e perdidos', 'clientes', 'Últimos 6 meses · perdido = ' + CMP_PERDIDO + ' dias sem comprar',
-                d ? cmpHtmlTabelaMensal(d, 6) : '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhuma compra com cliente identificado.</p>'));
-            var sum = cmpSumindo(), cad = cmpCadastros();
-            cards.push(resCard('Clientes sumindo', 'clientes', CMP_MIN_COMPRAS + '+ compras e parados há mais de ' + String(CMP_FATOR).replace('.', ',') + '× o ritmo habitual',
-                '<p class="text-sm mb-3"><strong>' + NUM.format(sum.length) + '</strong> cliente(s) · maiores por média mensal</p>' +
-                (sum.length ? '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Cliente</th><th>Última compra</th><th class="num">Média/mês</th></tr></thead><tbody>' +
-                    sum.slice(0, 5).map(function (o) {
-                        return '<tr><td>' + esc(cmpNome(o, cad)) + '</td><td>' + esc(cmpData(o.ultima)) + '</td><td class="num">' + esc(brl(Math.round(o.mensal))) + '</td></tr>';
-                    }).join('') + '</tbody></table></div>' : '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum cliente nessa situação.</p>')));
-        }
-        if (dashVe('regioes')) {
-            var eg = resEstado(geo, 'cadastros do ERP', 'geo');
-            if (eg) {
-                cards.push(resCard('Clientes por região', 'regioes', 'Cadastros do ERP por bairro.', eg, true));
-            } else if (!geo.locais.length) {
-                cards.push(resCard('Clientes por região', 'regioes', null, '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum cadastro sincronizado ainda.</p>', true));
-            } else {
-                var temV = geoCalcValores(), dentro = 0, fora = 0;
-                geo.locais.forEach(function (l) { if (geoClassificar(l)) dentro += l.total; else fora += l.total; });
-                var top = geo.locais.slice().sort(function (a, b) { return temV ? (b.valor - a.valor) || (b.total - a.total) : (b.total - a.total); }).slice(0, 8);
-                cards.push(resCard('Clientes por região', 'regioes',
-                    'Aproximação por nome de bairro/cidade (sem polígono) · mapa na aba de origem',
-                    '<p class="text-sm mb-3"><strong>' + NUM.format(dentro) + '</strong> cliente(s) dentro das regiões cadastradas · <strong>' + NUM.format(fora) + '</strong> fora · ' + NUM.format(geo.locais.length) + ' bairros' +
-                    (temV ? '' : ' · valor comprado: ' + esc(resMotivo(cmp))) + '</p>' +
-                    '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Bairro / cidade</th><th>Região</th><th class="num">Clientes</th>' + (temV ? '<th class="num">Valor 6 meses</th>' : '') + '</tr></thead><tbody>' +
-                    top.map(function (l) {
-                        var r = geoClassificar(l);
-                        return '<tr><td>' + esc(l.bairro || '(sem bairro)') + ', ' + esc(l.cidade || '—') + (l.uf ? '/' + esc(l.uf) : '') + '</td><td>' + esc(r ? r.nome : 'Fora das regiões') + '</td><td class="num">' + NUM.format(l.total) + '</td>' +
-                        (temV ? '<td class="num">' + esc(brl(l.valor)) + '</td>' : '') + '</tr>';
-                    }).join('') + '</tbody></table></div>', true));
-            }
-        }
-        return cards;
-    }
-
-    function resCardsPedidos() {
-        var cards = [], pedidos = dados.pedidos;
-        var linhas = COLUNAS_KANBAN.map(function (c) {
-            var n = pedidos.filter(function (p) { return p.status === c.status; }).length;
-            return '<div class="flex items-center justify-between gap-3 py-1.5" style="border-bottom:1px solid var(--adm-borda)">' + selo(c.status) + '<span class="font-bold">' + NUM.format(n) + '</span></div>';
-        }).join('');
-        var lancar = pedidos.filter(function (p) { return ('lancado_solidcon_em' in p) && p.status !== 'cancelado' && !lancadoNoSolidcon(p); }).length;
-        var temLanc = pedidos.some(function (p) { return 'lancado_solidcon_em' in p; });
-        var cadastrar = 0, cadOk = !!pedidos.length && pedidos.some(function (p) { return cadastroErpDoPedido(p); });
-        var faltam = {}; // clientes distintos (documento tipado), não pedidos
-        pedidos.forEach(function (p) {
-            if (cadastroErpDoPedido(p) !== 'falta') return;
-            var tp = p.cnpj ? 'cnpj' : 'cpf';
-            faltam[tp + ':' + docNorm(p.cnpj || p.cpf, tp)] = true;
-        });
-        cadastrar = Object.keys(faltam).length;
-        var extras = '<p class="text-xs mt-3" style="color:var(--adm-tinta-2)">' +
-            (temLanc ? '<strong>' + NUM.format(lancar) + '</strong> pedido(s) ainda sem lançamento no SOLIDCON' : 'Lançamento no SOLIDCON: indisponível neste banco') + '<br>' +
-            (scli.carregado && !scli.erro && !scli.ausente ? '<strong>' + NUM.format(cadastrar) + '</strong> cliente(s) a cadastrar no ERP antes de faturar' : 'Cadastros do ERP: ' + esc(resMotivo(scli))) + '</p>';
-        cards.push(resCard('Pedidos por status', 'pedidos', 'Pedidos do site no período selecionado', (pedidos.length ? linhas : '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum pedido no período.</p>') + (pedidos.length ? extras : '')));
-        var res = dados.resumo;
-        cards.push(resCard('Faturamento do site por mês', 'pedidos', 'Pedidos confirmados ou entregues',
-            res.length ? vendBarras(res.map(function (r) {
-                return { rot: rotuloMes(r.mes), v: Number(r.faturamento_centavos) || 0, dica: rotuloMes(r.mes) + ': ' + brl(r.faturamento_centavos) + ' · ' + NUM.format(r.confirmados) + ' confirmados' };
-            }), 'Faturamento do site por mês em reais', 1) : '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum pedido ainda.</p>'));
-        if (dashVe('visitas')) {
-            var corte = Date.now() - 30 * 86400000, sess = {};
-            dados.visitasBrutas.forEach(function (v) { if (v.sessao && new Date(v.criado_em).getTime() >= corte) sess[v.sessao] = true; });
-            var leads30 = dados.leads.filter(function (l) { return new Date(l.criado_em).getTime() >= corte; }).length;
-            cards.push(resCard('Visitas e leads (30 dias)', 'visitas', 'Movimento do site',
-                '<div class="grid grid-cols-2 gap-3"><div><p class="adm-tile-rotulo mb-1">Sessões</p><p class="adm-tile-valor">' + NUM.format(Object.keys(sess).length) + '</p></div>' +
-                '<div><p class="adm-tile-rotulo mb-1">Leads</p><p class="adm-tile-valor">' + NUM.format(leads30) + '</p></div></div>' +
-                '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">Sessões contadas nas últimas ' + NUM.format(dados.visitasBrutas.length) + ' visitas carregadas. <button type="button" class="underline" style="color:var(--adm-acao)" data-ir-aba="leads">ver leads →</button></p>'));
-        }
-        return cards;
-    }
-
-    function desenharResumao() {
-        var alvo = $('#resumao');
+    function desenharHoje() {
+        var alvo = $('#hoje');
         if (!alvo) return;
-        var kpis = resSeguro(resKpis);
+        var kpis = resSeguro(hojeKpis);
         alvo.innerHTML =
-            '<div class="mb-4"><p class="font-bold text-xl">Resumão</p>' +
-            '<p class="text-xs" style="color:var(--adm-tinta-3)">Os principais números em um só lugar. Cada bloco aparece quando seus dados chegam; “ver detalhes” abre a aba de origem.</p></div>' +
-            '<div class="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-8">' + (Array.isArray(kpis) ? kpis.join('') : kpis) + '</div>' +
-            resSecao('fa-chart-line', 'Vendas', toArr(resSeguro(resCardsVendas)).concat(toArr(resSeguro(resCardPagamentos)))) +
-            resSecao('fa-boxes-stacked', 'Estoque', toArr(resSeguro(resCardsEstoque)).concat(toArr(resSeguro(resCardInsumos)))) +
-            resSecao('fa-users', 'Clientes', toArr(resSeguro(resCardsClientes))) +
-            resSecao('fa-clipboard-list', 'Pedidos e site', toArr(resSeguro(resCardsPedidos)));
-        var met = alvo.querySelector('#res-metrica');
-        if (met) met.addEventListener('change', function (ev) {
-            vend.metrica = ev.target.value === 'valor' ? 'valor' : 'potes';
-            abasParaRedesenhar.vendas = true;
-            desenharResumao();
-        });
+            '<p class="font-bold text-lg mb-3">Precisa de você agora</p>' + resSeguro(hojeAgora) +
+            '<p class="font-bold text-lg mt-8 mb-3">O mês em números</p>' +
+            '<div class="grid grid-cols-2 lg:grid-cols-4 gap-3">' + (Array.isArray(kpis) ? kpis.join('') : kpis) + '</div>' + resSeguro(hojeGrafico);
     }
-    function toArr(x) { return Array.isArray(x) ? x : [x]; }
 
     function desenharDashboard() {
         var alvo = $('#painel-dashboard');
-        alvo.innerHTML = '<section id="resumao"></section>' +
+        alvo.innerHTML = '<section id="hoje"></section>' +
             '<section class="mt-12 pt-8" style="border-top:1px solid var(--adm-borda)"><div class="mb-4"><p class="font-bold text-lg">Detalhe do site</p>' +
             '<p class="text-xs" style="color:var(--adm-tinta-3)">Faturamento, pedidos e receita por período — pedidos feitos pelo site.</p></div><div id="dash-site-corpo"></div></section>';
-        alvo.querySelector('#resumao').addEventListener('click', function (ev) {
+        alvo.querySelector('#hoje').addEventListener('click', function (ev) {
             var ir = ev.target.closest('[data-ir-aba]');
-            if (ir) { trocarAba(ir.getAttribute('data-ir-aba')); window.scrollTo(0, 0); return; }
+            if (ir) { trocarAba(ir.getAttribute('data-ir-aba'), true); window.scrollTo(0, 0); return; }
             var t = ev.target.closest('[data-res-tentar]');
             if (t) { var f = RES_CARREGADORES[t.getAttribute('data-res-tentar')]; if (f) f(); }
         });
-        desenharResumao();
+        desenharHoje();
         desenharDashboardBase();
         if (!dash.iniciado) { dash.iniciado = true; dashCarregarProgressivo(false); }
     }
@@ -5676,79 +5499,220 @@
         });
     }
 
-    function clientePassaNoFiltro(c) {
-        if (filtros.de && String(c.criadoEm).slice(0, 10) < filtros.de) return false;
-        if (filtros.ate && String(c.criadoEm).slice(0, 10) > filtros.ate) return false;
-        if (filtros.regioes.length && filtros.regioes.indexOf(c.regiaoId) === -1) return false;
-        if (filtros.tipoCliente !== 'todos' && c.tipo.toLowerCase() !== filtros.tipoCliente) return false;
-        if (clientesFiltroAtivo !== 'todos' && (c.ativo ? 'ativos' : 'inativos') !== clientesFiltroAtivo) return false;
-        if (filtros.busca) {
-            var alvo = (c.nome + ' ' + c.cnpj + ' ' + c.cpf + ' ' + c.telefone).toLowerCase();
-            if (alvo.indexOf(filtros.busca) === -1) return false;
-        }
-        return true;
+    /* ===================================================================
+     * Clientes — UMA lista só (site + ERP SOLIDCON)
+     * Casamento por CNPJ/CPF normalizado (docNorm). Cada linha pode ter: site (cadastro do site), erp (cadastro em
+     * solidcon_clientes) e cmp (compras em solidcon_vendas_clientes, 026). Compras sem cadastro no ERP continuam na lista.
+     * Ações de edição/exclusão/WhatsApp só existem para quem é cliente do site. CPF nunca mostra endereço completo.
+     * =================================================================== */
+    var ucli = { busca: '', origem: 'todos', ordem: { col: 'total', dir: -1 }, base: [], filtradas: [] };
+
+    function ucliDocFmt(d) {
+        if (!d) return '';
+        if (d.length === 14) return recCnpj(d);
+        return d.length === 11 ? d.slice(0, 3) + '.' + d.slice(3, 6) + '.' + d.slice(6, 9) + '-' + d.slice(9) : d;
     }
 
-    function desenharClientesBase() {
-        var alvo = $('#painel-clientes');
-        var todos = listaClientesCombinada();
+    // Uma linha por documento; quem não tem documento utilizável fica numa linha própria (nunca é fundido por engano).
+    function ucliLinhas() {
+        var porKey = {}, linhas = [], cad = cmpPronto() ? cmpSumindo() : [], sumi = {}, ult = {};
+        cad.forEach(function (o) { sumi[o.doc] = true; });
+        dados.pedidos.forEach(function (p) {
+            if (p.status !== 'confirmado' && p.status !== 'entregue') return;
+            var d = cmpIso(new Date(p.criado_em));
+            if (!ult[p.cliente_id] || d > ult[p.cliente_id]) ult[p.cliente_id] = d;
+        });
+        function nova(key, doc) { var r = { key: key, doc: doc, site: null, erp: null, cmp: null }; linhas.push(r); return r; }
+        function porDoc(d) { return porKey[d] || (porKey[d] = nova(d, d)); }
 
-        if (!todos.length) {
-            alvo.innerHTML = cartaoVazio('Nenhum cliente ainda',
-                'Um cliente entra aqui sozinho assim que o primeiro pedido dele é gravado — ' +
-                'não existe cadastro separado no site.');
+        listaClientesCombinada().forEach(function (c) {
+            var d = docNorm(c.cnpj || c.cpf, c.cnpj ? 'cnpj' : 'cpf');
+            var r = d && !(porKey[d] && porKey[d].site) ? porDoc(d) : nova('site:' + c.clienteId, d);
+            r.site = c;
+        });
+        if (scli.carregado && scli.lista) scli.lista.forEach(function (c, i) {
+            var d = docNorm(c.documento, c.tipo);
+            if (!d) { nova('erp:' + i, '').erp = c; return; }
+            var r = porDoc(d);
+            if (!r.erp) r.erp = c;
+        });
+        if (cmpPronto()) Object.keys(cmp.por).forEach(function (k) { porDoc(k).cmp = cmp.por[k]; });
+
+        var A = recPronto() ? recAgregar() : null;
+        linhas.forEach(function (r) {
+            var s = r.site, e = r.erp, nomeSite = s && s.nome !== '(sem nome)' ? s.nome : '';
+            r.nome = nomeSite || (e && e.nome) || (s && s.nome) || ('(sem cadastro) ' + ucliDocFmt(r.doc));
+            r.tipo = r.doc ? (r.doc.length === 14 ? 'PJ' : 'PF') : (s ? s.tipo : String((e && e.tipo) || '').toUpperCase() === 'CNPJ' ? 'PJ' : 'PF');
+            r.temErp = !!(e || r.cmp);
+            r.origem = s && r.temErp ? 'ambos' : s ? 'site' : 'erp';
+            r.telefones = [];
+            [s && s.telefone, e && e.telefone, e && e.celular].forEach(function (t) { if (t && r.telefones.indexOf(t) < 0) r.telefones.push(t); });
+            r.email = (s && s.email) || (e && e.email) || '';
+            r.local = s && (s.bairro || s.cidade) ? [s.bairro, s.cidade].filter(Boolean).join(', ') + (s.uf ? '/' + s.uf : '')
+                : e ? [e.bairro, e.cidade].filter(Boolean).join(', ') + (e.estado ? '/' + e.estado : '') : '';
+            r.pedidos = s ? s.pedidos : 0;
+            var us = s ? ult[s.clienteId] : '', ue = r.cmp ? r.cmp.ultima : '';
+            r.ultima = us > ue ? us : ue || us || '';
+            r.total = r.cmp ? r.cmp.total : s ? s.gasto : null;
+            r.totalDe = r.cmp ? 'ERP' : 'site';
+            r.sumindo = !!(r.doc && sumi[r.doc]);
+            r.n = r.cmp ? r.cmp.n : null; r.total6 = r.cmp ? r.cmp.total6 : null; r.ticket6 = r.cmp ? r.cmp.ticket6 : null; r.freq = r.cmp ? r.cmp.freq : null;
+            var g = A && r.doc && r.doc.length === 14 ? A.porDoc[r.doc] : null;
+            r.vencido = g ? g.vencido : null;
+            r.digitos = [r.doc].concat(r.telefones).join(' ').replace(/[^\d ]/g, '');
+            r.busca = [r.nome, r.doc, s && s.cnpj, s && s.cpf, e && e.nome, r.telefones.join(' '), r.email, r.local].join(' ').toLowerCase();
+        });
+        return linhas;
+    }
+
+    function recPronto() { return papel === 'admin' && rec.carregado && !rec.erro && !rec.ausente && !rec.truncado; }
+
+    // Filtros globais valem para a parte "site"; período e região só existem no site, então escondem quem é só do ERP.
+    function ucliFiltroDoSiteAtivo() { return !!(filtros.de || filtros.ate || filtros.regioes.length); }
+
+    function ucliFiltrar(linhas) {
+        var q = ucli.busca.trim().toLowerCase(), qd = docDigitos(q), siteAtivo = ucliFiltroDoSiteAtivo();
+        var od = ucli.ordem, col = od.col;
+        var lista = linhas.filter(function (r) {
+            if (ucli.origem !== 'todos' && r.origem !== ucli.origem) return false;
+            if (clientesFiltroAtivo !== 'todos' && (!r.site || (r.site.ativo ? 'ativos' : 'inativos') !== clientesFiltroAtivo)) return false;
+            if (siteAtivo) {
+                if (!r.site) return false;
+                var c = r.site, dia = String(c.criadoEm).slice(0, 10);
+                if (filtros.de && dia < filtros.de) return false;
+                if (filtros.ate && dia > filtros.ate) return false;
+                if (filtros.regioes.length && filtros.regioes.indexOf(c.regiaoId) === -1) return false;
+            }
+            if (filtros.tipoCliente !== 'todos' && r.tipo.toLowerCase() !== filtros.tipoCliente) return false;
+            if (filtros.busca && r.busca.indexOf(filtros.busca) === -1) return false;
+            if (q && r.busca.indexOf(q) === -1 && !(qd.length >= 3 && !/[a-z]/.test(q) && r.digitos.indexOf(qd) >= 0)) return false;
+            return true;
+        });
+        lista.sort(function (a, b) {
+            var va = a[col], vb = b[col];
+            if (col === 'nome') return String(va).localeCompare(String(vb), 'pt-BR') * od.dir;
+            if (!va && va !== 0 && !vb && vb !== 0) return 0;
+            if (!va && va !== 0) return 1; // sem valor vai sempre para o fim
+            if (!vb && vb !== 0) return -1;
+            return (va < vb ? -1 : va > vb ? 1 : 0) * od.dir;
+        });
+        return lista;
+    }
+
+    // Estado das fontes do ERP, numa linha só (o detalhe do histórico de compras continua no bloco abaixo).
+    function ucliAviso() {
+        var base = '<div class="adm-card p-4 mb-4 text-sm" style="color:var(--adm-tinta-2)">';
+        if (scli.carregando && !scli.carregado) return base + '<i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando cadastros do SOLIDCON…</div>';
+        if (scli.ausente) return base + 'Cadastros do SOLIDCON ainda não instalados: a tabela solidcon_clientes ainda não existe neste banco. Enquanto isso a lista mostra só os clientes do site.</div>';
+        if (scli.erro) return base + 'Não foi possível carregar os cadastros do SOLIDCON: ' + esc(scli.erro) + ' <button type="button" class="adm-botao-fantasma ml-2" id="scli-tentar">Tentar de novo</button></div>';
+        if (!cmpPronto()) return base + (cmp.carregando || !cmp.carregado && !cmp.erro && !cmp.ausente ? '<i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando histórico de compras do ERP…' :
+            'Histórico de compras do ERP indisponível agora (veja o bloco “Histórico de compras por cliente”): Última compra e Total usam só os pedidos do site.') + '</div>';
+        return '';
+    }
+
+    function ucliChips(attr, opcoes, atual) {
+        return opcoes.map(function (o) {
+            return '<button type="button" class="adm-chip' + (atual === o[0] ? ' is-ativo' : '') + '" ' + attr + '="' + o[0] + '">' + o[1] + '</button>';
+        }).join('');
+    }
+
+    function desenharClientesLista() {
+        var alvo = $('#clientes-lista');
+        if (!alvo) return;
+        ucli.base = ucliLinhas();
+        if (!ucli.base.length && !(scli.carregando && !scli.carregado)) {
+            alvo.innerHTML = ucliAviso() + cartaoVazio('Nenhum cliente ainda',
+                'Um cliente entra aqui sozinho assim que o primeiro pedido dele é gravado no site, ou quando existir no cadastro do SOLIDCON.');
+            ligarUcliAviso(alvo);
             return;
         }
-
-        var filtrados = todos.filter(clientePassaNoFiltro)
-            .sort(function (a, b) { return b.gasto - a.gasto; });
-        var pag = paginar(filtrados, clientesPagina, POR_PAGINA_CLIENTES);
-        clientesPagina = pag.pagina;
-
         alvo.innerHTML =
-            '<div class="flex items-center justify-between flex-wrap gap-3 mb-5">' +
-                '<div class="flex gap-1">' +
-                    ['todos', 'ativos', 'inativos'].map(function (v) {
-                        return '<button type="button" class="adm-chip' + (clientesFiltroAtivo === v ? ' is-ativo' : '') +
-                            '" data-clientes-status="' + v + '">' + v.charAt(0).toUpperCase() + v.slice(1) + '</button>';
-                    }).join('') +
+            '<div class="flex items-center justify-between flex-wrap gap-3 mb-3">' +
+                '<div class="flex gap-1 flex-wrap" role="group" aria-label="Origem">' +
+                    ucliChips('data-ucli-origem', [['todos', 'Todas as origens'], ['site', 'Só site'], ['erp', 'Só ERP'], ['ambos', 'Site + ERP']], ucli.origem) +
                 '</div>' +
-                botoesExportar('clientes') +
+                '<div class="flex items-center gap-3 flex-wrap">' + botoesExportar('clientes') + '</div>' +
             '</div>' +
+            '<div class="flex items-center justify-between flex-wrap gap-3 mb-4">' +
+                '<div class="flex gap-1" role="group" aria-label="Situação (clientes do site)">' +
+                    ucliChips('data-clientes-status', [['todos', 'Todos'], ['ativos', 'Ativos'], ['inativos', 'Inativos']], clientesFiltroAtivo) +
+                '</div>' +
+                '<div class="flex items-center gap-2 flex-wrap">' +
+                    '<input type="search" id="ucli-busca" class="adm-input" style="width:16rem;max-width:100%;padding:.55rem .7rem" placeholder="Buscar por nome, documento ou telefone" aria-label="Buscar cliente" value="' + esc(ucli.busca) + '">' +
+                    '<select id="ucli-ordem" class="adm-input" style="width:auto;padding:.55rem .7rem" aria-label="Ordenar por">' +
+                        [['nome', 'Nome'], ['ultima', 'Última compra'], ['total', 'Total comprado'], ['n', 'Nº de compras (ERP)'], ['total6', 'Total 6 meses (ERP)'], ['ticket6', 'Ticket médio 6 meses (ERP)'], ['freq', 'Frequência típica (ERP)']].concat(papel === 'admin' ? [['vencido', 'Vencido']] : []).map(function (o) {
+                            return '<option value="' + o[0] + '"' + (ucli.ordem.col === o[0] ? ' selected' : '') + '>Ordenar: ' + o[1] + '</option>';
+                        }).join('') +
+                    '</select>' +
+                    '<button type="button" class="adm-botao-fantasma" id="ucli-dir" aria-label="Inverter a ordem"><i class="fa-solid ' + (ucli.ordem.dir > 0 ? 'fa-arrow-up-short-wide' : 'fa-arrow-down-wide-short') + '"></i></button>' +
+                '</div>' +
+            '</div>' +
+            ucliAviso() +
+            '<div id="ucli-corpo"></div>';
 
-            (filtrados.length
-                ? '<div class="adm-card p-5">' +
-                  '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr>' +
-                      '<th>Nome</th><th>Telefone</th><th>Tipo</th><th style="text-align:right">Pedidos</th>' +
-                      '<th style="text-align:right">Ticket médio</th><th>Ação</th>' +
-                  '</tr></thead><tbody>' +
-                  pag.itens.map(linhaCliente).join('') +
-                  '</tbody></table></div>' +
-                  controlesDePaginacao('clientes', pag.pagina, pag.totalPaginas) +
-                  '</div>'
-                : cartaoVazio('Nenhum cliente com esses filtros',
-                      'Há ' + NUM.format(todos.length) + ' clientes ao todo — tente limpar os filtros acima.'));
-
-        ligarBotoesExportar(alvo, { clientes: function () { exportarClientesCSV(filtrados); } });
-
+        alvo.querySelectorAll('[data-ucli-origem]').forEach(function (b) {
+            b.addEventListener('click', function () { ucli.origem = b.getAttribute('data-ucli-origem'); clientesPagina = 1; desenharClientesLista(); });
+        });
         alvo.querySelectorAll('[data-clientes-status]').forEach(function (b) {
-            b.addEventListener('click', function () {
-                clientesFiltroAtivo = b.getAttribute('data-clientes-status');
-                clientesPagina = 1;
-                desenharClientes();
+            b.addEventListener('click', function () { clientesFiltroAtivo = b.getAttribute('data-clientes-status'); clientesPagina = 1; desenharClientesLista(); });
+        });
+        $('#ucli-busca').addEventListener('input', function (ev) { ucli.busca = ev.target.value; clientesPagina = 1; desenharUcliCorpo(); });
+        $('#ucli-ordem').addEventListener('change', function (ev) {
+            var c = ev.target.value; ucli.ordem = { col: c, dir: c === 'nome' ? 1 : -1 }; clientesPagina = 1; desenharClientesLista();
+        });
+        $('#ucli-dir').addEventListener('click', function () { ucli.ordem.dir = -ucli.ordem.dir; clientesPagina = 1; desenharClientesLista(); });
+        ligarBotoesExportar(alvo, { clientes: function () { exportarClientesCSV(ucli.filtradas); } });
+        ligarUcliAviso(alvo);
+        desenharUcliCorpo();
+    }
+
+    function ligarUcliAviso(alvo) {
+        var t = alvo.querySelector('#scli-tentar');
+        if (t) t.addEventListener('click', carregarSolidClientes);
+    }
+
+    function desenharUcliCorpo() {
+        var alvo = $('#ucli-corpo');
+        if (!alvo) return;
+        var filtradas = ucli.filtradas = ucliFiltrar(ucli.base);
+        var adm = papel === 'admin';
+        var nSite = 0, nErp = 0, nAmbos = 0;
+        filtradas.forEach(function (r) { if (r.origem === 'site') nSite++; else if (r.origem === 'erp') nErp++; else nAmbos++; });
+        var aviso = ucliFiltroDoSiteAtivo() && ucli.base.some(function (r) { return !r.site; })
+            ? '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)"><i class="fa-solid fa-filter mr-1"></i>Filtro de período/região ativo: cadastros que existem só no ERP ficam de fora (esses dados são do site).</p>' : '';
+        if (!filtradas.length) {
+            alvo.innerHTML = aviso + cartaoVazio('Nenhum cliente com esses filtros', 'Há ' + NUM.format(ucli.base.length) + ' clientes ao todo — tente limpar os filtros ou a busca.');
+            return;
+        }
+        var pag = paginar(filtradas, clientesPagina, POR_PAGINA_CLIENTES);
+        clientesPagina = pag.pagina;
+        var colunas = adm ? 8 : 7;
+        function th(col, rot, num) {
+            var ordenavel = !!col;
+            return '<th' + (num ? ' class="num"' : '') + (ordenavel ? ' style="cursor:pointer" data-ucli-ord="' + col + '" aria-sort="' + (ucli.ordem.col === col ? (ucli.ordem.dir > 0 ? 'ascending' : 'descending') : 'none') + '"' : '') + '>' +
+                rot + (ordenavel && ucli.ordem.col === col ? (ucli.ordem.dir > 0 ? ' ▲' : ' ▼') : '') + '</th>';
+        }
+        alvo.innerHTML = aviso +
+            '<div class="adm-card p-5"><div class="overflow-x-auto"><table class="adm-tabela adm-tabela-lista"><thead><tr>' +
+                th('nome', 'Cliente') + th('', 'Contato') + th('', 'Pedidos (site)', true) + th('ultima', 'Última compra', true) + th('total', 'Total', true) +
+                (adm ? th('vencido', 'Vencido', true) : '') + th('', 'Ação') +
+            '</tr></thead><tbody>' + pag.itens.map(function (r) { return linhaClienteUnico(r, colunas); }).join('') + '</tbody></table></div>' +
+            '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">' + NUM.format(filtradas.length) + ' clientes — ' + NUM.format(nSite) + ' só no site · ' + NUM.format(nErp) + ' só no ERP · ' + NUM.format(nAmbos) + ' nos dois. ' +
+                'Total = histórico no ERP (quando existe) ou pedidos fechados do site.</p>' +
+            controlesDePaginacao('clientes', pag.pagina, pag.totalPaginas) + '</div>';
+
+        alvo.querySelectorAll('[data-ucli-ord]').forEach(function (h) {
+            h.addEventListener('click', function () {
+                var c = h.getAttribute('data-ucli-ord');
+                ucli.ordem = { col: c, dir: ucli.ordem.col === c ? -ucli.ordem.dir : (c === 'nome' ? 1 : -1) };
+                clientesPagina = 1; desenharClientesLista();
             });
         });
-
         alvo.querySelectorAll('[data-pagina^="clientes:"]').forEach(function (b) {
-            b.addEventListener('click', function () {
-                clientesPagina = Number(b.getAttribute('data-pagina').split(':')[1]);
-                desenharClientes();
-            });
+            b.addEventListener('click', function () { clientesPagina = Number(b.getAttribute('data-pagina').split(':')[1]); desenharUcliCorpo(); });
         });
 
-        // "Detalhes" não abre modal: abre a própria linha, embaixo do cliente
-        // clicado — a linha de detalhe já está no DOM (ver linhaCliente),
-        // colapsada por CSS. Clicar só alterna a classe que a expande.
+        // "Detalhes" não abre modal: abre a própria linha, embaixo do cliente clicado (ver linhaClienteUnico).
         alvo.querySelectorAll('[data-ver-cliente]').forEach(function (b) {
             b.addEventListener('click', function () {
                 var linhaDetalhe = b.closest('tr').nextElementSibling;
@@ -5765,16 +5729,13 @@
         });
         alvo.querySelectorAll('[data-editar-cliente]').forEach(function (b) {
             b.addEventListener('click', function () {
-                var c = filtrados.filter(function (x) { return x.clienteId === b.getAttribute('data-editar-cliente'); })[0];
-                if (c) abrirModal(formEditarCliente(c));
+                var r = filtradas.filter(function (x) { return x.site && x.site.clienteId === b.getAttribute('data-editar-cliente'); })[0];
+                if (r) abrirModal(formEditarCliente(r.site));
             });
         });
 
-        // Reaproveita a mesma RPC da aba LGPD ("Excluir dados"): mantém o
-        // pedido (obrigação fiscal de 5 anos), anonimiza nome/telefone/
-        // e-mail/endereço em usuarios, clientes e pedidos, e apaga leads
-        // com o mesmo documento. Sem solicitação de LGPD associada — só
-        // passa o documento, o terceiro parâmetro fica null.
+        // Reaproveita a mesma RPC da aba LGPD ("Excluir dados"): mantém o pedido (obrigação fiscal de 5 anos), anonimiza
+        // nome/telefone/e-mail/endereço em usuarios, clientes e pedidos, e apaga leads com o mesmo documento.
         alvo.querySelectorAll('[data-excluir-cliente]').forEach(function (b) {
             b.addEventListener('click', function () {
                 var documento = b.getAttribute('data-documento');
@@ -5800,67 +5761,109 @@
         });
     }
 
-    function linhaCliente(c) {
+    function ucliSelos(r) {
+        return (r.site ? SELO_SITE : '') + (r.temErp ? (r.site ? ' ' : '') + SELO_ERP : '') +
+            (r.site && !r.site.ativo ? ' <span class="adm-selo adm-selo-cancelado">Inativo</span>' : '') +
+            (r.sumindo ? ' <span class="adm-selo adm-selo-aguardando" title="Parou de comprar no ritmo habitual">Sumindo</span>' : '');
+    }
+
+    function linhaClienteUnico(r, colunas) {
+        var s = r.site, adm = papel === 'admin';
         return '<tr>' +
-            '<td>' + esc(c.nome) + ' ' + SELO_SITE +
-                (jaNoErp(c.cnpj || c.cpf, c.cnpj ? 'cnpj' : 'cpf') ? ' <span class="adm-selo adm-selo-erp" title="Este documento já tem cadastro no SOLIDCON"><i class="fa-solid fa-link"></i>Já no ERP</span>' : '') +
-                (c.ativo ? '' : ' <span class="adm-selo adm-selo-cancelado" style="margin-left:.4rem">Inativo</span>') + '</td>' +
-            '<td>' + esc(c.telefone || '—') + '</td>' +
-            '<td>' + esc(c.tipo) + '</td>' +
-            '<td class="num">' + NUM.format(c.pedidos) + '</td>' +
-            '<td class="num">' + esc(brl(c.ticket)) + '</td>' +
+            '<td>' + esc(r.nome) + '<div class="mt-1">' + ucliSelos(r) + '</div>' +
+                '<div class="text-xs mt-1" style="color:var(--adm-tinta-3)">' + esc(r.tipo) + (r.doc ? ' ' + esc(ucliDocFmt(r.doc)) : '') + (r.local ? ' · ' + esc(r.local) : '') + '</div></td>' +
+            '<td data-rotulo="Contato">' + (r.telefones.length ? esc(r.telefones.join(' / ')) : '—') + (r.email ? '<br><span class="text-xs" style="color:var(--adm-tinta-3)">' + esc(r.email) + '</span>' : '') + '</td>' +
+            '<td class="num" data-rotulo="Pedidos (site)">' + (s ? NUM.format(r.pedidos) : '—') + '</td>' +
+            '<td class="num" data-rotulo="Última compra">' + (r.ultima ? esc(cmpData(r.ultima)) : '—') + '</td>' +
+            '<td class="num" data-rotulo="Total">' + (r.total != null ? esc(brl(Math.round(r.total))) + '<br><span class="text-xs" style="color:var(--adm-tinta-3)">' + r.totalDe + '</span>' : '—') + '</td>' +
+            (adm ? '<td class="num" data-rotulo="Vencido"' + (r.vencido > 0 ? ' style="color:var(--adm-ruim)"' : '') + '>' + (r.vencido != null ? esc(brl(r.vencido)) : '—') + '</td>' : '') +
             '<td><div class="flex items-center gap-1 flex-wrap">' +
-                '<button type="button" class="adm-botao-fantasma" data-ver-cliente="' + esc(c.clienteId) + '" aria-expanded="false">' +
+                '<button type="button" class="adm-botao-fantasma" data-ver-cliente="' + esc(r.key) + '" aria-expanded="false">' +
                     '<i class="fa-solid fa-chevron-down mr-1" data-icone-detalhe></i>Detalhes</button>' +
-                '<button type="button" class="adm-botao-fantasma" data-editar-cliente="' + esc(c.clienteId) + '">' +
+                (s ? '<button type="button" class="adm-botao-fantasma" data-editar-cliente="' + esc(s.clienteId) + '">' +
                     '<i class="fa-solid fa-pen mr-1"></i>Editar</button>' +
-                '<button type="button" class="adm-botao-fantasma" data-excluir-cliente="' + esc(c.clienteId) + '" ' +
-                    'data-documento="' + esc(c.cnpj || c.cpf || '') + '" style="color:var(--adm-ruim)">' +
-                    '<i class="fa-solid fa-trash mr-1"></i>Excluir</button>' +
-                linkWhats(c.telefone) +
+                '<button type="button" class="adm-botao-fantasma" data-excluir-cliente="' + esc(s.clienteId) + '" ' +
+                    'data-documento="' + esc(s.cnpj || s.cpf || '') + '" style="color:var(--adm-ruim)">' +
+                    '<i class="fa-solid fa-trash mr-1"></i>Excluir</button>' + linkWhats(s.telefone) : '') +
             '</div></td>' +
         '</tr>' +
-        // Linha de detalhe: nasce colapsada (CSS), logo depois da linha do
-        // cliente — "Detalhes" alterna a classe que a abre, em vez de um
-        // modal. Fica sempre no DOM, mesmo fechada, para a transição de
-        // altura ter o que animar (ver .adm-detalhe-colapso em admin.css).
+        // Linha de detalhe: nasce colapsada (CSS), logo depois da linha do cliente.
         '<tr class="adm-linha-detalhe">' +
-            '<td colspan="6"><div class="adm-detalhe-colapso">' +
-                '<div class="adm-detalhe-conteudo">' + detalheCliente(c) + '</div>' +
+            '<td colspan="' + colunas + '"><div class="adm-detalhe-colapso">' +
+                '<div class="adm-detalhe-conteudo">' + detalheClienteUnico(r) + '</div>' +
             '</div></td>' +
         '</tr>';
     }
 
-    function detalheCliente(c) {
-        var pedidosDoCliente = dados.pedidos.filter(function (p) { return p.cliente_id === c.clienteId; })
-            .sort(function (a, b) { return new Date(b.criado_em) - new Date(a.criado_em); });
+    function ucliBloco(titulo, selo, corpo) {
+        return '<div class="mb-5"><div class="flex items-center gap-2 mb-3">' + selo + '<p class="font-bold text-sm">' + esc(titulo) + '</p></div>' + corpo + '</div>';
+    }
 
-        return '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">' +
-                esc(c.tipo === 'PJ' ? 'CNPJ ' + c.cnpj : 'CPF ' + c.cpf) +
-                (c.bairro || c.cidade ? ' · ' + esc([c.bairro, c.cidade].filter(Boolean).join(', ')) + '/' + esc(c.uf || '') : '') +
-            '</p>' +
-            '<div class="grid sm:grid-cols-3 gap-4 mb-4">' +
-                ficha('Pedidos', NUM.format(c.pedidos), NUM.format(c.fechados) + ' fechados') +
-                ficha('Total comprado', brl(c.gasto), 'confirmado + entregue') +
-                ficha('Ticket médio', brl(c.ticket), 'por pedido fechado') +
-            '</div>' +
-            recFichasDoCliente(c) +
-            (c.telefone || c.email
-                ? '<p class="text-sm mb-4">' + esc(c.telefone) + (c.email ? ' · ' + esc(c.email) : '') + '</p>'
-                : '') +
-            '<p class="font-bold text-sm mb-3">Pedidos</p>' +
-            (pedidosDoCliente.length
-                ? '<div class="space-y-2 max-h-64 overflow-y-auto">' +
-                  pedidosDoCliente.map(function (p) {
-                      return '<div class="flex items-center justify-between text-sm py-1.5" style="border-bottom:1px solid var(--adm-borda)">' +
-                          '<span style="color:var(--adm-tinta-2)">' + esc(new Date(p.criado_em).toLocaleDateString('pt-BR')) + '</span>' +
-                          '<span>' + esc(brl(p.valor_centavos)) + '</span>' + selo(p.status) +
-                      '</div>';
-                  }).join('') + '</div>'
-                : '<p class="adm-vazio">Nenhum pedido no período carregado.</p>') +
-            (linkWhats(c.telefone)
-                ? '<div class="mt-4 pt-4" style="border-top:1px solid var(--adm-borda)">' + linkWhats(c.telefone) + '</div>'
-                : '');
+    function detalheClienteUnico(r) {
+        var s = r.site, e = r.erp, o = r.cmp, adm = papel === 'admin';
+        var h = '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">' + esc(r.tipo === 'PJ' ? 'CNPJ' : 'CPF') + ' ' + esc(r.doc ? ucliDocFmt(r.doc) : '—') +
+            (r.local ? ' · ' + esc(r.local) : '') + '</p>';
+
+        // Contato e endereço (endereço completo só de CNPJ, vindo do cadastro do ERP)
+        var contato = [];
+        if (s && (s.telefone || s.email)) contato.push('<p class="text-sm">' + SELO_SITE + ' ' + esc(s.telefone || '') + (s.email ? ' · ' + esc(s.email) : '') + '</p>');
+        if (e) {
+            var tel = [e.telefone, e.celular].filter(Boolean).join(' / ');
+            contato.push('<p class="text-sm">' + SELO_ERP + ' ' + esc(tel || '—') + (e.email ? ' · ' + esc(e.email) : '') + '</p>');
+        }
+        h += '<div class="mb-5 space-y-1">' + (contato.join('') || '<p class="text-sm" style="color:var(--adm-tinta-3)">Sem contato cadastrado.</p>') + '</div>';
+        if (e && r.tipo === 'PJ') {
+            h += '<p class="text-sm mb-5"><span class="adm-tile-rotulo mr-2">Endereço (CNPJ)</span>' + scliEndereco(e) +
+                (e.coletado_em ? '<br><span class="text-xs" style="color:var(--adm-tinta-3)">Cadastro coletado em ' + esc(dataHora(e.coletado_em)) + '</span>' : '') + '</p>';
+        } else if (e && e.coletado_em) {
+            h += '<p class="text-xs mb-5" style="color:var(--adm-tinta-3)">Cadastro do ERP coletado em ' + esc(dataHora(e.coletado_em)) + '</p>';
+        }
+
+        // Pedidos do site (como antes)
+        if (s) {
+            var pedidos = dados.pedidos.filter(function (p) { return p.cliente_id === s.clienteId; })
+                .sort(function (a, b) { return new Date(b.criado_em) - new Date(a.criado_em); });
+            h += ucliBloco('Pedidos do site', SELO_SITE,
+                '<div class="grid sm:grid-cols-3 gap-4 mb-4">' +
+                    ficha('Pedidos', NUM.format(s.pedidos), NUM.format(s.fechados) + ' fechados') +
+                    ficha('Total comprado', brl(s.gasto), 'confirmado + entregue') +
+                    ficha('Ticket médio', brl(s.ticket), 'por pedido fechado') +
+                '</div>' +
+                (pedidos.length
+                    ? '<div class="space-y-2 max-h-64 overflow-y-auto">' + pedidos.map(function (p) {
+                        return '<div class="flex items-center justify-between text-sm py-1.5" style="border-bottom:1px solid var(--adm-borda)">' +
+                            '<span style="color:var(--adm-tinta-2)">' + esc(new Date(p.criado_em).toLocaleDateString('pt-BR')) + '</span>' +
+                            '<span>' + esc(brl(p.valor_centavos)) + '</span>' + selo(p.status) +
+                        '</div>';
+                    }).join('') + '</div>'
+                    : '<p class="adm-vazio">Nenhum pedido no período carregado.</p>'));
+        }
+
+        // Histórico de compras no ERP (026)
+        if (r.doc || r.temErp) {
+            var corpo;
+            if (!cmpPronto()) corpo = '<p class="text-sm" style="color:var(--adm-tinta-3)">' + (cmp.carregando || (!cmp.carregado && !cmp.erro && !cmp.ausente) ? 'Carregando histórico de compras…' :
+                'Histórico de compras indisponível agora (veja o bloco “Histórico de compras por cliente”).') + '</p>';
+            else if (!o) corpo = '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhuma compra identificada no ERP para este documento.</p>';
+            else corpo = '<div class="grid sm:grid-cols-3 gap-4">' +
+                ficha('Compras', NUM.format(o.n), 'desde ' + cmpData(o.primeira)) +
+                ficha('Última compra', cmpData(o.ultima), 'há ' + NUM.format(o.desde) + ' dias') +
+                ficha('Total no ERP', brl(o.total), 'média ' + brl(Math.round(o.mensal)) + '/mês') +
+                ficha('Total ' + CMP_MESES_VALOR + ' meses', o.n6 ? brl(o.total6) : '—', o.n6 ? NUM.format(o.n6) + (o.n6 === 1 ? ' compra' : ' compras') : 'sem compras') +
+                ficha('Ticket médio ' + CMP_MESES_VALOR + ' meses', o.ticket6 != null ? brl(Math.round(o.ticket6)) : '—', 'por compra') +
+                ficha('Frequência típica', o.freq != null ? 'a cada ' + NUM.format(Math.round(o.freq)) + ' dias' : '—', r.sumindo ? 'parou de comprar no ritmo' : 'mediana entre compras') +
+                '</div>';
+            h += ucliBloco('Histórico de compras (ERP)', SELO_ERP, corpo);
+        }
+
+        // Contas a receber (030) — só admin, só CNPJ
+        if (adm && r.tipo === 'PJ' && r.doc && recPronto()) {
+            var g = recAgregar().porDoc[r.doc];
+            h += ucliBloco('Contas a receber', SELO_ERP, g
+                ? recFichasDoDoc(r.doc) + '<details><summary class="text-xs cursor-pointer" style="color:var(--adm-tinta-3)">Ver parcelas (' + NUM.format(g.n) + ')</summary><div class="mt-3">' + recParcelas(g) + '</div></details>'
+                : '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhuma parcela em aberto.</p>');
+        }
+        return h;
     }
 
     /* Edição deliberadamente curta: telefone, e-mail e observações. O resto
@@ -5916,9 +5919,12 @@
     });
 
     function exportarClientesCSV(lista) {
-        exportarCSV('clientes', ['Nome', 'Telefone', 'Tipo', 'Cidade', 'UF', 'Pedidos', 'Ticket médio', 'Total comprado'],
-            lista.map(function (c) {
-                return [c.nome, c.telefone, c.tipo, c.cidade, c.uf, c.pedidos, brl(c.ticket), brl(c.gasto)];
+        var adm = papel === 'admin';
+        exportarCSV('clientes', ['Nome', 'Documento', 'Origem', 'Telefone', 'Tipo', 'Local', 'Pedidos (site)', 'Ticket médio (site)', 'Última compra', 'Total', 'Total de'].concat(adm ? ['Vencido (ERP)'] : []),
+            lista.map(function (r) {
+                var s = r.site;
+                return [r.nome, ucliDocFmt(r.doc), r.origem === 'ambos' ? 'Site + ERP' : r.origem === 'site' ? 'Site' : 'ERP', r.telefones.join(' / '), r.tipo, r.local,
+                    s ? s.pedidos : '', s ? brl(s.ticket) : '', r.ultima ? cmpData(r.ultima) : '', r.total != null ? brl(Math.round(r.total)) : '', r.total != null ? r.totalDe : ''].concat(adm ? [r.vencido != null ? brl(r.vencido) : ''] : []);
             }));
     }
 
@@ -6378,7 +6384,7 @@
     }
 
     function desenharVitrineBase() {
-        var alvo = $('#painel-vitrine');
+        var alvo = $('#lojistas-corpo');
         var lista = dados.vitrines;
 
         if (!lista.length) {
@@ -7243,8 +7249,9 @@
                     pedidosNaoVistos++;
                     atualizarSino();
                     tocarAlerta();
-                    if (abaAtual === 'dashboard') desenharDashboard();
-                    if (abaAtual === 'pedidos') desenharPedidos();
+                    if (secaoVisivel('dashboard')) desenharDashboard();
+                    if (secaoVisivel('pedidos')) desenharPedidos();
+                    if (secaoVisivel('historico')) desenharHistorico();
                 })
             .subscribe();
     }
@@ -7315,8 +7322,11 @@
      * pt-BR espera por padrão, já que a vírgula aqui é decimal. */
     function exportarCSV(nomeArquivo, colunas, linhas) {
         function campo(v) {
-            var s = String(v == null ? '' : v).replace(/"/g, '""');
-            return '"' + s + '"';
+            var s = String(v == null ? '' : v);
+            // Injeção de fórmula (Excel/Planilhas): texto começando por = + - @ ou tab/CR/LF ganha apóstrofo.
+            // Números e valores monetários (ex.: -12,50 ou -R$ 12,50) seguem intactos.
+            if (typeof v !== 'number' && /^[=+\-@\t\r\n]/.test(s) && !/^-?(R\$\s?)?[\d.,]+$/.test(s)) s = "'" + s;
+            return '"' + s.replace(/"/g, '""') + '"';
         }
         var csv = colunas.map(campo).join(';') + '\r\n' +
             linhas.map(function (l) { return l.map(campo).join(';'); }).join('\r\n');

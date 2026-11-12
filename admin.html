@@ -91,27 +91,34 @@
                         <span id="sino-contagem" class="adm-sino-contagem hidden">0</span>
                     </button>
                     <span id="quem" class="text-xs hidden sm:inline" style="color:var(--adm-tinta-3)"></span>
+                    <button type="button" id="btn-atualizar" class="adm-botao-fantasma">
+                            <i class="fa-solid fa-rotate mr-1"></i> Atualizar
+                        </button>
                     <button type="button" id="btn-sair" class="adm-botao-fantasma">Sair</button>
                 </div>
             </div>
-
-            <div class="max-w-7xl mx-auto px-6 pb-3 flex items-center gap-1 overflow-x-auto">
-                <button type="button" class="adm-aba is-ativa" data-aba="dashboard">Dashboard</button>
-                <button type="button" class="adm-aba" data-aba="pedidos">Pedidos</button>
-                <button type="button" class="adm-aba" data-aba="clientes">Clientes</button>
-                <button type="button" class="adm-aba" data-aba="historico">Histórico</button>
-                <button type="button" class="adm-aba" data-aba="vendas">Dashboard de vendas</button>
-                <button type="button" class="adm-aba" data-aba="espera">Lista de espera</button>
-                <button type="button" class="adm-aba" data-aba="vitrine">Vitrine</button>
-                <button type="button" class="adm-aba" data-aba="regioes">Regiões</button>
-                <button type="button" class="adm-aba" data-aba="visitas">Visitas</button>
-                <button type="button" class="adm-aba" data-aba="solidcon">Integração</button>
-                <button type="button" class="adm-aba" data-aba="leads">Leads</button>
-                <button type="button" class="adm-aba" data-aba="lgpd">LGPD</button>
-            </div>
         </header>
 
-        <main class="max-w-7xl mx-auto px-6 py-8">
+        <div class="adm-layout">
+        <nav class="adm-lateral" aria-label="Seções do painel">
+            <button type="button" class="adm-aba is-ativa" data-aba="hoje"><i class="fa-solid fa-house"></i><span>Hoje</span></button>
+            <button type="button" class="adm-aba" data-aba="pedidos"><i class="fa-solid fa-clipboard-list"></i><span>Pedidos</span></button>
+            <button type="button" class="adm-aba" data-aba="clientes"><i class="fa-solid fa-users"></i><span>Clientes</span></button>
+            <button type="button" class="adm-aba" data-aba="estoque"><i class="fa-solid fa-boxes-stacked"></i><span>Estoque</span></button>
+            <button type="button" class="adm-aba" data-aba="vendas"><i class="fa-solid fa-chart-line"></i><span>Vendas</span></button>
+            <button type="button" class="adm-aba" data-aba="demanda"><i class="fa-solid fa-hourglass-half"></i><span>Demanda</span></button>
+            <div id="grupo-mais" class="adm-grupo-mais">
+                <button type="button" id="btn-mais" class="adm-aba adm-aba-mais" aria-expanded="false" aria-controls="menu-mais"><i class="fa-solid fa-ellipsis"></i><span>Mais</span><i class="fa-solid fa-chevron-down adm-mais-seta"></i></button>
+                <div id="menu-mais" class="adm-menu-mais">
+                    <button type="button" class="adm-aba" data-aba="lojistas"><i class="fa-solid fa-store"></i><span>Vitrines de lojistas</span></button>
+                    <button type="button" class="adm-aba" data-aba="regioes"><i class="fa-solid fa-map-location-dot"></i><span>Regiões</span></button>
+                    <button type="button" class="adm-aba" data-aba="solidcon"><i class="fa-solid fa-plug"></i><span>Integração</span></button>
+                    <button type="button" class="adm-aba" data-aba="lgpd"><i class="fa-solid fa-shield-halved"></i><span>LGPD</span></button>
+                </div>
+            </div>
+        </nav>
+
+        <main class="adm-principal">
 
             <!-- Filtros globais. Período sempre existiu; os quatro novos afetam
                  Pedidos, Clientes e Histórico — as telas que mostram linha a
@@ -119,7 +126,7 @@
                  funções do banco (vendas_por_produto, visitas_por_regiao)
                  escopadas só pelo período rápido — um filtro que não filtra
                  nada ali seria pior que nenhum filtro. -->
-            <div class="adm-card p-4 mb-7">
+            <div class="adm-card p-4 mb-7" id="cartao-filtros">
                 <div class="flex items-center justify-between gap-3 mb-1">
                     <button type="button" id="btn-filtros" class="flex items-center gap-2 text-xs font-bold uppercase tracking-wider" style="color:var(--adm-tinta-3)">
                         <i class="fa-solid fa-sliders"></i> Filtros
@@ -127,9 +134,6 @@
                     </button>
                     <div class="flex items-center gap-2">
                         <span id="filtros-resumo" class="text-xs" style="color:var(--adm-tinta-3)"></span>
-                        <button type="button" id="btn-atualizar" class="adm-botao-fantasma">
-                            <i class="fa-solid fa-rotate mr-1"></i> Atualizar
-                        </button>
                     </div>
                 </div>
 
@@ -184,19 +188,30 @@
                 </div>
             </div>
 
+            <div id="barra-pedidos" class="hidden flex gap-1 mb-5" role="group" aria-label="Vista de pedidos">
+                <button type="button" class="adm-chip is-ativo" data-vista-pedidos="andamento">Em andamento</button>
+                <button type="button" class="adm-chip" data-vista-pedidos="encerrados">Encerrados (histórico)</button>
+            </div>
+
             <section id="painel-dashboard"></section>
             <section id="painel-pedidos" class="hidden"></section>
             <section id="painel-clientes" class="hidden"></section>
+            <h2 class="adm-secao-cab hidden" id="cab-historico">Histórico — pedidos encerrados</h2>
             <section id="painel-historico" class="hidden"></section>
             <section id="painel-vendas" class="hidden"></section>
+            <h2 class="adm-secao-cab hidden" id="cab-leads">Leads (pré-registro)</h2>
+            <section id="painel-leads" class="hidden"></section>
+            <h2 class="adm-secao-cab hidden" id="cab-espera">Lista de espera (regiões sem entrega)</h2>
             <section id="painel-espera" class="hidden"></section>
             <section id="painel-vitrine" class="hidden"></section>
             <section id="painel-regioes" class="hidden"></section>
+            <h2 class="adm-secao-cab hidden" id="cab-visitas">Visitas ao site</h2>
             <section id="painel-visitas" class="hidden"></section>
             <section id="painel-solidcon" class="hidden"></section>
-            <section id="painel-leads" class="hidden"></section>
+            <section id="painel-lojistas" class="hidden"></section>
             <section id="painel-lgpd" class="hidden"></section>
         </main>
+        </div>
     </div>
 
     <!-- Modal de detalhes: cliente ou itens de um pedido. Um só elemento,

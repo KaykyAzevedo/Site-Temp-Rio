@@ -212,7 +212,7 @@ body.admin {
 }
 
 .adm-detalhe-colapso.is-aberto {
-    max-height: 700px;
+    max-height: 2400px;
     opacity: 1;
     transition: max-height 0.22s ease, opacity 0.22s ease 0.02s;
 }
@@ -600,4 +600,66 @@ body.admin {
 
 @media (prefers-reduced-motion: reduce) {
     .adm-sino.is-tocando { animation: none; }
+}
+
+/* ===================== Navegação lateral (P2) ===================== */
+/* Mobile/estreito: a lista vira uma faixa horizontal rolável (comportamento antigo); desktop >= 1024px: menu lateral. */
+.adm-layout { display: block; }
+.adm-lateral {
+    display: flex; gap: 0.25rem; overflow-x: auto; padding: 0.6rem 1.5rem;
+    background: var(--adm-lateral); border-bottom: 1px solid var(--adm-borda);
+}
+.adm-lateral .adm-aba { display: inline-flex; align-items: center; gap: 0.55rem; white-space: nowrap; }
+.adm-lateral .adm-aba i:first-child { width: 1.1rem; text-align: center; opacity: 0.85; }
+.adm-principal { max-width: 80rem; margin: 0; padding: 2rem 1.5rem; }
+.adm-grupo-mais { display: contents; }
+.adm-aba-mais { display: none; }
+.adm-menu-mais { display: contents; }
+.adm-secao-cab { font-size: 1.1rem; font-weight: 700; margin: 2.5rem 0 1rem; padding-top: 1.5rem; border-top: 1px solid var(--adm-borda); }
+.adm-secao-cab.hidden { display: none; }
+
+@media (min-width: 1024px) {
+    .adm-layout { display: grid; grid-template-columns: 14rem minmax(0, 1fr); align-items: start; }
+    .adm-lateral {
+        flex-direction: column; overflow-x: visible; overflow-y: auto; gap: 0.2rem;
+        padding: 1rem 0.75rem; border-bottom: none; border-right: 1px solid var(--adm-borda);
+        position: sticky; top: 4.1rem; height: calc(100vh - 4.1rem);
+    }
+    .adm-lateral .adm-aba { width: 100%; justify-content: flex-start; padding: 0.65rem 0.85rem; font-size: 0.85rem; }
+    .adm-grupo-mais { display: block; margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--adm-borda); }
+    .adm-grupo-mais.hidden { display: none; }
+    .adm-aba-mais { display: inline-flex; width: 100%; }
+    .adm-aba-mais .adm-mais-seta { margin-left: auto; font-size: 0.6rem; transition: transform 0.2s ease; }
+    .adm-aba-mais[aria-expanded="true"] .adm-mais-seta { transform: rotate(180deg); }
+    .adm-menu-mais { display: none; padding-left: 0.5rem; margin-top: 0.15rem; }
+    .adm-menu-mais.is-aberto { display: flex; flex-direction: column; gap: 0.2rem; }
+}
+
+/* "Precisa de você agora" (tela Hoje) */
+.adm-agora-lista { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.adm-agora {
+    display: flex; align-items: center; gap: 0.75rem; width: 100%; text-align: left;
+    padding: 0.8rem 1rem; background: var(--adm-superficie); border: 1px solid var(--adm-borda);
+    border-radius: 0.75rem; color: var(--adm-tinta); font-size: 0.9rem; cursor: pointer;
+    transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+.adm-agora:hover { border-color: var(--adm-acao); background: var(--adm-superficie-2); }
+.adm-agora i:first-child { width: 1.25rem; text-align: center; }
+
+/* Impressão/PDF (fica por último de propósito: vence as regras do menu lateral acima). Só o relatório da seção ativa:
+   sem menu, sem barra de vista de pedidos, sem filtros, sem banner de integração, e sem a coluna do menu. */
+@media print {
+    .adm-lateral, #barra-pedidos, #cartao-filtros, #alerta-integracao, .adm-agora { display: none !important; }
+    .adm-layout { display: block !important; }
+    .adm-principal { max-width: none !important; margin: 0 !important; padding: 0 !important; }
+}
+
+/* Lista única de clientes: no celular cada linha vira um cartão (sem rolagem lateral; o detalhe ocupa a largura toda). */
+@media (max-width: 760px) {
+    .adm-tabela-lista, .adm-tabela-lista tbody, .adm-tabela-lista tr, .adm-tabela-lista td { display: block; width: 100%; }
+    .adm-tabela-lista thead { display: none; }
+    .adm-tabela-lista tr:not(.adm-linha-detalhe) { border-top: 1px solid var(--adm-borda); padding: 0.75rem 0 0.25rem; }
+    .adm-tabela-lista tr:first-child { border-top: none; }
+    .adm-tabela-lista td, .adm-tabela-lista td.num { border: none; padding: 0.2rem 0; text-align: left; }
+    .adm-tabela-lista td[data-rotulo]::before { content: attr(data-rotulo) ": "; color: var(--adm-tinta-3); font-size: 0.7rem; }
 }
