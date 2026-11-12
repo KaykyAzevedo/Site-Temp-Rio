@@ -28,6 +28,7 @@ separação eh_equipe/eh_admin por papel. Consulte MERGE_DECISOES.md.
 | 030_solidcon_contas_receber.sql | Contas a receber abertas da filial 4 (módulo receber) | APLICADA (2026-11-12) |
 | 031_solidcon_margem.sql | Margem por produto da filial 4: vendas por dia e custos (módulo margem) | APLICADA (2026-11-12) |
 | 032_antispam.sql | Anti-spam: limite por origem (IP hasheado) + disjuntor global + honeypot nos INSERTs anônimos | APLICADA (2026-11-12) |
+| 033_solidcon_clientes_geo.sql | Coordenadas por cliente CNPJ + leitura do mapa de expansão (linha do tempo) | NÃO APLICADA |
 
 019/020 são nomes de organização do repositório. Os objetos SQL, RPCs e a
 assinatura chamada pelo script continuam iguais. 017/018 não são reutilizados
@@ -948,3 +949,168 @@ rodar o `create or replace function` de novo (revisão antes).
 public.antispam_032_diagnostico(); drop table public.antispam_032_eventos,
 public.antispam_032_config;`. A coluna `armadilha` pode ficar (sempre NULL) ou sair com
 `alter table ... drop column armadilha` **depois** de tirar o campo do site.
+
+## 033_solidcon_clientes_geo.sql — Mapa de expansão: um pino por cliente CNPJ (NÃO APLICADA)
+
+Pedido do dono: trocar o mapa por bairro (seção Regiões) por **um pino por cliente** no
+endereço, com **linha do tempo** (voltar no tempo e ver o crescimento). Esta migração entrega
+só o banco; o mapa é da Vitral. Requer 023, 026 e 027 (colunas de endereço CNPJ) e
+`eh_equipe()`. Idempotente, `begin/commit`, sem UPDATE/DELETE de dados existentes, nenhum
+DELETE/UPDATE sem WHERE (compatível com safeupdate). Não toca ERP, coletor nem as tabelas
+023/026 (só lê). Instalar no SQL Editor como `postgres`.
+
+### Objetos
+
+| Objeto | Tipo | Acesso |
+|---|---|---|
+| `solidcon_clientes_geo` | tabela, PK `documento` | SELECT só equipe (RLS `eh_equipe()`); **nenhuma** escrita direta (anon/authenticated sem INSERT/UPDATE/DELETE) |
+| `solidcon_gravar_geo_clientes(p_itens jsonb)` | RPC SECURITY DEFINER, `search_path=pg_catalog` | EXECUTE authenticated; exige `auth.uid()` e `eh_equipe()` |
+| `solidcon_geo_pendentes(p_limite int default 100)` | RPC SECURITY INVOKER + checagem `eh_equipe()` | EXECUTE authenticated |
+| `solidcon_mapa_clientes()` | RPC SECURITY INVOKER + checagem `eh_equipe()` | EXECUTE authenticated |
+| `solidcon_033_norm`, `solidcon_033_chave_endereco` | helpers imutáveis (chave do endereço) | EXECUTE authenticated (usados pelas RPCs INVOKER) |
+
+Colunas de `solidcon_clientes_geo`: `documento` (14 dígitos), `lat`/`lng` `numeric(9,6)`,
+`precisao` (`endereco` | `cep` | `bairro` | `nao_encontrado`), `fonte` (`nominatim` |
+`manual`), `chave_endereco` (sha256 hex), `geocodificado_em`, `geocodificado_por` (e-mail
+da equipe que gravou). `nao_encontrado` = nenhuma tentativa achou; lat/lng NULL; existe para
+**não repetir** requisições ao Nominatim (volta a ser tentado só após 30 dias ou se o endereço mudar).
+
+**CPF nunca:** CHECK de 14 dígitos na tabela; a RPC recusa o lote inteiro se vier documento
+que não tenha 14 dígitos e ignora documento que não exista em `solidcon_clientes` com
+`tipo='cnpj'`. As RPCs de leitura só olham `tipo='cnpj'`.
+
+**Chave do endereço:** calculada **no servidor** a partir de logradouro, número, CEP, bairro,
+cidade e UF (minúsculas, sem acento, só letras/dígitos; complemento fica de fora). O
+navegador **não** calcula hash: recebe `chave_endereco` de `solidcon_geo_pendentes` e a
+devolve igual ao gravar. Se o ERP mudar o endereço, a chave muda, o pino antigo deixa de ser
+mostrado (`pino_desatualizado=true`) e o cliente volta para os pendentes como `mudou`.
+
+Sem FK para `solidcon_clientes` (aquele espelho é trocado inteiro a cada sync). CNPJ que sai
+do ERP deixa linha órfã na tabela de coordenadas; ela não aparece no mapa. Limpeza manual,
+se quiser: `delete from public.solidcon_clientes_geo g where not exists (select 1 from
+public.solidcon_clientes c where c.documento=g.documento and c.tipo='cnpj');`
+
+### Contrato para o painel (Vitral)
+
+**1) Pendentes** — `sb.rpc('solidcon_geo_pendentes', { p_limite: 50 })` (1..500).
+Devolve linhas `{documento, logradouro, numero, cep, bairro, cidade, estado, chave_endereco,
+motivo}`; `motivo` ∈ `novo` | `mudou` | `retentar`. Ordem: quem mais comprou primeiro (janela
+da 026). Só CNPJ com algum endereço (logradouro, CEP ou bairro). Sem nome/telefone/e-mail.
+
+**2) Gravar** — `sb.rpc('solidcon_gravar_geo_clientes', { p_itens: [...] })`, 1..200 itens,
+cada um com **exatamente** estes campos:
+
+```json
+{ "documento": "11222333000181", "lat": -22.9035, "lng": -43.1762,
+  "precisao": "endereco", "fonte": "nominatim", "chave_endereco": "<64 hex de pendentes>" }
+```
+
+`nao_encontrado` exige `"lat": null, "lng": null`; `manual` não pode ser `nao_encontrado`.
+Lat/lng arredondados a 6 casas. Erro estrutural (campo a mais/faltando, documento sem 14
+dígitos, repetido, tipo errado, fora da caixa do Brasil, lote vazio/>200) → exceção
+`22023`, **nada** é gravado. Não equipe → `42501`. Retorno de sucesso:
+`{"status":"ok","gravados":N,"ignorados":[{"documento":"...","motivo":"..."}]}`; motivos por item:
+
+| motivo | quando |
+|---|---|
+| `cliente_inexistente` | documento não está em `solidcon_clientes` como CNPJ |
+| `endereco_mudou` | a chave enviada não é a do endereço atual (o ERP mudou no meio) — buscar pendentes de novo |
+| `fora_do_rj` | cliente com `estado='RJ'` e pino fora da faixa do RJ (lat −23,50..−20,60; lng −45,00..−40,80): homônimo de rua/bairro em outro estado |
+| `precisao_inferior` | mesmo endereço já tem pino mais preciso (endereco > cep > bairro > nao_encontrado); `nao_encontrado` nunca apaga pino |
+| `correcao_manual_preservada` | mesmo endereço já tem pino `manual`; `nominatim` não sobrescreve |
+
+`fonte='manual'` (equipe arrastou o pino) sempre grava, desde que a chave seja a atual.
+
+**3) Mapa** — `sb.rpc('solidcon_mapa_clientes')`, sem parâmetros. Uma linha por cliente CNPJ
+do espelho (com ou sem pino, com ou sem compra):
+
+| campo | conteúdo |
+|---|---|
+| `documento`, `nome`, `bairro`, `cidade`, `estado` | do espelho 023 |
+| `lat`, `lng`, `precisao` | só se a coordenada é do endereço **atual**; senão NULL. `precisao='nao_encontrado'` com lat/lng NULL = tentado e não achado |
+| `pino_desatualizado` | true = existe coordenada, mas de endereço antigo |
+| `primeira_compra`, `ultima_compra` | `date` (dia em America/Sao_Paulo, mesmo `dia` da 026); NULL sem compra |
+| `total_centavos`, `cupons` | soma da janela inteira (bigint / integer) |
+| `meses` | objeto `{"AAAA-MM": [centavos, cupons], ...}`; `{}` sem compra |
+
+Linha do tempo no navegador, para a data X: cliente aparece se `primeira_compra <= X`;
+vendas até X = soma de `meses[m][0]` com `m <= 'AAAA-MM' de X` (granularidade mensal: o
+mês de X entra inteiro; para corte exato no dia use só `primeira_compra`/`ultima_compra`).
+Cliente "ativo" em X pode ser derivado de `meses` (ex.: comprou nos 3 meses anteriores).
+A RPC é chamada uma vez; o controle deslizante filtra tudo localmente, sem nova consulta.
+PostgREST corta respostas em 1000 linhas por padrão: com mais de 1000 CNPJs, paginar com
+`.range()` (ordem estável por `documento`), como `vendPaginar` já faz.
+
+**Limite importante:** `solidcon_vendas_clientes` guarda só **400 dias** (retenção da 026).
+`primeira_compra` é a primeira compra **dentro da janela**, não a primeira da história do
+cliente, e a linha do tempo vai no máximo ~13 meses para trás. Para crescimento de anos é
+preciso uma tabela de agregado mensal sem expurgo (proposta para migração futura, alimentada
+pela RPC da 026) ou um backfill histórico do ERP — fora deste escopo.
+
+### Geocodificação: estratégia e política do Nominatim
+
+Feita **no navegador do admin** (o CSP do admin em `vercel.json` já libera
+`https://nominatim.openstreetmap.org` em `connect-src`). Nada no servidor, nada agendado.
+Política de uso do Nominatim público (<https://operations.osmfoundation.org/policies/nominatim/>),
+que o painel deve cumprir:
+
+- **No máximo 1 requisição por segundo**, sequencial (o painel já usa 1,1 s, `GEO_INTERVALO_MS`),
+  uma aba por vez (trava simples, ex. `navigator.locks` ou flag em `localStorage`).
+- **Só endereços novos ou mudados** (`solidcon_geo_pendentes`); o resultado vai para o banco,
+  que é o cache compartilhado entre todos os admins. Nunca regeocodificar a base inteira.
+- **Sem uso em massa automático/repetido:** a geocodificação começa por clique ("Localizar
+  N clientes novos"), com botão Parar e limite por clique (sugestão: 100). A carga inicial
+  (todos os CNPJs, uma vez) é aceitável dentro de 1 req/s; não repetir.
+- Identificação: o navegador manda o `Referer` do painel automaticamente (o Nominatim aceita
+  isso em apps web; o browser não deixa trocar o User-Agent). Não suprimir o Referer.
+- Parar tudo ao receber HTTP **429** ou **403** e avisar a equipe (bloqueio por excesso).
+- Atribuição obrigatória no mapa: "© OpenStreetMap contributors" (dados ODbL).
+- Proibido autocomplete/busca enquanto digita contra o Nominatim público.
+
+Ordem de tentativas por cliente (cada tentativa é uma requisição, todas dentro de 1 req/s;
+`format=jsonv2&limit=1&countrycodes=br&addressdetails=1`, busca **estruturada**):
+
+1. `street=<numero> <logradouro>&city=<cidade>&state=<UF>&postalcode=<CEP>` → `precisao='endereco'`
+   (se o `address` do resultado vier sem `road`, tratar como falha e ir para a próxima).
+2. `postalcode=<CEP>&city=<cidade>&state=<UF>` → `precisao='cep'`
+   (cobertura de CEP no OSM brasileiro é parcial: falha é comum).
+3. Centro do bairro → `precisao='bairro'`: **reaproveitar primeiro** o cache local de
+   bairros da seção Regiões (`GEO_CACHE_CHAVE`, sem requisição nova); só se não houver,
+   `q=<bairro>, <cidade>, <UF>, Brasil`.
+4. Nada achou → gravar `precisao='nao_encontrado'` (lat/lng null). O banco só devolve de
+   novo como `retentar` após 30 dias.
+
+Gravar em lotes pequenos (ex.: a cada 10 clientes) para não perder trabalho se a aba fechar.
+O banco recusa pino de cliente do RJ fora do RJ (`fora_do_rj`): o painel deve aplicar a mesma
+faixa antes de gravar e, se cair fora, seguir para a próxima regra. Enviar ao Nominatim só
+endereço de **CNPJ**; nunca nome, documento ou qualquer dado de CPF.
+
+### Validação (PG 18 local isolado; roles, `auth.*` e default privileges do Supabase simulados)
+
+Cadeia `admin/supabase*.sql` + 004–032 (sem a 009 opcional) + 033 aplicada **duas vezes**
+sem erro. Casos: anon sem SELECT na tabela e sem EXECUTE nas 3 RPCs (apesar do default
+privilege do Supabase); autenticado fora da equipe recebe `somente equipe` e lê 0 linhas;
+vendedor (equipe) lista pendentes na ordem por venda; INSERT/UPDATE direto negados; CPF,
+documento de 15 dígitos, duplicado, campo extra, lat em string, fora do Brasil,
+`nao_encontrado` com coordenada, `manual`+`nao_encontrado`, lote vazio e de 201 itens
+recusam o lote inteiro; lote misto grava os válidos e lista `fora_do_rj`/`cliente_inexistente`;
+bairro→endereço grava; piora e `nao_encontrado` não apagam pino; manual sobrescreve e é
+preservado contra nominatim; `retentar` após 30 dias; mudança de número no ERP → `mudou`,
+chave velha recusada (`endereco_mudou`) e o mapa esconde o pino (`pino_desatualizado`);
+mapa sem CPF, com primeira/última compra, totais e `meses` corretos; chave igual para o mesmo
+endereço com/sem acento e caixa. Nenhuma conexão com ERP ou Supabase.
+
+### Desfazer
+
+```sql
+begin;
+drop function if exists public.solidcon_mapa_clientes();
+drop function if exists public.solidcon_geo_pendentes(integer);
+drop function if exists public.solidcon_gravar_geo_clientes(jsonb);
+drop table if exists public.solidcon_clientes_geo;
+drop function if exists public.solidcon_033_chave_endereco(text, text, text, text, text, text);
+drop function if exists public.solidcon_033_norm(text);
+commit;
+```
+
+Perde só as coordenadas (refazê-las custa novas requisições ao Nominatim). Nada da 023/026 muda.
