@@ -24,7 +24,8 @@ separação eh_equipe/eh_admin por papel. Consulte MERGE_DECISOES.md.
 | 026_solidcon_vendas_clientes.sql | Histórico de compras por cliente | APLICADA (2026-11-11) |
 | 027_solidcon_fabrica_financeiro.sql | Estoque da fábrica, endereço CNPJ, formas de pagamento | APLICADA (2026-11-11) |
 | 028_reforco_seguranca.sql | Reforço de segurança (auditoria 004–027) | APLICADA (2026-11-12) |
-| 029_solidcon_banco_saude.sql | Batidas do coletor pelo banco SQL SOLIDCON (módulo saúde) | NÃO APLICADA |
+| 029_solidcon_banco_saude.sql | Batidas do coletor pelo banco SQL SOLIDCON (módulo saúde) | APLICADA (2026-11-12) |
+| 030_solidcon_contas_receber.sql | Contas a receber abertas da filial 4 (módulo receber) | NÃO APLICADA |
 
 019/020 são nomes de organização do repositório. Os objetos SQL, RPCs e a
 assinatura chamada pelo script continuam iguais. 017/018 não são reutilizados

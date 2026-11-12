@@ -1,5 +1,5 @@
 -- 029: batidas do coletor pelo BANCO SQL Server da SOLIDCON (integracao/solidcon/sync-banco.ps1).
--- NAO APLICADA. Instalacao manual no SQL Editor (papel postgres). Idempotente: pode rodar de novo.
+-- APLICADA em 2026-11-12. Instalacao manual no SQL Editor (papel postgres). Idempotente: pode rodar de novo.
 -- Nao altera dados existentes; o unico DELETE (retencao de 30 dias, com WHERE) fica dentro da RPC.
 -- Etapa 1: so o modulo 'saude' (SELECT 1 no banco). Nenhum dado do ERP e gravado aqui.
 -- (A) solidcon_banco_sync: uma linha por batida (modulo, status, duracao, versao do SQL, mensagem curta).
