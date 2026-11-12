@@ -3,7 +3,7 @@
 
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Painel | Temp Rio</title>
 
     <!-- Painel interno: fora de buscadores. -->
@@ -79,7 +79,7 @@
             <div class="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
                 <div class="flex items-center gap-4">
                     <img src="./assets/images/logo.png" alt="Temp Rio" class="h-7 w-auto object-contain">
-                    <span class="text-xs font-bold uppercase tracking-widest" style="color:var(--adm-tinta-3)">Painel</span>
+                    <span class="adm-rotulo-painel text-xs font-bold uppercase tracking-widest" style="color:var(--adm-tinta-3)">Painel</span>
                 </div>
                 <div class="flex items-center gap-3">
                     <!-- Sino: badge some sozinho ao abrir Pedidos ou clicar nele.
@@ -91,8 +91,8 @@
                         <span id="sino-contagem" class="adm-sino-contagem hidden">0</span>
                     </button>
                     <span id="quem" class="text-xs hidden sm:inline" style="color:var(--adm-tinta-3)"></span>
-                    <button type="button" id="btn-atualizar" class="adm-botao-fantasma">
-                            <i class="fa-solid fa-rotate mr-1"></i> Atualizar
+                    <button type="button" id="btn-atualizar" class="adm-botao-fantasma" aria-label="Atualizar">
+                            <i class="fa-solid fa-rotate mr-1"></i> <span class="adm-txt-btn">Atualizar</span>
                         </button>
                     <button type="button" id="btn-sair" class="adm-botao-fantasma">Sair</button>
                 </div>
@@ -105,11 +105,13 @@
             <button type="button" class="adm-aba" data-aba="pedidos"><i class="fa-solid fa-clipboard-list"></i><span>Pedidos</span></button>
             <button type="button" class="adm-aba" data-aba="clientes"><i class="fa-solid fa-users"></i><span>Clientes</span></button>
             <button type="button" class="adm-aba" data-aba="estoque"><i class="fa-solid fa-boxes-stacked"></i><span>Estoque</span></button>
-            <button type="button" class="adm-aba" data-aba="vendas"><i class="fa-solid fa-chart-line"></i><span>Vendas</span></button>
-            <button type="button" class="adm-aba" data-aba="demanda"><i class="fa-solid fa-hourglass-half"></i><span>Demanda</span></button>
+            <button type="button" class="adm-aba adm-so-desktop" data-aba="vendas"><i class="fa-solid fa-chart-line"></i><span>Vendas</span></button>
+            <button type="button" class="adm-aba adm-so-desktop" data-aba="demanda"><i class="fa-solid fa-hourglass-half"></i><span>Demanda</span></button>
             <div id="grupo-mais" class="adm-grupo-mais">
                 <button type="button" id="btn-mais" class="adm-aba adm-aba-mais" aria-expanded="false" aria-controls="menu-mais"><i class="fa-solid fa-ellipsis"></i><span>Mais</span><i class="fa-solid fa-chevron-down adm-mais-seta"></i></button>
                 <div id="menu-mais" class="adm-menu-mais">
+                    <button type="button" class="adm-aba adm-so-mobile" data-aba="vendas"><i class="fa-solid fa-chart-line"></i><span>Vendas</span></button>
+                    <button type="button" class="adm-aba adm-so-mobile" data-aba="demanda"><i class="fa-solid fa-hourglass-half"></i><span>Demanda</span></button>
                     <button type="button" class="adm-aba" data-aba="lojistas"><i class="fa-solid fa-store"></i><span>Vitrines de lojistas</span></button>
                     <button type="button" class="adm-aba" data-aba="regioes"><i class="fa-solid fa-map-location-dot"></i><span>Regiões</span></button>
                     <button type="button" class="adm-aba" data-aba="solidcon"><i class="fa-solid fa-plug"></i><span>Integração</span></button>
@@ -178,6 +180,9 @@
                         <div>
                             <label class="adm-tile-rotulo block mb-1.5">Status do pedido</label>
                             <div id="filtro-status" class="adm-multiselect"></div>
+                        </div>
+                        <div class="adm-so-mobile adm-filtros-fechar">
+                            <button type="button" id="btn-fechar-filtros" class="adm-botao w-full">Ver resultados</button>
                         </div>
                         <div class="flex items-end">
                             <button type="button" id="btn-limpar-filtros" class="adm-botao-fantasma">

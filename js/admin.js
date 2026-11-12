@@ -462,9 +462,35 @@
         });
         var btnMais = document.getElementById('btn-mais'), menuMais = document.getElementById('menu-mais');
         if (btnMais && menuMais) btnMais.addEventListener('click', function () {
+            if (celular()) { // celular: folha modal com foco contido
+                if (sobrepos.atual === 'mais') { fecharSobreposto(true); return; }
+                menuMais.classList.add('is-aberto'); btnMais.setAttribute('aria-expanded', 'true');
+                abrirSobreposto('mais', btnMais);
+                return;
+            }
             var aberto = menuMais.classList.toggle('is-aberto');
             btnMais.setAttribute('aria-expanded', String(aberto));
         });
+        // Celular: tocar fora da folha do "Mais" fecha.
+        document.addEventListener('click', function (ev) {
+            if (!menuMais || !celular() || sobrepos.atual !== 'mais') return;
+            if (ev.target.closest('#menu-mais') || ev.target.closest('#btn-mais')) return;
+            fecharSobreposto(false);
+        });
+        // Esc fecha a folha/gaveta aberta (devolvendo o foco); Tab fica contido nela.
+        document.addEventListener('keydown', function (ev) {
+            if (!sobrepos.atual) return;
+            if (ev.key === 'Escape') { ev.preventDefault(); fecharSobreposto(true); return; }
+            if (ev.key !== 'Tab') return;
+            var raiz = sobrepos.atual === 'mais' ? menuMais : document.getElementById('corpo-filtros');
+            var f = focaveis(raiz);
+            if (!f.length) { ev.preventDefault(); return; }
+            var primeiro = f[0], ultimo = f[f.length - 1], ativo = document.activeElement;
+            if (!raiz.contains(ativo)) { ev.preventDefault(); primeiro.focus(); }
+            else if (ev.shiftKey && ativo === primeiro) { ev.preventDefault(); ultimo.focus(); }
+            else if (!ev.shiftKey && ativo === ultimo) { ev.preventDefault(); primeiro.focus(); }
+        });
+        ligarTabelasEmCartoes();
         $('#btn-sino').addEventListener('click', function () {
             marcarNotificacoesLidas();
             trocarAba('pedidos', true);
@@ -474,8 +500,59 @@
             if (ev.target.id === 'modal-detalhe') fecharModal();
         });
         document.addEventListener('keydown', function (ev) {
-            if (ev.key === 'Escape') fecharModal();
+            if (ev.key === 'Escape' && !sobrepos.atual) fecharModal();
         });
+    }
+
+    /* Folha "Mais" e gaveta de filtros (celular): uma por vez, foco vai para dentro ao abrir, Esc fecha e devolve o foco ao botão. */
+    var sobrepos = { atual: null, opener: null };
+    function celular() { return window.innerWidth < 1024; }
+    // Cruzar 1024px (rotação, redimensionar): fecha a folha/gaveta e limpa atributos, para não deixar foco preso nem role=dialog no desktop.
+    var eraCelular = window.innerWidth < 1024;
+    window.addEventListener('resize', function () {
+        var agora = celular();
+        if (agora === eraCelular) return;
+        eraCelular = agora;
+        var estavaAberto = !!sobrepos.atual, menu = document.getElementById('menu-mais'), btn = document.getElementById('btn-mais');
+        if (estavaAberto) fecharSobreposto(false);
+        else if (menu) menu.classList.remove('is-aberto');
+        if (menu) { menu.removeAttribute('role'); menu.removeAttribute('aria-modal'); menu.removeAttribute('aria-label'); }
+        if (btn) btn.setAttribute('aria-expanded', 'false');
+        var corpo = document.getElementById('corpo-filtros');
+        if (corpo) { corpo.removeAttribute('role'); corpo.removeAttribute('aria-modal'); corpo.removeAttribute('aria-label'); if (agora && !corpo.classList.contains('hidden')) setFiltros(false); }
+        if (estavaAberto && document.activeElement && document.activeElement !== document.body && !document.activeElement.offsetParent) { if (btn && btn.offsetParent) btn.focus(); }
+    });
+    function focaveis(raiz) {
+        return [].slice.call(raiz.querySelectorAll('button,a[href],input,select,textarea,summary,[tabindex]:not([tabindex="-1"])'))
+            .filter(function (e) { return !e.disabled && e.offsetParent !== null; });
+    }
+    function setFiltros(abrir) {
+        var corpo = document.getElementById('corpo-filtros'), icone = document.getElementById('icone-filtros');
+        corpo.classList.toggle('hidden', !abrir);
+        icone.classList.toggle('fa-chevron-down', !abrir);
+        icone.classList.toggle('fa-chevron-up', abrir);
+    }
+    function abrirSobreposto(qual, opener) {
+        if (sobrepos.atual && sobrepos.atual !== qual) fecharSobreposto(false);
+        sobrepos = { atual: qual, opener: opener };
+        var raiz = qual === 'mais' ? document.getElementById('menu-mais') : document.getElementById('corpo-filtros');
+        raiz.setAttribute('role', 'dialog'); raiz.setAttribute('aria-modal', 'true');
+        raiz.setAttribute('aria-label', qual === 'mais' ? 'Mais seções' : 'Filtros');
+        var f = focaveis(raiz);
+        if (f.length) f[0].focus();
+    }
+    function fecharSobreposto(devolverFoco) {
+        var qual = sobrepos.atual, opener = sobrepos.opener;
+        if (!qual) return;
+        sobrepos = { atual: null, opener: null };
+        var raiz;
+        if (qual === 'mais') {
+            raiz = document.getElementById('menu-mais');
+            raiz.classList.remove('is-aberto');
+            document.getElementById('btn-mais').setAttribute('aria-expanded', 'false');
+        } else { raiz = document.getElementById('corpo-filtros'); setFiltros(false); }
+        raiz.removeAttribute('role'); raiz.removeAttribute('aria-modal'); raiz.removeAttribute('aria-label');
+        if (devolverFoco && opener && document.contains(opener)) opener.focus();
     }
 
     /* ===================================================================
@@ -524,12 +601,22 @@
     }
 
     function ligarFiltrosGlobais() {
-        $('#btn-filtros').addEventListener('click', function () {
+        // Celular: o corpo dos filtros é uma gaveta; tocar fora ou em "Fechar" recolhe.
+        document.addEventListener('click', function (ev) {
             var corpo = $('#corpo-filtros');
-            var aberto = !corpo.classList.contains('hidden');
-            corpo.classList.toggle('hidden', aberto);
-            $('#icone-filtros').classList.toggle('fa-chevron-down', aberto);
-            $('#icone-filtros').classList.toggle('fa-chevron-up', !aberto);
+            if (window.innerWidth >= 1024 || corpo.classList.contains('hidden')) return;
+            if (ev.target.closest('#corpo-filtros') || ev.target.closest('#btn-filtros')) return;
+            ev.preventDefault(); ev.stopPropagation();
+            $('#btn-filtros').click();
+        }, true);
+        var fecharFiltros = document.getElementById('btn-fechar-filtros');
+        if (fecharFiltros) fecharFiltros.addEventListener('click', function () { $('#btn-filtros').click(); });
+        $('#btn-filtros').addEventListener('click', function () {
+            var abrir = $('#corpo-filtros').classList.contains('hidden');
+            setFiltros(abrir);
+            if (!celular()) return;
+            if (abrir) abrirSobreposto('filtros', $('#btn-filtros'));
+            else if (sobrepos.atual === 'filtros') fecharSobreposto(true);
         });
 
         $('#filtro-de').addEventListener('change', function () {
@@ -813,7 +900,18 @@
         });
         // Item dentro de "Mais": abre o grupo para o ativo ficar visível.
         var menu = document.getElementById('menu-mais'), btnMais = document.getElementById('btn-mais');
-        if (menu && menu.querySelector('.adm-aba.is-ativa')) { menu.classList.add('is-aberto'); if (btnMais) btnMais.setAttribute('aria-expanded', 'true'); }
+        var largo = window.matchMedia('(min-width: 1024px)').matches;
+        if (largo) {
+            if (menu && menu.querySelector('.adm-aba.is-ativa:not(.adm-so-mobile)')) { menu.classList.add('is-aberto'); if (btnMais) btnMais.setAttribute('aria-expanded', 'true'); }
+        } else if (menu) { // celular: a folha do "Mais" fecha ao escolher; o botão acende se a aba ativa está lá dentro
+            var focoDentro = menu.contains(document.activeElement);
+            if (sobrepos.atual === 'mais') fecharSobreposto(false); else menu.classList.remove('is-aberto');
+            if (btnMais) {
+                btnMais.setAttribute('aria-expanded', 'false'); btnMais.classList.toggle('tem-ativa', !!menu.querySelector('.adm-aba.is-ativa'));
+                if (focoDentro) btnMais.focus();
+            }
+        }
+        setTimeout(ajustarSvgCelular, 60);
         mostrarSecoes();
         secoesDe(qual).forEach(function (s) { carregarErpDaAba(s); });
 
@@ -1729,8 +1827,72 @@
             });
     }
 
+    // Gráficos SVG de largura fixa: no celular o viewBox acompanha a tela (escala ~1), para os rótulos não encolherem.
+    /* Tabelas largas (>= 5 colunas) viram cartões empilhados no celular (CSS em admin.css, <= 760px): cada célula ganha o
+     * título da coluna em data-rotulo; colunas ordenáveis aparecem como botões acima da lista. Só marca atributos: no desktop não muda nada. */
+    function tabelasEmCartoes(raiz) {
+        raiz.querySelectorAll('table.adm-tabela:not([data-cartoes])').forEach(function (t) {
+            t.setAttribute('data-cartoes', '1');
+            var cab = t.querySelector(':scope > thead > tr');
+            if (!cab) return;
+            var rotulos = [];
+            cab.querySelectorAll(':scope > th').forEach(function (th) {
+                var n = th.colSpan || 1, txt = (th.textContent || '').replace(/[▲▼↑↓]/g, '').replace(/\s+/g, ' ').trim();
+                for (var i = 0; i < n; i++) rotulos.push(n === 1 ? txt : '');
+            });
+            if (rotulos.length < 5) return;
+            t.classList.add('adm-tabela-cartoes');
+            t.querySelectorAll(':scope > tbody > tr').forEach(function (tr) {
+                var idx = 0;
+                tr.querySelectorAll(':scope > td').forEach(function (td) {
+                    var n = td.colSpan || 1;
+                    if (n === 1 && rotulos[idx] && !td.hasAttribute('data-rotulo')) td.setAttribute('data-rotulo', rotulos[idx]);
+                    idx += n;
+                });
+            });
+            if (t.classList.contains('adm-tabela-lista')) return; // a lista de clientes tem seletor de ordem próprio
+            var ord = false;
+            cab.querySelectorAll(':scope > th').forEach(function (th) {
+                if (th.hasAttribute('aria-sort') || th.querySelector('button')) { th.classList.add('adm-th-ord'); ord = true; }
+            });
+            if (ord) t.classList.add('adm-cartoes-ord');
+        });
+    }
+    function ligarTabelasEmCartoes() {
+        var raiz = document.querySelector('.adm-principal'), agendado = false;
+        if (!raiz || typeof MutationObserver === 'undefined') return;
+        new MutationObserver(function () {
+            if (agendado) return;
+            agendado = true;
+            requestAnimationFrame(function () { agendado = false; tabelasEmCartoes(raiz); ajustarSvgCelular(); });
+        }).observe(raiz, { childList: true, subtree: true });
+        tabelasEmCartoes(raiz); ajustarSvgCelular();
+    }
+
+    // Celular: texto dos gráficos SVG com 13px reais (o viewBox é escalado para a largura do contêiner).
+    function ajustarSvgCelular() {
+        if (window.innerWidth >= 1024) { // desktop: nenhum tamanho de texto de celular fica nos gráficos
+            document.querySelectorAll('svg[data-fs]').forEach(function (svg) {
+                svg.removeAttribute('data-fs');
+                svg.querySelectorAll('text').forEach(function (t) { t.style.fontSize = ''; });
+            });
+            return;
+        }
+        document.querySelectorAll('.adm-principal svg[viewBox]').forEach(function (svg) {
+            var vb = svg.viewBox && svg.viewBox.baseVal, cw = svg.getBoundingClientRect().width;
+            if (!vb || !vb.width || !cw) return;
+            var chave = String(Math.round(cw));
+            if (svg.getAttribute('data-fs') === chave) return;
+            svg.setAttribute('data-fs', chave);
+            var px = (13 / (cw / vb.width)).toFixed(2) + 'px';
+            svg.querySelectorAll('text').forEach(function (t) { t.style.fontSize = px; });
+        });
+    }
+
+    function wGraf(padrao) { return window.innerWidth < 1024 ? Math.max(280, Math.min(padrao, window.innerWidth - 90)) : padrao; }
+
     function solidGrafico(dias) {
-        var W = 600, H = 170, pl = 36, pr = 10, pt = 10, pb = 22;
+        var W = wGraf(600), H = 170, pl = (W < 600 ? 66 : 36), pr = 10, pt = 10, pb = 22;
         var max = Math.max.apply(null, dias.map(function (x) { return Number(x.estoque_disponivel); }).concat([1]));
         var n = dias.length;
         function X(i) { return n === 1 ? (pl + W - pr) / 2 : pl + i * (W - pl - pr) / (n - 1); }
@@ -1860,7 +2022,7 @@
     // Barras verticais em SVG. itens: [{rot, v, parcial, dica}]; cadaRotulo: mostra 1 rótulo a cada N.
     function vendBarras(itens, desc, cadaRotulo) {
         if (!itens.length) return '<p class="text-sm" style="color:var(--adm-tinta-3)">Sem dados.</p>';
-        var W = 640, H = 190, pl = 46, pr = 8, pt = 8, pb = 22;
+        var W = wGraf(640), H = 190, pl = (W < 640 ? 66 : 46), pr = 8, pt = 8, pb = 22;
         var max = Math.max.apply(null, itens.map(function (i) { return i.v; }).concat([1]));
         var slot = (W - pl - pr) / itens.length, bw = Math.max(1.5, slot * 0.72);
         var y = function (v) { return pt + (H - pt - pb) * (1 - v / max); };
@@ -1869,11 +2031,12 @@
             '<line x1="' + pl + '" y1="' + y(max) + '" x2="' + (W - pr) + '" y2="' + y(max) + '" stroke="var(--adm-borda)" stroke-dasharray="3 3"/>' +
             '<text x="' + (pl - 5) + '" y="' + (y(max) + 4) + '" text-anchor="end" font-size="10" fill="var(--adm-tinta-3)">' + esc(brlCurto(max)) + '</text>' +
             '<text x="' + (pl - 5) + '" y="' + (y(0) + 4) + '" text-anchor="end" font-size="10" fill="var(--adm-tinta-3)">0</text>';
+        var cadaRot = W < 640 ? Math.max(cadaRotulo || 1, Math.ceil(56 / slot)) : cadaRotulo;
         itens.forEach(function (it, i) {
             var x = pl + i * slot + (slot - bw) / 2, h = y(0) - y(it.v);
             out += '<rect x="' + x.toFixed(1) + '" y="' + y(it.v).toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(0, h).toFixed(1) +
                    '" rx="1.5" fill="' + (it.parcial ? 'var(--adm-parcial)' : 'var(--adm-dados)') + '"><title>' + esc(it.dica) + '</title></rect>';
-            if (i % cadaRotulo === 0) {
+            if (i % cadaRot === 0) {
                 out += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="10" fill="var(--adm-tinta-3)">' + esc(it.rot) + '</text>';
             }
         });
@@ -2997,7 +3160,7 @@
     // Barras em potes; itens: [{rot, a, b, dica}]; comB = segunda série (vendas) ao lado.
     function entBarras(itens, desc, cada, comB) {
         if (!itens.length) return '<p class="text-sm" style="color:var(--adm-tinta-3)">Sem dados.</p>';
-        var W = 640, H = 190, pl = 46, pr = 8, pt = 8, pb = 22;
+        var W = wGraf(640), H = 190, pl = (W < 640 ? 66 : 46), pr = 8, pt = 8, pb = 22;
         var max = Math.max.apply(null, itens.reduce(function (a, i) { return a.concat([i.a, i.b || 0]); }, [1]));
         var slot = (W - pl - pr) / itens.length, bw = Math.max(1.5, slot * (comB ? 0.38 : 0.72));
         var y = function (v) { return pt + (H - pt - pb) * (1 - v / max); };
@@ -3006,13 +3169,14 @@
             '<line x1="' + pl + '" y1="' + y(max) + '" x2="' + (W - pr) + '" y2="' + y(max) + '" stroke="var(--adm-borda)" stroke-dasharray="3 3"/>' +
             '<text x="' + (pl - 5) + '" y="' + (y(max) + 4) + '" text-anchor="end" font-size="10" fill="var(--adm-tinta-3)">' + esc(entFmt(max)) + '</text>' +
             '<text x="' + (pl - 5) + '" y="' + (y(0) + 4) + '" text-anchor="end" font-size="10" fill="var(--adm-tinta-3)">0</text>';
+        var cadaEnt = W < 640 ? Math.max(cada || 1, Math.ceil(56 / slot)) : cada;
         itens.forEach(function (it, i) {
             var x0 = pl + i * slot + (slot - bw * (comB ? 2 : 1)) / 2;
             out += '<rect x="' + x0.toFixed(1) + '" y="' + y(it.a).toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(0, y(0) - y(it.a)).toFixed(1) +
                    '" rx="1.5" fill="var(--adm-dados)"><title>' + esc(it.dica) + '</title></rect>';
             if (comB) out += '<rect x="' + (x0 + bw).toFixed(1) + '" y="' + y(it.b).toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(0, y(0) - y(it.b)).toFixed(1) +
                    '" rx="1.5" fill="var(--adm-tinta-3)"><title>' + esc(it.dica) + '</title></rect>';
-            if (i % cada === 0) out += '<text x="' + (pl + i * slot + slot / 2).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="10" fill="var(--adm-tinta-3)">' + esc(it.rot) + '</text>';
+            if (i % cadaEnt === 0) out += '<text x="' + (pl + i * slot + slot / 2).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="10" fill="var(--adm-tinta-3)">' + esc(it.rot) + '</text>';
         });
         return out + '</svg>';
     }
@@ -3364,7 +3528,7 @@
     // Barras empilhadas em SVG; m = 'v' (valor) ou 'q' (quantidade).
     function pagBarras(D, m) {
         if (!D.cols.length) return '<p class="text-sm" style="color:var(--adm-tinta-3)">Sem dados.</p>';
-        var W = 640, H = 200, pl = 46, pr = 8, pt = 8, pb = 22, atual = vendMesAtual();
+        var W = wGraf(640), H = 200, pl = (W < 640 ? 66 : 46), pr = 8, pt = 8, pb = 22, atual = vendMesAtual();
         var tot = D.cols.map(function (c) { return D.series.reduce(function (a, s) { return a + (s[m][c] || 0); }, 0); });
         var max = Math.max.apply(null, tot.concat([1]));
         var slot = (W - pl - pr) / D.cols.length, bw = Math.max(2, slot * 0.7);
@@ -3375,6 +3539,7 @@
             '<line x1="' + pl + '" y1="' + y(max) + '" x2="' + (W - pr) + '" y2="' + y(max) + '" stroke="var(--adm-borda)" stroke-dasharray="3 3"/>' +
             '<text x="' + (pl - 5) + '" y="' + (y(max) + 4) + '" text-anchor="end" font-size="10" fill="var(--adm-tinta-3)">' + esc(m === 'v' ? brlCurto(max) : NUM.format(Math.round(max))) + '</text>' +
             '<text x="' + (pl - 5) + '" y="' + (y(0) + 4) + '" text-anchor="end" font-size="10" fill="var(--adm-tinta-3)">0</text>';
+        var cadaPag = W < 640 ? Math.ceil(56 / slot) : 1;
         D.cols.forEach(function (c, i) {
             var x = pl + i * slot + (slot - bw) / 2, base = 0;
             D.series.forEach(function (s) {
@@ -3385,7 +3550,7 @@
                     (c === atual ? ' fill-opacity=".6"' : '') + '><title>' + esc(vendMesRotulo(c) + (c === atual ? ' (parcial)' : '') + ' · ' + s.nome + ': ' + fmtv(v)) + '</title></rect>';
                 base += v;
             });
-            out += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="10" fill="var(--adm-tinta-3)">' + esc(vendMesRotulo(c)) + '</text>';
+            if (i % cadaPag === 0) out += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="10" fill="var(--adm-tinta-3)">' + esc(vendMesRotulo(c)) + '</text>';
         });
         return out + '</svg>';
     }
@@ -4881,6 +5046,7 @@
      * Pedidos — a fila que precisa de decisão
      * =================================================================== */
     var pedidosVista = 'kanban';
+    var kanbanSegmento = 'aguardando'; // celular: uma coluna por vez
     var COLUNAS_KANBAN = [
         { status: 'aguardando', titulo: 'Aguardando' },
         { status: 'confirmado', titulo: 'Confirmado' },
@@ -4916,7 +5082,18 @@
         alvo.innerHTML = cabecalho +
             (pedidosVista === 'kanban' ? htmlKanban(filtrados) : htmlTabelaPedidos(filtrados));
 
-        if (pedidosVista === 'kanban') { ligarAcoesDeStatus(alvo); ligarDragDrop(alvo); }
+        if (pedidosVista === 'kanban') {
+            ligarAcoesDeStatus(alvo); ligarDragDrop(alvo);
+            alvo.querySelectorAll('[data-kanban-seg]').forEach(function (b) {
+                b.addEventListener('click', function () {
+                    kanbanSegmento = b.getAttribute('data-kanban-seg');
+                    alvo.querySelectorAll('[data-kanban-seg]').forEach(function (o) {
+                        var a = o === b; o.classList.toggle('is-ativo', a); o.setAttribute('aria-selected', String(a));
+                    });
+                    alvo.querySelectorAll('[data-kanban-col]').forEach(function (c) { c.classList.toggle('is-seg-ativa', c.getAttribute('data-kanban-col') === kanbanSegmento); });
+                });
+            });
+        }
         else { ligarAcoesDeStatus(alvo); }
 
         ligarTrocaDeVista(alvo);
@@ -4953,10 +5130,16 @@
      * do dashboard ao resumo_mensal do banco).
      * =================================================================== */
     function htmlKanban(lista) {
-        return '<div class="adm-kanban">' +
+        return '<div class="adm-kanban-segmentos" role="tablist" aria-label="Status dos pedidos">' +
+            COLUNAS_KANBAN.map(function (col) {
+                var n = lista.filter(function (p) { return p.status === col.status; }).length;
+                return '<button type="button" role="tab" class="adm-chip' + (kanbanSegmento === col.status ? ' is-ativo' : '') + '" data-kanban-seg="' + col.status +
+                    '" aria-selected="' + (kanbanSegmento === col.status) + '">' + esc(col.titulo) + ' <span class="adm-kanban-contagem">' + n + '</span></button>';
+            }).join('') + '</div>' +
+        '<div class="adm-kanban">' +
             COLUNAS_KANBAN.map(function (col) {
                 var itens = lista.filter(function (p) { return p.status === col.status; });
-                return '<div class="adm-kanban-coluna">' +
+                return '<div class="adm-kanban-coluna' + (kanbanSegmento === col.status ? ' is-seg-ativa' : '') + '" data-kanban-col="' + col.status + '">' +
                     '<div class="adm-kanban-cabecalho">' +
                         '<span class="adm-kanban-titulo">' + esc(col.titulo) + '</span>' +
                         '<span class="adm-kanban-contagem">' + itens.length + '</span>' +
@@ -7409,7 +7592,7 @@
     window.addEventListener('resize', function () {
         clearTimeout(timerResize);
         timerResize = setTimeout(function () {
-            if (usuario && dados.resumo.length) desenharTudo();
+            if (usuario) { desenharTudo(); setTimeout(ajustarSvgCelular, 60); } // também sem pedidos do site: há dados do ERP nos gráficos
         }, 200);
     });
 

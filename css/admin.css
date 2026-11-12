@@ -663,3 +663,120 @@ body.admin {
     .adm-tabela-lista td, .adm-tabela-lista td.num { border: none; padding: 0.2rem 0; text-align: left; }
     .adm-tabela-lista td[data-rotulo]::before { content: attr(data-rotulo) ": "; color: var(--adm-tinta-3); font-size: 0.7rem; }
 }
+
+/* =====================================================================
+ * P4 — Painel no celular (< 1024px). Nada aqui vale para o desktop (>= 1024px).
+ * ===================================================================== */
+.adm-so-mobile { display: none; }
+.adm-lateral .adm-aba.hidden { display: none; }
+.adm-kanban-segmentos { display: none; }
+
+@media (min-width: 1024px) {
+    .adm-lateral .adm-aba.adm-so-mobile { display: none; }
+}
+
+@media (max-width: 1023px) {
+    /* Barra inferior fixa: 4 abas do dia a dia + "Mais". */
+    .adm-lateral {
+        position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+        display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 0.15rem;
+        overflow: visible; padding: 0.3rem 0.35rem calc(0.3rem + env(safe-area-inset-bottom));
+        border-top: 1px solid var(--adm-borda); border-bottom: none;
+    }
+    .adm-lateral .adm-aba {
+        flex-direction: column; justify-content: center; gap: 0.2rem; min-height: 3.5rem;
+        padding: 0.4rem 0.2rem; font-size: 0.8125rem; line-height: 1.1;
+    }
+    .adm-lateral .adm-aba i:first-child { font-size: 1.15rem; width: auto; }
+    .adm-lateral .adm-aba.adm-so-desktop { display: none; }
+    .adm-lateral .adm-aba.adm-so-mobile { display: inline-flex; }
+    .adm-grupo-mais { display: contents; }
+    .adm-grupo-mais.hidden { display: none; }
+    .adm-aba-mais { display: inline-flex; }
+    .adm-aba-mais .adm-mais-seta { display: none; }
+    .adm-aba-mais.tem-ativa { color: var(--adm-tinta); background-color: var(--adm-acao-fundo); border-color: var(--adm-acao-borda); }
+    .adm-menu-mais {
+        display: none; position: fixed; left: 0.5rem; right: 0.5rem; z-index: 55;
+        bottom: calc(4.4rem + env(safe-area-inset-bottom)); padding: 0.5rem;
+        grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.35rem;
+        background: var(--adm-superficie); border: 1px solid var(--adm-borda-forte); border-radius: 0.85rem;
+        box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.45);
+    }
+    .adm-menu-mais.is-aberto { display: grid; }
+    .adm-menu-mais .adm-aba { flex-direction: row; justify-content: flex-start; gap: 0.6rem; min-height: 3rem; padding: 0.5rem 0.75rem; font-size: 0.9rem; text-align: left; }
+    .adm-menu-mais .adm-aba i:first-child { font-size: 1rem; width: 1.2rem; }
+
+    .adm-principal { padding: 1rem 1rem calc(6rem + env(safe-area-inset-bottom)); }
+
+    /* Texto mínimo 13px */
+    #tela-painel .text-xs, #tela-painel [class*="text-[0."] { font-size: 0.8125rem; }
+    .adm-tile-rotulo, .adm-selo, .adm-chip, .adm-botao-fantasma, .adm-kanban-titulo, .adm-kanban-contagem,
+    .adm-pagina-botao, .adm-legenda-item, .adm-filtro, .adm-tabela, .adm-dica { font-size: 0.8125rem; }
+    .adm-input { font-size: 1rem; }
+
+    /* Alvos de toque >= 44px */
+    #tela-painel button:not(.adm-aba), #tela-painel select, #tela-painel input:not([type="checkbox"]):not([type="radio"]),
+    #modal-detalhe button, a.adm-botao-fantasma, .adm-chip, .adm-pagina-botao, .adm-sino {
+        min-height: 2.75rem;
+    }
+    .adm-botao-fantasma, .adm-chip, .adm-botao { display: inline-flex; align-items: center; justify-content: center; }
+    #tela-painel button:not(.adm-aba), #tela-painel select, #modal-detalhe button, a.adm-botao-fantasma,
+    .adm-pagina-botao, .adm-sino, .adm-modal-fechar { min-width: 2.75rem; }
+    #tela-painel summary { display: flex; align-items: center; min-height: 2.75rem; min-width: 2.75rem; }
+    .adm-tabela th { font-size: 0.8125rem; }
+    /* Cabeçalhos ordenáveis (também de 761 a 1023px, onde a tabela ainda não vira cartão) */
+    #tela-painel th[aria-sort], #tela-painel th[data-geo-ord], #tela-painel th.adm-th-ord { height: 2.75rem; min-width: 2.75rem; vertical-align: middle; }
+    .leaflet-control-attribution { font-size: 0.8125rem !important; line-height: 1.2; }
+    .leaflet-control-attribution a { display: inline-flex; align-items: center; justify-content: center; min-width: 2.75rem; min-height: 2.75rem; padding: 0 0.25rem; }
+    .adm-tabela[style*="font-size"], .adm-botao[style*="font-size"] { font-size: 0.8125rem !important; }
+    .leaflet-bar a, .leaflet-control-zoom a { width: 2.75rem !important; height: 2.75rem !important; line-height: 2.75rem !important; }
+    /* Grids: filhos podem encolher; o que for largo demais rola DENTRO do cartão, nunca no documento. */
+    .adm-principal .grid > * { min-width: 0; }
+    .adm-principal .adm-card { max-width: 100%; overflow-x: auto; }
+    .adm-sino-contagem { min-height: 0; }
+    .adm-paginacao { flex-wrap: wrap; }
+
+    /* Filtros globais em gaveta (folha inferior) */
+    #corpo-filtros:not(.hidden) {
+        position: fixed; left: 0; right: 0; bottom: 0; z-index: 60; margin: 0; max-height: 85vh; overflow-y: auto;
+        padding: 1.25rem 1rem calc(1.25rem + env(safe-area-inset-bottom));
+        background: var(--adm-superficie); border-top: 1px solid var(--adm-borda-forte); border-radius: 1rem 1rem 0 0;
+        box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.6);
+    }
+    .adm-filtros-fechar { display: block; position: sticky; bottom: calc(-1.25rem - env(safe-area-inset-bottom)); margin: 0 -1rem -1.25rem; padding: 0.75rem 1rem calc(1.25rem + env(safe-area-inset-bottom)); background: var(--adm-superficie); }
+    #cartao-filtros { backdrop-filter: none; }
+}
+
+/* Kanban: um status por vez, com segmentos no topo (em vez de rolagem lateral) */
+@media (max-width: 900px) {
+    .adm-kanban-segmentos { display: flex; gap: 0.35rem; margin-bottom: 0.75rem; overflow-x: auto; }
+    .adm-kanban-segmentos .adm-chip { flex: 1 1 0; min-width: 0; padding: 0.25rem 0.2rem; gap: 0.3rem; flex-wrap: wrap; }
+    .adm-kanban { display: block; overflow: visible; }
+    .adm-kanban-coluna { display: none; }
+    .adm-kanban-coluna.is-seg-ativa { display: flex; }
+}
+
+/* Tabelas largas viram cartões empilhados (celular) */
+@media (max-width: 760px) {
+    .adm-tabela-cartoes, .adm-tabela-cartoes tbody, .adm-tabela-cartoes tr, .adm-tabela-cartoes td { display: block; width: 100%; }
+    .adm-tabela-cartoes thead { display: none; }
+    .adm-tabela-cartoes tr:not(.adm-linha-detalhe) { border-top: 1px solid var(--adm-borda); padding: 0.75rem 0 0.25rem; }
+    .adm-tabela-cartoes > tbody > tr:first-child { border-top: none; }
+    .adm-tabela-cartoes td, .adm-tabela-cartoes td.num { border: none; padding: 0.2rem 0; text-align: left; }
+    .adm-tabela-cartoes td[data-rotulo]::before { content: attr(data-rotulo) ": "; color: var(--adm-tinta-3); font-size: 0.8125rem; }
+    .adm-tabela-lista td[data-rotulo]::before { font-size: 0.8125rem; }
+    .adm-tabela-cartoes.adm-cartoes-ord thead { display: block; }
+    .adm-tabela-cartoes.adm-cartoes-ord thead tr { display: flex; flex-wrap: wrap; gap: 0.4rem; padding-bottom: 0.6rem; }
+    .adm-tabela-cartoes.adm-cartoes-ord thead th { display: none; }
+    .adm-tabela-cartoes.adm-cartoes-ord thead th.adm-th-ord {
+        display: inline-flex; align-items: center; min-height: 2.75rem; padding: 0 0.75rem; width: auto;
+        border: 1px solid var(--adm-borda-forte); border-radius: 0.5rem; text-align: left;
+    }
+    .adm-tabela-cartoes .adm-detalhe-conteudo { padding: 0.75rem 0.25rem; }
+}
+
+@media (max-width: 520px) {
+    #tela-painel header > div { padding-left: 0.75rem; padding-right: 0.75rem; gap: 0.5rem; }
+    #tela-painel header .adm-rotulo-painel, #tela-painel header .adm-txt-btn { display: none; }
+    #tela-painel header .flex { gap: 0.5rem; }
+}
