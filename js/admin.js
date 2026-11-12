@@ -800,8 +800,9 @@
     var solid = { carregado: false, carregando: false, produtos: [], syncs: [],
                   erro: null, ausente: false, busca: '', situacao: 'todos', caixa: 'todas',
                   extra: false, eventos: [], limite: 5, ehAdmin: null, tipoEvento: 'todos',
-                  catalogo: null, listaAberta: false };
+                  catalogo: null, listaAberta: false, banco: null };
     var SOLID_BAIXO = 5;
+    var SOLID_BANCO_STALE_MS = 20 * 60 * 1000; // coletor do banco roda a cada 5 min
     var SOLID_STALE_MS = 2 * 60 * 60 * 1000;
 
     function solidCaixa(p) {
@@ -841,7 +842,7 @@
             solid.produtos = rs[0].data || [];
             solid.syncs = rs[1].data || [];
             solid.carregado = true;
-            return Promise.all([carregarSolidExtra(), carregarCatalogoSite()]).then(function () {
+            return Promise.all([carregarSolidExtra(), carregarCatalogoSite(), carregarSolidBanco()]).then(function () {
                 solid.carregando = false;
                 solidRedesenhar();
             });
@@ -872,6 +873,37 @@
             }, function () { solid.catalogo = null; });
     }
 
+    // Última batida do coletor pelo banco SQL (029). Sem a 029 aplicada, a linha só não aparece.
+    function carregarSolidBanco() {
+        return sb.from('solidcon_banco_sync')
+            .select('status,em,duracao_ms,mensagem')
+            .eq('modulo', 'saude').order('em', { ascending: false }).limit(1)
+            .then(function (r) { solid.banco = r.error ? null : ((r.data || [])[0] || false); },
+                  function () { solid.banco = null; });
+    }
+
+    function solidLinhaBanco() {
+        var b = solid.banco;
+        if (b === null) return '';
+        var txt, cor;
+        if (b === false) {
+            txt = 'Banco SOLIDCON: nenhuma batida recebida ainda'; cor = 'var(--adm-tinta-3)';
+        } else {
+            var ms = Date.now() - new Date(b.em).getTime();
+            var min = Math.max(0, Math.round(ms / 60000));
+            var ha = min < 60 ? min + ' min' : (Math.floor(min / 60) + ' h' + (min % 60 ? ' ' + (min % 60) + ' min' : ''));
+            if (ms > SOLID_BANCO_STALE_MS) {
+                txt = 'Banco SOLIDCON: sem batida há ' + ha; cor = '#FCA5A5';
+            } else if (b.status === 'ok') {
+                txt = 'Banco SOLIDCON: ok há ' + ha; cor = 'var(--adm-tinta-2)';
+            } else {
+                txt = 'Banco SOLIDCON: erro há ' + ha + (b.mensagem ? ' — ' + b.mensagem : ''); cor = '#FCA5A5';
+            }
+        }
+        return '<div class="flex items-center gap-2 mb-3 text-sm" style="color:' + cor + '">' +
+               '<i class="fa-solid fa-database"></i><span>' + esc(txt) + '</span></div>';
+    }
+
     function solidCabecalho() {
         var ultima = solid.syncs[0] || null;
         var ok = null;
@@ -897,7 +929,7 @@
         return '<div class="flex items-center gap-2 mb-3 text-sm" style="color:var(--adm-tinta-2)">' +
                    '<i class="fa-regular fa-clock"></i><span>' + esc(msg) + '</span>' +
                    (ok ? '<span class="text-xs" style="color:var(--adm-tinta-3)">(' + esc(dataHora(ok.coletado_em)) + ')</span>' : '') +
-               '</div>' +
+               '</div>' + solidLinhaBanco() +
                alertas.map(function (a) {
                    return '<div class="adm-card p-4 mb-3 text-sm" role="alert" style="border-color:rgba(239,68,68,.45)">' +
                           '<i class="fa-solid fa-triangle-exclamation mr-2" style="color:#FCA5A5"></i>' + esc(a) + '</div>';

@@ -1,0 +1,10 @@
+{
+  "modo": "teste",
+  "pastaSaida": "C:\\TempRio\\solidcon\\saida",
+  "configSupabase": "C:\\TempRio\\solidcon\\config.json",
+  "banco": {
+    "servidor": "PREENCHER_ENDERECO_DO_SQL_SERVER",
+    "base": "PREENCHER_NOME_DA_BASE",
+    "usuario": "PREENCHER_LOGIN_DE_CONSULTA"
+  }
+}

@@ -433,3 +433,224 @@ clientes recusa o payload de 13 campos e as RPCs novas não existem).
 
 0 OK; 1 configuração/estoque; 3 vendas; 4 clientes; 5 ficha; 6 vendas por cliente;
 **7 somente insumos; 8 somente formas de pagamento**. Precedência **1 > 3 > 4 > 5 > 6 > 7 > 8**.
+
+## 029 — Coleta pelo banco SQL Server da SOLIDCON (etapa 1: só "saúde") (NÃO IMPLANTADA)
+
+Um segundo coletor, **separado** do `sync-produtos.ps1`: o `sync-banco.ps1` conversa
+direto com o banco SQL Server da SOLIDCON, na rede interna, a cada 5 minutos.
+Nesta etapa ele **não lê nenhum dado do ERP**: só pergunta "você está aí?"
+(`SELECT 1`), mede quanto tempo o banco levou para responder e envia essa
+"batida" ao painel. As próximas etapas vão acrescentar módulos que leem
+**somente as views liberadas pela SOLIDCON** (nunca as tabelas `tb*`).
+
+O que já vem protegido:
+
+- O login usado é o de **consulta** passado pela SOLIDCON. A cada execução o
+  script confere as permissões **efetivas** que o login enxerga (na base, nos
+  schemas, em cada tabela/view/procedure/sequence, em cada coluna e nos papéis
+  sysadmin/db_owner/db_datawriter/db_ddladmin). Se achar qualquer permissão de
+  gravação, **ou se não conseguir confirmar**, ele se recusa a coletar e avisa
+  no painel. Essa conferência é uma trava a mais: a garantia de verdade é a
+  **confirmação do DBA da SOLIDCON** (Passo 0).
+- As consultas ficam escritas dentro do script; nenhuma vem de fora. Cada módulo
+  só roda se a consulta for **idêntica** à que foi aprovada na revisão (nesta
+  etapa só existe a do `SELECT 1`). Uma lista fixa diz quais views podem ser
+  lidas (nesta etapa: nenhuma). Qualquer outra coisa é recusada antes de conectar.
+- Tem **configuração própria** (`config-banco.json`, com o seu próprio `modo`).
+  O `config.json` do `sync-produtos` **não é alterado**: o novo coletor só lê
+  dele a conta de integração do Supabase, e só quando estiver em modo real.
+- A senha **não** fica no `config.json`, nem na linha de comando, nem no log.
+  Ela é cifrada pelo Windows (DPAPI da máquina) e guardada no arquivo
+  `banco-senha.dpapi`, na pasta de saída, que só o SYSTEM e os Administradores
+  conseguem abrir. Copiado para outro computador, o arquivo não serve para nada.
+- Leitura com `READ UNCOMMITTED` (não trava o ERP), tempo máximo de 10 s para
+  conectar e 15 s por consulta. Duas execuções nunca rodam ao mesmo tempo
+  (mutex `Global\TempRioSolidconBanco` + `sync-banco.lock`); o `sync-produtos`
+  continua independente e pode rodar no mesmo minuto.
+- O log (`sync-banco.log`) só tem status, tempo e versão do SQL; nunca dados de
+  clientes, nem mensagens de erro do servidor (só o número do erro SQL).
+
+### Antes de começar
+
+Você vai precisar de:
+
+1. Acesso de **Administrador** no servidor onde já roda o `sync-produtos`.
+   **Não** é preciso mexer no `config.json` nem na tarefa "TempRio SOLIDCON produtos".
+2. Da SOLIDCON: o **endereço do servidor SQL** (nome ou IP da rede interna),
+   o **nome da base**, o **login de consulta** e a **senha** desse login.
+3. Para o painel mostrar a batida: a migração **029 aplicada** no Supabase
+   (quem aplica é o Tech Lead). Até lá, deixe `"modo": "teste"`.
+
+### Passo 0 — Confirmação por escrito da SOLIDCON
+
+Peça ao DBA da SOLIDCON, por e-mail, a confirmação de que o login de consulta:
+(a) não tem INSERT, UPDATE, DELETE, EXECUTE, ALTER nem CONTROL em nenhum nível
+(servidor, base, schema, objeto ou coluna), nem por papel; (b) só tem SELECT
+nas views combinadas. Guarde esse e-mail. Sem ele, não siga em frente.
+
+Faça os passos na ordem. Cada comando está num bloco separado: copie um bloco
+inteiro, cole e aperte Enter. Espere terminar antes de passar ao próximo.
+
+### Passo 1 — Copiar os arquivos
+
+Copie `sync-banco.ps1`, `configurar-senha-banco.ps1` e `config-banco.exemplo.json`
+(desta pasta do repositório) para `C:\TempRio\solidcon\`, a mesma pasta do `sync-produtos.ps1`
+e do `config.json`.
+
+### Passo 2 — Abrir o PowerShell como Administrador
+
+Clique em Iniciar, digite `PowerShell`, clique com o botão direito em
+"Windows PowerShell" e escolha **Executar como administrador**. Todos os
+comandos abaixo são digitados nessa janela.
+
+### Passo 3 — Criar o config-banco.json (arquivo novo, só deste coletor)
+
+Copie também `config-banco.exemplo.json` para `C:\TempRio\solidcon\` e crie a
+cópia de trabalho a partir dele:
+
+```powershell
+Copy-Item C:\TempRio\solidcon\config-banco.exemplo.json C:\TempRio\solidcon\config-banco.json
+```
+
+Abra a cópia no Bloco de Notas:
+
+```powershell
+notepad C:\TempRio\solidcon\config-banco.json
+```
+
+Troque só os três textos `PREENCHER_...` da seção `banco` pelos dados da
+SOLIDCON (**não** coloque a senha aqui). Deixe `"modo": "teste"`. Os outros
+campos já vêm certos para a instalação padrão:
+
+- `pastaSaida`: onde ficam log, trava e o arquivo cifrado da senha (pode ser a
+  mesma pasta do `sync-produtos`; os nomes dos arquivos não se misturam).
+- `configSupabase`: caminho do `config.json` do `sync-produtos`, de onde o
+  coletor **só lê** a conta de integração, em modo real.
+
+Salve (Ctrl+S) e feche o Bloco de Notas. Se a SOLIDCON passou uma porta, use
+vírgula: `"10.0.0.5,1433"` (exemplo fictício).
+
+### Passo 4 — Guardar a senha (uma vez só)
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\TempRio\solidcon\configurar-senha-banco.ps1
+```
+
+Abre uma janelinha do Windows pedindo a senha (o usuário já vem preenchido).
+Digite a senha do login de consulta e clique em OK. Deve aparecer
+`OK: senha guardada (cifrada) em ...`. A senha não aparece na tela em momento algum.
+
+### Passo 5 — Testar a conexão
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\TempRio\solidcon\configurar-senha-banco.ps1 -Testar
+```
+
+Tem que aparecer:
+`OK: conectou e o SELECT 1 respondeu...` e `OK: nenhuma permissao de escrita encontrada...`.
+
+- `erro SQL 18456`: senha ou login errados → repita o Passo 4.
+- `erro SQL 4060`: nome da base errado ou o login não tem acesso a ela → confira o Passo 3.
+- `erro SQL 53`, `-2` ou `258`: o servidor não respondeu → confira o endereço e se o servidor está na rede.
+- `ATENCAO: o login PODE gravar`: **pare** e peça à SOLIDCON para tirar a permissão de gravação.
+- `ATENCAO: nao foi possivel confirmar`: **pare** e mande a mensagem ao DBA da SOLIDCON.
+
+### Passo 6 — Rodar o coletor uma vez, na mão
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\TempRio\solidcon\sync-banco.ps1 -Config C:\TempRio\solidcon\config-banco.json
+```
+
+Deve aparecer uma linha com `OK saude ... status=ok`. Em `"modo": "teste"` nada é
+enviado ao Supabase (`enviado=nao`). Para testar sem nem tocar no banco, acrescente
+`-Simular` no fim do comando (e `-Simular -SimularFalha` para ver como fica uma falha).
+
+### Passo 7 — Agendar a cada 5 minutos
+
+```powershell
+schtasks /Create /TN "TempRio SOLIDCON banco" /SC MINUTE /MO 5 /RU "SYSTEM" /TR "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\TempRio\solidcon\sync-banco.ps1 -Config C:\TempRio\solidcon\config-banco.json" /F
+```
+
+Deve responder `ÊXITO` (ou `SUCCESS`). A tarefa roda como SYSTEM, sem ninguém logado.
+
+### Passo 8 — Rodar a tarefa agora (sem esperar 5 minutos)
+
+```powershell
+schtasks /Run /TN "TempRio SOLIDCON banco"
+```
+
+### Passo 9 — Conferir o log
+
+Espere uns 20 segundos e veja as últimas linhas:
+
+```powershell
+Get-Content C:\TempRio\solidcon\saida\sync-banco.log -Tail 5
+```
+
+(Se o seu `pastaSaida` for outro, troque o começo do caminho.) A linha mais
+nova deve ter `OK saude` e `status=ok`.
+
+### Passo 10 — Conferir o código de saída
+
+```powershell
+(Get-ScheduledTaskInfo -TaskName "TempRio SOLIDCON banco").LastTaskResult
+```
+
+| Código | O que significa |
+|---|---|
+| 0 | Tudo certo |
+| 1 | Configuração, pasta ou outra execução em andamento (veja a última linha `ERRO fase=` no log) |
+| 2 | Saúde: o banco não respondeu, ou a batida não chegou ao Supabase (veja `motivo=` ou `fase=` no log) |
+| 267009 | A tarefa ainda está rodando; consulte de novo em alguns segundos |
+
+Módulos futuros ganham os próximos códigos (3, 4, ...); vale o do primeiro módulo que falhar.
+
+### Ligar o envio ao painel
+
+Só depois de a 029 estar aplicada: abra **o config-banco.json** (nunca o
+`config.json`) e troque `"modo": "teste"` por `"modo": "real"`:
+
+```powershell
+notepad C:\TempRio\solidcon\config-banco.json
+```
+
+Esse `modo` vale **só** para o coletor do banco; o `sync-produtos` continua como
+está. A conta de integração (a mesma de `integracoes_autorizadas`) é lida do
+`config.json` indicado em `configSupabase`; nada novo para preencher. Na próxima
+execução, a aba Integração do painel mostra "Banco SOLIDCON: ok há X min". Sem
+batida há mais de 20 minutos, a linha fica vermelha. Para desligar o envio, volte
+para `"modo": "teste"` no mesmo arquivo.
+
+### Mensagens no log (`motivo=`)
+
+| Mensagem | O que fazer |
+|---|---|
+| senha do banco nao configurada | Faça o Passo 4 |
+| senha nao decifra neste servidor / arquivo de senha invalido | Faça o Passo 4 de novo |
+| arquivo de senha com permissao ampla; recusado | Alguém mexeu nas permissões do arquivo: faça o Passo 4 de novo |
+| sem acesso ao arquivo de senha | A tarefa precisa rodar como SYSTEM (Passo 7) |
+| login recusado (sql 18456) | Senha trocada pela SOLIDCON: faça o Passo 4 de novo |
+| servidor inacessivel / tempo esgotado | Rede ou servidor SQL fora do ar; se continuar, avise a SOLIDCON |
+| login de consulta tem permissao de escrita | Peça à SOLIDCON para tirar a permissão; a coleta fica parada até lá |
+| nao foi possivel confirmar que o login nao grava | Rode o Passo 5 e mande o resultado ao DBA da SOLIDCON |
+| Configuracao Supabase invalida (no `ERRO fase=`) | Confira `configSupabase` no config-banco.json |
+
+### Trocar a senha, pausar ou remover
+
+- Senha nova: repita o Passo 4 e o Passo 5.
+- Pausar: `schtasks /Change /TN "TempRio SOLIDCON banco" /DISABLE` (voltar: `/ENABLE`).
+- Remover: `schtasks /Delete /TN "TempRio SOLIDCON banco" /F`.
+
+### Limites conhecidos
+
+- Qualquer **administrador** deste servidor consegue decifrar a senha (é o
+  preço de a tarefa rodar sozinha como SYSTEM). Mantenha poucos administradores.
+- A conexão é cifrada, mas aceita o certificado do servidor sem conferir
+  (`TrustServerCertificate`, como no teste que já funcionou). Na rede interna
+  isso é aceitável; se a SOLIDCON instalar um certificado válido, dá para ligar
+  a conferência.
+- `ApplicationIntent=ReadOnly` só faz diferença em servidores com réplica; a
+  garantia de leitura vem do login de consulta (Passo 0), com a conferência
+  automática como trava a mais. A conferência só enxerga o que o próprio login
+  enxerga e não foi testada contra o SQL Server real antes da implantação.
+- O banco guarda 30 dias de batidas (a limpeza é feita pela própria RPC).
