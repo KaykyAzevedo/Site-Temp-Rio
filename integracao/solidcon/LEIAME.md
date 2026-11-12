@@ -751,22 +751,21 @@ erro). Duas partes independentes; uma falhar não impede a outra:
 
 Nenhum dado de cliente: só produto, dia e valores. Leitura só para a equipe.
 
-### Semântica de venda/custo (pendente)
+### Semântica de venda/custo (confirmada em 2026-11-12)
 
-Ainda não está confirmado se `Vlitem` e `CustoItem` são **total da linha** ou
-**valor unitário**. A consulta aprovada traz as variantes (`SUM(Vlitem)`,
-`SUM(Vlitem × qtd)`, `SUM(Valor_total_unidade × qtd)`, `SUM(CustoItem)`,
-`SUM(CustoItem × qtd)`), e a escolha fica numa linha do script:
+O probe real da filial 4 mostrou que `Vlitem` é o **preço unitário**, `Valor_total_unidade`
+é o **total da linha** (apesar do nome) e `CustoItem` é o **custo total da linha**:
+`SUM(Valor_total_unidade)` = `SUM(Vlitem × qtd)` conciliou com o faturamento da API nos dias
+conferidos, com diferença máxima de R$ 0,01 (03/11: 7.780,51 × 7.780,50). O script usa:
 
 ```powershell
-$SemanticaMargem = @{ venda = $null; custo = $null }
+$SemanticaMargem = @{ venda = 'venda_unidade_soma'; custo = 'custo_soma' }
 ```
 
-Enquanto estiver `$null`, a parte de **vendas não consulta nem envia nada** e o
-log mostra `AVISO margem vendas ... semantica ... ainda nao confirmada` (não conta
-como falha; os custos seguem normais). Depois do probe do dono (comparar com o
-faturamento conhecido por dia), o Tech Lead/Forja preenche, por exemplo,
-`@{ venda = 'venda_soma'; custo = 'custo_x_qtd' }`, e essa mudança passa por revisão.
+A consulta continua trazendo as outras variantes só para diagnóstico. Mudar essa linha exige
+revisão; valor fora da lista fechada faz a parte de vendas falhar (código 4) sem consultar.
+Se alguma linha do período tiver `Valor_total_unidade` ou `CustoItem` nulos, a janela inteira
+não é enviada (a anterior fica no banco) e o log diz `venda, custo ou quantidade nulos`.
 
 Valores de venda têm **sinal**: devolução pode deixar quantidade, venda ou custo
 do dia negativos. Custos/preços negativos no ERP (estoque negativo etc.) ficam
@@ -788,7 +787,7 @@ recebimento antes de 1990 (valor padrão do ERP) ficam vazias.
 
 ### Carga inicial (backfill) desde 2026-05-29
 
-Só depois da 031 aplicada **e** da semântica definida. Roda **só** as vendas da
+Com a 031 aplicada (a semântica já está definida). Roda **só** as vendas da
 margem, em blocos de 31 dias até hoje (um envio por bloco), sem mexer na agenda
 nem nos outros módulos. Em `"modo": "teste"` nada vai ao Supabase.
 
@@ -798,8 +797,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\TempRio\solidcon\sync
 
 O log mostra uma linha `OK margem vendas AAAA-MM-DD..AAAA-MM-DD linhas=N` por bloco.
 Se algum bloco falhar, o código de saída é 4; rodar de novo é seguro (cada bloco
-substitui só a própria janela). Com a semântica pendente, o backfill sai com 4
-sem consultar nada.
+substitui só a própria janela).
 
 ### Correspondência com os produtos do site
 

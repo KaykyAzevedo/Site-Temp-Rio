@@ -44,19 +44,23 @@ $ViewsPermitidas = @('dbo.VW_RDUPHOLD_CONTASRECEBER_ABERTO', 'dbo.VW_MGN_PARCEIR
 $ConsultasAprovadas = @{
     'saude.ok' = "SELECT 1 AS ok, CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(32)) AS versao"
     'receber.parcelas' = "SELECT r.cdConta AS cd_conta, r.Documento AS documento_titulo, r.Vencimento AS vencimento, r.Valor_Parcela_Aberto AS valor_aberto, r.Valor_Fatura AS valor_fatura, r.Valor_Pago AS valor_pago, r.Valor_Parcela_Mora AS valor_mora, r.Valor_Parcela_Multa AS valor_multa, r.Valor_Parcela_Desconto AS valor_desconto, r.nmReceDesp AS categoria, r.cdNota AS cd_nota, r.Codigo_Fornecedor AS codigo_parceiro FROM dbo.VW_RDUPHOLD_CONTASRECEBER_ABERTO AS r WHERE r.Codigo_Filial = 4"
-    'margem.vendas' = "SELECT CAST(v.DataMovimento AS date) AS dia, v.Codigo_Produto AS codigo_produto, SUM(v.quantidade_produto) AS quantidade, SUM(v.Vlitem) AS venda_soma, SUM(v.Vlitem * v.quantidade_produto) AS venda_x_qtd, SUM(v.Valor_total_unidade * v.quantidade_produto) AS venda_unidade_x_qtd, SUM(v.CustoItem) AS custo_soma, SUM(v.CustoItem * v.quantidade_produto) AS custo_x_qtd, COUNT(*) AS linhas, SUM(CASE WHEN v.quantidade_produto IS NULL THEN 1 ELSE 0 END) AS nulos_qtd, SUM(CASE WHEN v.Vlitem IS NULL THEN 1 ELSE 0 END) AS nulos_venda, SUM(CASE WHEN v.Valor_total_unidade IS NULL THEN 1 ELSE 0 END) AS nulos_unidade, SUM(CASE WHEN v.CustoItem IS NULL THEN 1 ELSE 0 END) AS nulos_custo FROM dbo.VW_RDUPHOLD_VENDA_ITENS AS v WHERE v.CodigoFilial = 4 AND v.DataMovimento >= @desde AND v.DataMovimento < @ate GROUP BY CAST(v.DataMovimento AS date), v.Codigo_Produto"
+    'margem.vendas' = "SELECT CAST(v.DataMovimento AS date) AS dia, v.Codigo_Produto AS codigo_produto, SUM(v.quantidade_produto) AS quantidade, SUM(v.Vlitem) AS venda_soma, SUM(v.Vlitem * v.quantidade_produto) AS venda_x_qtd, SUM(v.Valor_total_unidade * v.quantidade_produto) AS venda_unidade_x_qtd, SUM(v.Valor_total_unidade) AS venda_unidade_soma, SUM(v.CustoItem) AS custo_soma, SUM(v.CustoItem * v.quantidade_produto) AS custo_x_qtd, COUNT(*) AS linhas, SUM(CASE WHEN v.quantidade_produto IS NULL THEN 1 ELSE 0 END) AS nulos_qtd, SUM(CASE WHEN v.Vlitem IS NULL THEN 1 ELSE 0 END) AS nulos_venda, SUM(CASE WHEN v.Valor_total_unidade IS NULL THEN 1 ELSE 0 END) AS nulos_unidade, SUM(CASE WHEN v.CustoItem IS NULL THEN 1 ELSE 0 END) AS nulos_custo FROM dbo.VW_RDUPHOLD_VENDA_ITENS AS v WHERE v.CodigoFilial = 4 AND v.DataMovimento >= @desde AND v.DataMovimento < @ate GROUP BY CAST(v.DataMovimento AS date), v.Codigo_Produto"
     'margem.custos' = "SELECT e.CodigoProduto AS codigo_produto, e.Unidade AS unidade, e.CustoMedioUnitario AS custo_medio, e.CustoReposicaoUnitario AS custo_reposicao, e.PrecoVenda AS preco_venda, e.DataUltimoRecebimento AS ultimo_recebimento FROM dbo.VW_MGN_ESTOQUE AS e WHERE e.CodigoFilial = 4 AND e.EstoqueTipo = 'Produto'"
     'receber.parceiros' = "SELECT p.CodigoParceiro AS codigo_parceiro, p.CNPJ AS documento FROM dbo.VW_MGN_PARCEIRO AS p WHERE p.CodigoParceiro IN (SELECT r.Codigo_Fornecedor FROM dbo.VW_RDUPHOLD_CONTASRECEBER_ABERTO AS r WHERE r.Codigo_Filial = 4)"
 }
 $RpcsPermitidas = @('solidcon_receber_banco_saude', 'solidcon_receber_contas_receber', 'solidcon_receber_margem_vendas', 'solidcon_receber_custos')
-# Semantica de VW_RDUPHOLD_VENDA_ITENS (linha x unitario) AINDA NAO CONFIRMADA: a consulta traz
-# as variantes e aqui se escolhe qual vira venda/custo. Enquanto $null, a parte de vendas da margem
-# nao consulta nem envia nada (log AVISO); custos seguem normais.
-#   venda: 'venda_soma' (Vlitem = total da linha) | 'venda_x_qtd' (Vlitem unitario) | 'venda_unidade_x_qtd'
-#   custo: 'custo_soma' (CustoItem = total da linha) | 'custo_x_qtd' (CustoItem unitario)
-$SemanticaMargem = @{ venda = $null; custo = $null }
+# Semantica de VW_RDUPHOLD_VENDA_ITENS CONFIRMADA pelo probe real da filial 4 (2026-11-12):
+#   Vlitem = PRECO UNITARIO; Valor_total_unidade = TOTAL DA LINHA (apesar do nome);
+#   CustoItem = CUSTO TOTAL DA LINHA. SUM(Valor_total_unidade) = SUM(Vlitem*qtd) conciliou com o
+#   faturamento da API (03,04,09,10,11/11) com diferenca maxima de R$ 0,01 (03/11: 7780,51 x 7780,50);
+#   SUM(CustoItem*qtd) daria custo ~17x a receita (absurdo).
+#   venda = SUM(Valor_total_unidade) (valor da linha, sem multiplicacao/arredondamento extra);
+#   custo = SUM(CustoItem). As demais variantes ficam so para diagnostico; trocar exige revisao.
+#   venda: 'venda_unidade_soma' (confirmada) | 'venda_x_qtd' (equivalente) | 'venda_soma' | 'venda_unidade_x_qtd'
+#   custo: 'custo_soma' (confirmada) | 'custo_x_qtd'
+$SemanticaMargem = @{ venda = 'venda_unidade_soma'; custo = 'custo_soma' }
 # Variantes aceitas e as contagens de NULL que precisam ser 0 para o agregado valer.
-$VariantesVenda = @{ venda_soma = @('nulos_venda'); venda_x_qtd = @('nulos_venda', 'nulos_qtd'); venda_unidade_x_qtd = @('nulos_unidade', 'nulos_qtd') }
+$VariantesVenda = @{ venda_soma = @('nulos_venda'); venda_x_qtd = @('nulos_venda', 'nulos_qtd'); venda_unidade_x_qtd = @('nulos_unidade', 'nulos_qtd'); venda_unidade_soma = @('nulos_unidade') }
 $VariantesCusto = @{ custo_soma = @('nulos_custo'); custo_x_qtd = @('nulos_custo', 'nulos_qtd') }
 $DataMinimaMargem = [datetime]'2026-05-29'
 
@@ -787,16 +791,16 @@ $ModuloMargem = @{
     consultas = [ordered]@{
         vendas = @{
             maxLinhas = 50000; parametros = @('desde', 'ate')
-            colunas = @('dia', 'codigo_produto', 'quantidade', 'venda_soma', 'venda_x_qtd', 'venda_unidade_x_qtd', 'custo_soma', 'custo_x_qtd', 'linhas',
+            colunas = @('dia', 'codigo_produto', 'quantidade', 'venda_soma', 'venda_x_qtd', 'venda_unidade_x_qtd', 'venda_unidade_soma', 'custo_soma', 'custo_x_qtd', 'linhas',
                         'nulos_qtd', 'nulos_venda', 'nulos_unidade', 'nulos_custo')
-            sql = "SELECT CAST(v.DataMovimento AS date) AS dia, v.Codigo_Produto AS codigo_produto, SUM(v.quantidade_produto) AS quantidade, SUM(v.Vlitem) AS venda_soma, SUM(v.Vlitem * v.quantidade_produto) AS venda_x_qtd, SUM(v.Valor_total_unidade * v.quantidade_produto) AS venda_unidade_x_qtd, SUM(v.CustoItem) AS custo_soma, SUM(v.CustoItem * v.quantidade_produto) AS custo_x_qtd, COUNT(*) AS linhas, SUM(CASE WHEN v.quantidade_produto IS NULL THEN 1 ELSE 0 END) AS nulos_qtd, SUM(CASE WHEN v.Vlitem IS NULL THEN 1 ELSE 0 END) AS nulos_venda, SUM(CASE WHEN v.Valor_total_unidade IS NULL THEN 1 ELSE 0 END) AS nulos_unidade, SUM(CASE WHEN v.CustoItem IS NULL THEN 1 ELSE 0 END) AS nulos_custo FROM dbo.VW_RDUPHOLD_VENDA_ITENS AS v WHERE v.CodigoFilial = 4 AND v.DataMovimento >= @desde AND v.DataMovimento < @ate GROUP BY CAST(v.DataMovimento AS date), v.Codigo_Produto"
+            sql = "SELECT CAST(v.DataMovimento AS date) AS dia, v.Codigo_Produto AS codigo_produto, SUM(v.quantidade_produto) AS quantidade, SUM(v.Vlitem) AS venda_soma, SUM(v.Vlitem * v.quantidade_produto) AS venda_x_qtd, SUM(v.Valor_total_unidade * v.quantidade_produto) AS venda_unidade_x_qtd, SUM(v.Valor_total_unidade) AS venda_unidade_soma, SUM(v.CustoItem) AS custo_soma, SUM(v.CustoItem * v.quantidade_produto) AS custo_x_qtd, COUNT(*) AS linhas, SUM(CASE WHEN v.quantidade_produto IS NULL THEN 1 ELSE 0 END) AS nulos_qtd, SUM(CASE WHEN v.Vlitem IS NULL THEN 1 ELSE 0 END) AS nulos_venda, SUM(CASE WHEN v.Valor_total_unidade IS NULL THEN 1 ELSE 0 END) AS nulos_unidade, SUM(CASE WHEN v.CustoItem IS NULL THEN 1 ELSE 0 END) AS nulos_custo FROM dbo.VW_RDUPHOLD_VENDA_ITENS AS v WHERE v.CodigoFilial = 4 AND v.DataMovimento >= @desde AND v.DataMovimento < @ate GROUP BY CAST(v.DataMovimento AS date), v.Codigo_Produto"
             # FICTICIO: 2 produtos por dia da janela (um com devolucao).
             simulacao = {
                 param($v)
                 $r = New-Object Collections.ArrayList
                 for ($d = $v.desde; $d -lt $v.ate; $d = $d.AddDays(1)) {
-                    [void]$r.Add(@{ dia = $d; codigo_produto = 501; quantidade = [decimal]3; venda_soma = [decimal]90; venda_x_qtd = [decimal]270; venda_unidade_x_qtd = [decimal]90; custo_soma = [decimal]54.3; custo_x_qtd = [decimal]162.9; linhas = 2; nulos_qtd = 0; nulos_venda = 0; nulos_unidade = 0; nulos_custo = 0 })
-                    [void]$r.Add(@{ dia = $d; codigo_produto = 502; quantidade = [decimal]-1; venda_soma = [decimal]-25.5; venda_x_qtd = [decimal]25.5; venda_unidade_x_qtd = [decimal]-25.5; custo_soma = [decimal]-12; custo_x_qtd = [decimal]12; linhas = 1; nulos_qtd = 0; nulos_venda = 0; nulos_unidade = 0; nulos_custo = 0 })
+                    [void]$r.Add(@{ dia = $d; codigo_produto = 501; quantidade = [decimal]3; venda_soma = [decimal]90; venda_x_qtd = [decimal]270; venda_unidade_x_qtd = [decimal]810; venda_unidade_soma = [decimal]270; custo_soma = [decimal]54.3; custo_x_qtd = [decimal]162.9; linhas = 2; nulos_qtd = 0; nulos_venda = 0; nulos_unidade = 0; nulos_custo = 0 })
+                    [void]$r.Add(@{ dia = $d; codigo_produto = 502; quantidade = [decimal]-1; venda_soma = [decimal]-25.5; venda_x_qtd = [decimal]25.5; venda_unidade_x_qtd = [decimal]25.5; venda_unidade_soma = [decimal]-25.5; custo_soma = [decimal]-12; custo_x_qtd = [decimal]12; linhas = 1; nulos_qtd = 0; nulos_venda = 0; nulos_unidade = 0; nulos_custo = 0 })
                 }
                 ,$r.ToArray()
             }
