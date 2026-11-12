@@ -23,7 +23,7 @@ separação eh_equipe/eh_admin por papel. Consulte MERGE_DECISOES.md.
 | 025_solidcon_ficha.sql | Ficha técnica pública dos sabores | APLICADA (2026-11-11) |
 | 026_solidcon_vendas_clientes.sql | Histórico de compras por cliente | APLICADA (2026-11-11) |
 | 027_solidcon_fabrica_financeiro.sql | Estoque da fábrica, endereço CNPJ, formas de pagamento | APLICADA (2026-11-11) |
-| 028_reforco_seguranca.sql | Reforço de segurança (auditoria 004–027) | NÃO APLICADA |
+| 028_reforco_seguranca.sql | Reforço de segurança (auditoria 004–027) | APLICADA (2026-11-12) |
 
 019/020 são nomes de organização do repositório. Os objetos SQL, RPCs e a
 assinatura chamada pelo script continuam iguais. 017/018 não são reutilizados
@@ -815,7 +815,7 @@ não editado nesta tarefa):
 > terceiros. O cadastro é substituído a cada atualização diária: o que for excluído ou
 > corrigido no sistema de gestão some ou é corrigido aqui na atualização seguinte.
 
-## 028_reforco_seguranca.sql — Reforço de segurança (NÃO APLICADA)
+## 028_reforco_seguranca.sql — Reforço de segurança (APLICADA em 2026-11-12; sem o limite de numero_solidcon, coluna da 011 ausente em produção)
 
 Resultado da auditoria das migrações 004–027 e de `admin/supabase*.sql`, conferida num
 Postgres isolado com tudo aplicado (catálogo: RLS, policies, grants, `SECURITY DEFINER`).

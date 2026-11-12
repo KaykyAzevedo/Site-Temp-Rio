@@ -1,5 +1,5 @@
 -- 028: reforco de seguranca do banco (achados da auditoria das migracoes 004-027).
--- NAO APLICADA. Instalacao manual no SQL Editor (papel postgres). Idempotente: pode rodar de novo.
+-- APLICADA em 2026-11-12. Instalacao manual no SQL Editor (papel postgres). Idempotente: pode rodar de novo.
 -- Nao apaga nem altera dados existentes (nenhum UPDATE/DELETE; compativel com safeupdate).
 -- Nao muda nada do ERP/SOLIDCON nem do site.
 --
@@ -90,6 +90,7 @@ revoke all on function public.historico_do_cliente(text) from public;
 grant execute on function public.historico_do_cliente(text) to anon, authenticated;
 
 -- (3) limites de tamanho (NOT VALID: sem varrer nem reprovar linhas antigas) -------------
+-- pedidos.numero_solidcon (011) nao existe em producao: fora do CHECK. Se a 011 for aplicada, limitar la.
 do $$
 declare
   r record;
@@ -118,7 +119,6 @@ begin
       ('pedidos',        'pedidos_028_tamanhos',
        'char_length(coalesce(inscricao_estadual,'''')) <= 30 and char_length(coalesce(uf,'''')) <= 2
         and char_length(coalesce(regiao,'''')) <= 100 and char_length(coalesce(regiao_id,'''')) <= 100
-        and char_length(coalesce(numero_solidcon,'''')) <= 50
         and (itens is null or (jsonb_typeof(itens) <> ''array'' or jsonb_array_length(itens) <= 300)
              and octet_length(itens::text) <= 262144)'),
       ('lista_espera',   'lista_espera_028_tamanhos',
