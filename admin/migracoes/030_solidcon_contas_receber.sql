@@ -1,5 +1,5 @@
 -- 030: contas a receber ABERTAS da filial 4 (coletor pelo banco SQL, modulo 'receber').
--- NAO APLICADA. Instalacao manual no SQL Editor (papel postgres). Idempotente: pode rodar de novo.
+-- APLICADA em 2026-11-12. Instalacao manual no SQL Editor (papel postgres). Idempotente: pode rodar de novo.
 -- Requer 019 (integracoes_autorizadas), 026 (solidcon_026_documento_valido) e eh_equipe().
 -- Origem: dbo.VW_RDUPHOLD_CONTASRECEBER_ABERTO (Codigo_Filial=4) + dbo.VW_MGN_PARCEIRO (CNPJ).
 -- Minimizacao/LGPD: so filial 4; sem Historico livre e sem nome do parceiro (o nome vem de
