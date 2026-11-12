@@ -275,7 +275,7 @@
     /* ===================================================================
      * LGPD — consentimento, direitos do titular (migração 015)
      * =================================================================== */
-    var VERSAO_POLITICA_ATUAL = 'v1'; // muda quando o texto de /privacidade.html mudar de fato
+    var VERSAO_POLITICA_ATUAL = 'v2'; // muda quando o texto de /privacidade.html mudar de fato
 
     function registrarConsentimento(contexto, documento, telefone) {
         if (!cfg()) return Promise.resolve(false);
