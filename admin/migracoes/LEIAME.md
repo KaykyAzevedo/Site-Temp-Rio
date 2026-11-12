@@ -26,7 +26,7 @@ separação eh_equipe/eh_admin por papel. Consulte MERGE_DECISOES.md.
 | 028_reforco_seguranca.sql | Reforço de segurança (auditoria 004–027) | APLICADA (2026-11-12) |
 | 029_solidcon_banco_saude.sql | Batidas do coletor pelo banco SQL SOLIDCON (módulo saúde) | APLICADA (2026-11-12) |
 | 030_solidcon_contas_receber.sql | Contas a receber abertas da filial 4 (módulo receber) | APLICADA (2026-11-12) |
-| 031_solidcon_margem.sql | Margem por produto da filial 4: vendas por dia e custos (módulo margem) | NÃO APLICADA |
+| 031_solidcon_margem.sql | Margem por produto da filial 4: vendas por dia e custos (módulo margem) | APLICADA (2026-11-12) |
 
 019/020 são nomes de organização do repositório. Os objetos SQL, RPCs e a
 assinatura chamada pelo script continuam iguais. 017/018 não são reutilizados

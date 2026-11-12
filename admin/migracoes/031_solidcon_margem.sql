@@ -1,5 +1,5 @@
 -- 031: margem real por produto da filial 4 (coletor pelo banco SQL, modulo 'margem').
--- NAO APLICADA. Instalacao manual no SQL Editor (papel postgres). Idempotente: pode rodar de novo.
+-- APLICADA em 2026-11-12. Instalacao manual no SQL Editor (papel postgres). Idempotente: pode rodar de novo.
 -- Requer 019 (integracoes_autorizadas) e eh_equipe().
 -- Origem (somente filial 4, filtro dentro das consultas aprovadas do sync-banco.ps1):
 --   dbo.VW_RDUPHOLD_VENDA_ITENS  -> agregado por dia + Codigo_Produto (quantidade, venda, custo).
