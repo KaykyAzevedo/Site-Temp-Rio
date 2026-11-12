@@ -2137,6 +2137,7 @@
         if ((qual === 'clientes' || qual === 'pedidos') && precisa(scli)) carregarSolidClientes();
         if ((qual === 'clientes' || qual === 'regioes' || qual === 'vendas') && precisa(cmp)) carregarCompras();
         if (qual === 'regioes' && precisa(geo)) carregarGeoClientes();
+        if (qual === 'clientes' && papel === 'admin' && precisa(rec)) carregarReceber();
         if (qual === 'vitrine' && precisa(giro)) carregarGiro();
         if (qual === 'vitrine' && precisa(ent)) carregarEntradas();
         if (qual === 'vitrine' && precisa(ins)) carregarInsumos();
@@ -2301,7 +2302,9 @@
     function desenharClientes() {
         var alvo = $('#painel-clientes');
         desenharClientesBase();
-        alvo.insertAdjacentHTML('beforeend', '<section id="clientes-compras" class="mt-10"></section><section id="clientes-erp" class="mt-10"></section>');
+        alvo.insertAdjacentHTML('beforeend', '<section id="clientes-financeiro" class="mt-10"></section><section id="clientes-compras" class="mt-10"></section><section id="clientes-erp" class="mt-10"></section>');
+        recLigar($('#clientes-financeiro'));
+        desenharClientesFinanceiro();
         desenharClientesCompras();
         desenharClientesErp();
     }
@@ -3477,6 +3480,206 @@
         if (!D.series.length) return [resCard(tit, 'vendas', null, '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhum pagamento sincronizado ainda.</p>', true)];
         return [resCard(tit, 'vendas', 'ERP · ' + pagPeriodoTxt(D) + ' · valor por mês (mês corrente parcial)',
             pagLegenda(D) + pagBarras(D, 'v') + '<div class="mt-4">' + pagTabela(D, 5) + '</div>', true)];
+    }
+
+    /* ===================================================================
+     * Clientes — Financeiro: contas a receber do ERP (solidcon_receber, migração 030) — SOMENTE LEITURA
+     * Só admin (dado financeiro). Sem a 030 (tabela ausente) o bloco não aparece. Dias de atraso são
+     * recalculados aqui a partir do vencimento (data de São Paulo). Pessoa física e "sem documento"
+     * entram agregadas em uma linha cada, sem identificar ninguém e sem expandir.
+     * =================================================================== */
+    var REC_LIMITE = 10000, REC_POR_PAGINA = 50, REC_STALE_MS = 2 * 60 * 60 * 1000;
+    var rec = { carregado: false, carregando: false, ausente: false, erro: null, linhas: [], syncs: [], truncado: false,
+                abertos: {}, mostrar: REC_POR_PAGINA, memo: null };
+
+    function carregarReceber() {
+        rec.carregando = true;
+        recRedesenhar();
+        return Promise.all([
+            vendPaginar(function () {
+                return sb.from('solidcon_receber')
+                    .select('id,tipo,documento,documento_titulo,cd_nota,vencimento,valor_aberto_centavos,valor_mora_centavos,valor_multa_centavos,valor_desconto_centavos,categoria,coletado_em')
+                    .order('vencimento', { ascending: true }).order('id', { ascending: true });
+            }, REC_LIMITE),
+            sb.from('solidcon_receber_sync').select('status,linhas,total_aberto_centavos,coletado_em,mensagem,em').order('em', { ascending: false }).limit(20)
+        ]).then(function (rs) {
+            rec.carregando = false;
+            var falha = rs.filter(function (r) { return r.error; })[0];
+            rec.ausente = false; rec.erro = null;
+            if (falha) {
+                if (solidTabelaAusente(falha.error)) rec.ausente = true; else rec.erro = String(falha.error.message || falha.error);
+                rec.carregado = false;
+            } else {
+                rec.linhas = rs[0].data || []; rec.syncs = rs[1].data || [];
+                rec.truncado = rec.linhas.length >= REC_LIMITE; // no teto não dá para provar que o total está completo
+                rec.memo = null; rec.carregado = true;
+            }
+            recRedesenhar();
+        }).catch(function (e) {
+            rec.carregando = false; rec.erro = String(e && e.message || e); rec.carregado = false; recRedesenhar();
+        });
+    }
+
+    function recDias(n) { return NUM.format(n) + (n === 1 ? ' dia' : ' dias'); }
+
+    function recRedesenhar() {
+        abasParaRedesenhar.clientes = true;
+        desenharAbaSeSuja(abaAtual);
+    }
+
+    // Data de hoje em São Paulo (YYYY-MM-DD).
+    function recHoje() {
+        try {
+            var s = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+            if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+        } catch (e) { /* sem Intl com fuso: usa o relógio local */ }
+        return giroIsoHoje();
+    }
+    function recAtraso(venc, hoje) {
+        var v = String(venc || '').slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return 0;
+        return Math.max(0, Math.floor((giroDiaUtc(hoje) - giroDiaUtc(v)) / 86400000));
+    }
+    function recCnpj(d) {
+        return d.length === 14 ? d.slice(0, 2) + '.' + d.slice(2, 5) + '.' + d.slice(5, 8) + '/' + d.slice(8, 12) + '-' + d.slice(12) : d;
+    }
+
+    // Agrega por CNPJ (documento normalizado); PF e sem documento viram uma linha cada. Memoizado por linhas + dia.
+    function recAgregar() {
+        var hoje = recHoje();
+        if (rec.memo && rec.memo.l === rec.linhas && rec.memo.h === hoje && rec.memo.s === scli.lista) return rec.memo.r;
+        var nomes = {};
+        if (scli.carregado && !scli.erro && !scli.ausente) scli.lista.forEach(function (c) {
+            if (String(c.tipo || '').toLowerCase() !== 'cnpj') return;
+            var d = docNorm(c.documento, 'cnpj'); if (d && c.nome) nomes[d] = String(c.nome);
+        });
+        var por = {}, tot = { aberto: 0, vencido: 0, parcelas: 0 }, pf = null, sd = null;
+        function novo(tipo, doc) { return { tipo: tipo, doc: doc, nome: null, aberto: 0, vencido: 0, atraso: 0, prox: null, n: 0, parcelas: [] }; }
+        rec.linhas.forEach(function (l) {
+            var tipo = String(l.tipo || '').toLowerCase(), v = vendNum(l.valor_aberto_centavos), at = recAtraso(l.vencimento, hoje), venc = String(l.vencimento || '').slice(0, 10);
+            var g;
+            if (tipo === 'cnpj' && docNorm(l.documento, 'cnpj')) {
+                var d = docNorm(l.documento, 'cnpj');
+                g = por[d] || (por[d] = novo('cnpj', d));
+                g.parcelas.push({ l: l, atraso: at });
+            } else if (tipo === 'pf') { g = pf || (pf = novo('pf', null)); }
+            else { g = sd || (sd = novo('sd', null)); }
+            g.aberto += v; g.n++; tot.aberto += v; tot.parcelas++;
+            if (at > 0) { g.vencido += v; tot.vencido += v; if (at > g.atraso) g.atraso = at; }
+            else if (venc && (!g.prox || venc < g.prox)) g.prox = venc;
+        });
+        var cnpjs = Object.keys(por).map(function (d) { var g = por[d]; g.nome = nomes[d] || null; return g; });
+        cnpjs.sort(function (a, b) { return b.vencido - a.vencido || b.aberto - a.aberto || String(a.nome || a.doc).localeCompare(String(b.nome || b.doc)); });
+        var r = { hoje: hoje, tot: tot, cnpjs: cnpjs, pf: pf, sd: sd, porDoc: por };
+        rec.memo = { l: rec.linhas, h: hoje, s: scli.lista, r: r };
+        return r;
+    }
+
+    function recIdadeTxt(ms) {
+        var m = Math.floor(ms / 60000);
+        if (m < 1) return 'menos de 1 min';
+        if (m < 60) return m + ' min';
+        var h = Math.floor(m / 60);
+        return h < 48 ? h + ' h' : Math.floor(h / 24) + ' dias';
+    }
+
+    function recCabecalho(A) {
+        var ok = rec.syncs.filter(function (s) { return s.status === 'ok'; })[0], ult = rec.syncs[0];
+        var quando = ok ? new Date(ok.coletado_em || ok.em).getTime() : NaN;
+        var idade = isFinite(quando) ? Date.now() - quando : null;
+        var atras = idade != null && idade > REC_STALE_MS, erro = !!ult && ult.status !== 'ok';
+        var linha = ok && idade != null ? 'Atualizado há ' + recIdadeTxt(idade) + ' (' + dataHora(ok.coletado_em || ok.em) + ')' : 'Sem atualização registrada ainda';
+        var aviso = '';
+        if (erro) aviso = 'A última atualização falhou' + (ult.mensagem ? ': ' + String(ult.mensagem).slice(0, 300) : '') + '. Os valores abaixo podem estar desatualizados.';
+        else if (atras) aviso = 'Os dados têm mais de 2 horas: a rotina de contas a receber pode estar parada.';
+        else if (!ok) aviso = 'Nenhuma atualização com sucesso registrada: os valores podem estar incompletos.';
+        return '<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">' +
+            resKpi('Total em aberto', brl(A.tot.aberto), 'parcelas ainda não pagas') +
+            resKpi('Total vencido', brl(A.tot.vencido), A.tot.aberto > 0 ? giroFmt(A.tot.vencido / A.tot.aberto * 100, 1) + '% do em aberto' : '') +
+            resKpi('Parcelas', NUM.format(A.tot.parcelas), 'em aberto') +
+            resKpi('Clientes (CNPJ)', NUM.format(A.cnpjs.length), 'com parcela em aberto') + '</div>' +
+            '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">' + esc(linha) + '</p>' +
+            (aviso ? '<div class="adm-card p-4 mb-4" role="alert" style="border-color:rgba(239,68,68,.45)"><p class="text-sm"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:#FCA5A5"></i>' + esc(aviso) + '</p></div>' : '');
+    }
+
+    function recMoeda(v) { return v == null ? '—' : esc(brl(vendNum(v))); }
+
+    function recParcelas(g) {
+        var ps = g.parcelas.slice().sort(function (a, b) { return String(a.l.vencimento).localeCompare(String(b.l.vencimento)); });
+        return '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Vencimento</th><th>Título</th><th>Nota</th><th class="num">Valor</th><th class="num">Mora</th><th class="num">Multa</th><th class="num">Desconto</th><th>Categoria</th><th class="num">Atraso</th></tr></thead><tbody>' +
+            ps.map(function (p) {
+                var l = p.l;
+                return '<tr><td>' + esc(giroFmtData(String(l.vencimento).slice(0, 10))) + '</td><td>' + esc(l.documento_titulo || '—') + '</td><td>' + esc(l.cd_nota == null ? '—' : l.cd_nota) + '</td>' +
+                    '<td class="num">' + recMoeda(l.valor_aberto_centavos) + '</td><td class="num">' + recMoeda(l.valor_mora_centavos) + '</td><td class="num">' + recMoeda(l.valor_multa_centavos) + '</td>' +
+                    '<td class="num">' + recMoeda(l.valor_desconto_centavos) + '</td><td>' + esc(l.categoria || '—') + '</td><td class="num">' + (p.atraso > 0 ? esc(recDias(p.atraso)) : '—') + '</td></tr>';
+            }).join('') + '</tbody></table></div>';
+    }
+
+    function recLinhaAgregada(g, rotulo) {
+        return '<tr><td>' + esc(rotulo + ' (' + NUM.format(g.n) + (g.n === 1 ? ' parcela)' : ' parcelas)')) + '</td><td class="num">' + esc(brl(g.aberto)) + '</td><td class="num">' + esc(brl(g.vencido)) + '</td>' +
+            '<td class="num">' + (g.atraso > 0 ? esc(recDias(g.atraso)) : '—') + '</td><td>' + (g.prox ? esc(giroFmtData(g.prox)) : '—') + '</td><td class="num">' + NUM.format(g.n) + '</td><td></td></tr>';
+    }
+
+    function desenharClientesFinanceiro() {
+        var alvo = $('#clientes-financeiro');
+        if (!alvo) return;
+        if (papel !== 'admin' || rec.ausente) { alvo.innerHTML = ''; return; } // sem permissão ou sem a 030: bloco não aparece
+        var cab = '<div class="flex items-center gap-2 mb-2">' + SELO_ERP + '<p class="font-bold">Financeiro — contas a receber</p></div>';
+        if (rec.erro && !rec.carregando) {
+            alvo.innerHTML = cab + '<div class="adm-card p-6"><p class="text-sm mb-3" style="color:var(--adm-tinta-2)">Não foi possível carregar as contas a receber: ' + esc(rec.erro) + '</p>' +
+                '<button type="button" class="adm-botao-fantasma" data-rec-tentar="1">Tentar de novo</button></div>';
+            return;
+        }
+        if (!rec.carregado) {
+            alvo.innerHTML = cab + '<div class="adm-card p-6 text-center text-sm" style="color:var(--adm-tinta-2)"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando contas a receber…</div>';
+            return;
+        }
+        if (rec.truncado) {
+            alvo.innerHTML = cab + '<div class="adm-card p-6" role="alert" style="border-color:rgba(239,68,68,.45)"><p class="text-sm"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:#FCA5A5"></i>' +
+                'Contas a receber indisponíveis: o limite de ' + esc(NUM.format(REC_LIMITE)) + ' parcelas foi atingido e os totais ficariam incompletos.</p></div>';
+            return;
+        }
+        var A = recAgregar();
+        if (!rec.linhas.length) {
+            alvo.innerHTML = cab + recCabecalho(A) + '<div class="adm-card p-5"><p class="text-sm" style="color:var(--adm-tinta-3)">Nenhuma parcela em aberto.</p></div>';
+            return;
+        }
+        var vis = A.cnpjs.slice(0, rec.mostrar);
+        alvo.innerHTML = cab + recCabecalho(A) +
+            '<div class="adm-card p-5"><div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Cliente</th><th class="num">Em aberto</th><th class="num">Vencido</th><th class="num">Maior atraso</th><th>Próx. vencimento</th><th class="num">Parcelas</th><th></th></tr></thead><tbody>' +
+            vis.map(function (g, i) {
+                var aberto = !!rec.abertos[g.doc], nome = g.nome || recCnpj(g.doc);
+                return '<tr><td>' + esc(nome) + (g.nome ? '<br><span class="text-xs" style="color:var(--adm-tinta-3)">' + esc(recCnpj(g.doc)) + '</span>' : '') + '</td>' +
+                    '<td class="num">' + esc(brl(g.aberto)) + '</td><td class="num"' + (g.vencido > 0 ? ' style="color:#FCA5A5"' : '') + '>' + esc(brl(g.vencido)) + '</td>' +
+                    '<td class="num">' + (g.atraso > 0 ? esc(recDias(g.atraso)) : '—') + '</td><td>' + (g.prox ? esc(giroFmtData(g.prox)) : '—') + '</td><td class="num">' + NUM.format(g.n) + '</td>' +
+                    '<td><button type="button" class="adm-botao-fantasma" data-rec-i="' + i + '" aria-expanded="' + aberto + '"><i class="fa-solid ' + (aberto ? 'fa-chevron-up' : 'fa-chevron-down') + ' mr-1"></i>Parcelas</button></td></tr>' +
+                    (aberto ? '<tr><td colspan="7">' + recParcelas(g) + '</td></tr>' : '');
+            }).join('') +
+            (A.pf ? recLinhaAgregada(A.pf, 'Pessoa física') : '') + (A.sd ? recLinhaAgregada(A.sd, 'Sem documento') : '') +
+            '</tbody></table></div>' +
+            '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">' + NUM.format(vis.length) + ' de ' + NUM.format(A.cnpjs.length) + ' clientes CNPJ, ordenados pelo maior valor vencido. Pessoa física e parcelas sem documento aparecem somadas, sem identificação. Atraso calculado pelo vencimento (horário de São Paulo).</p>' +
+            (A.cnpjs.length > vis.length ? '<button type="button" class="adm-botao-fantasma mt-3" data-rec-mais="1">Mostrar mais</button>' : '') + '</div>';
+        alvo.querySelectorAll('[data-rec-i]').forEach(function (b) { b.setAttribute('data-rec-doc', vis[Number(b.getAttribute('data-rec-i'))].doc); });
+    }
+
+    // Delegação única no bloco (preservada entre redesenhos porque o ouvinte fica no contêiner fixo).
+    function recLigar(alvo) {
+        alvo.addEventListener('click', function (ev) {
+            var b = ev.target.closest('[data-rec-i]');
+            if (b) { var d = b.getAttribute('data-rec-doc'); if (d) { rec.abertos[d] = !rec.abertos[d]; desenharClientesFinanceiro(); } return; }
+            if (ev.target.closest('[data-rec-mais]')) { rec.mostrar += REC_POR_PAGINA; desenharClientesFinanceiro(); return; }
+            if (ev.target.closest('[data-rec-tentar]') && !rec.carregando) carregarReceber();
+        });
+    }
+
+    // Resumo do cliente PJ (aba Clientes, linha de detalhe); vazio se não houver dado.
+    function recFichasDoCliente(c) {
+        if (papel !== 'admin' || c.tipo !== 'PJ' || !rec.carregado || rec.erro || rec.ausente || rec.truncado) return '';
+        var d = docNorm(c.cnpj, 'cnpj'), g = d ? recAgregar().porDoc[d] : null;
+        if (!g) return '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Financeiro (ERP): nenhuma parcela em aberto.</p>';
+        return '<div class="grid sm:grid-cols-3 gap-4 mb-4">' + ficha('Em aberto (ERP)', brl(g.aberto), NUM.format(g.n) + (g.n === 1 ? ' parcela' : ' parcelas')) +
+            ficha('Vencido (ERP)', brl(g.vencido), g.atraso > 0 ? 'maior atraso: ' + recDias(g.atraso) : 'nada vencido') +
+            ficha('Próx. vencimento', g.prox ? giroFmtData(g.prox) : '—', 'contas a receber') + '</div>';
     }
 
     /* ===================================================================
@@ -5229,6 +5432,7 @@
                 ficha('Total comprado', brl(c.gasto), 'confirmado + entregue') +
                 ficha('Ticket médio', brl(c.ticket), 'por pedido fechado') +
             '</div>' +
+            recFichasDoCliente(c) +
             (c.telefone || c.email
                 ? '<p class="text-sm mb-4">' + esc(c.telefone) + (c.email ? ' · ' + esc(c.email) : '') + '</p>'
                 : '') +

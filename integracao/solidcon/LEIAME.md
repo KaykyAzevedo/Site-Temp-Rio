@@ -453,9 +453,8 @@ O que já vem protegido:
   no painel. Essa conferência é uma trava a mais: a garantia de verdade é a
   **confirmação do DBA da SOLIDCON** (Passo 0).
 - As consultas ficam escritas dentro do script; nenhuma vem de fora. Cada módulo
-  só roda se a consulta for **idêntica** à que foi aprovada na revisão (nesta
-  etapa só existe a do `SELECT 1`). Uma lista fixa diz quais views podem ser
-  lidas (nesta etapa: nenhuma). Qualquer outra coisa é recusada antes de conectar.
+  só roda se a consulta for **idêntica** à que foi aprovada na revisão. Uma
+  lista fixa diz quais views podem ser lidas (veja cada módulo: 030 em diante). Qualquer outra coisa é recusada antes de conectar.
 - Tem **configuração própria** (`config-banco.json`, com o seu próprio `modo`).
   O `config.json` do `sync-produtos` **não é alterado**: o novo coletor só lê
   dele a conta de integração do Supabase, e só quando estiver em modo real.
@@ -601,6 +600,7 @@ nova deve ter `OK saude` e `status=ok`.
 | 0 | Tudo certo |
 | 1 | Configuração, pasta ou outra execução em andamento (veja a última linha `ERRO fase=` no log) |
 | 2 | Saúde: o banco não respondeu, ou a batida não chegou ao Supabase (veja `motivo=` ou `fase=` no log) |
+| 3 | Contas a receber (seção 030): consulta, conferência ou envio recusado (veja `ERRO receber` no log) |
 | 267009 | A tarefa ainda está rodando; consulte de novo em alguns segundos |
 
 Módulos futuros ganham os próximos códigos (3, 4, ...); vale o do primeiro módulo que falhar.
@@ -654,3 +654,78 @@ para `"modo": "teste"` no mesmo arquivo.
   automática como trava a mais. A conferência só enxerga o que o próprio login
   enxerga e não foi testada contra o SQL Server real antes da implantação.
 - O banco guarda 30 dias de batidas (a limpeza é feita pela própria RPC).
+
+## 030 — Contas a receber por cliente (módulo `receber` do sync-banco) (NÃO IMPLANTADA)
+
+Segundo módulo do `sync-banco.ps1`. Uma vez por hora (dentro da mesma tarefa de
+5 minutos; depois de um erro, tenta de novo em 15 minutos), lê as **parcelas em
+aberto da filial 4** e substitui por inteiro o espelho `solidcon_receber` no
+Supabase. As outras filiais do grupo nunca saem do banco: o filtro
+`Codigo_Filial = 4` está dentro das consultas aprovadas.
+
+Views lidas (as únicas liberadas no script):
+
+| View | Para quê | Campos usados |
+|---|---|---|
+| `dbo.VW_RDUPHOLD_CONTASRECEBER_ABERTO` | parcelas abertas | cdConta, Documento (nº do título), Vencimento, Valor_Parcela_Aberto, Valor_Fatura, Valor_Pago, Valor_Parcela_Mora/Multa/Desconto, nmReceDesp (categoria), cdNota, Codigo_Fornecedor |
+| `dbo.VW_MGN_PARCEIRO` | CNPJ do cliente | CodigoParceiro, CNPJ — **só** dos parceiros que têm parcela aberta na filial 4 |
+
+O que **não** é lido nem enviado: `Historico` (texto livre, pode ter dado
+pessoal), nome do cliente (`Fornecedor`; o painel usa o nome de
+`solidcon_clientes` pelo CNPJ), `Comprador`, `Filial`.
+
+Como cada parcela é classificada:
+
+- **CNPJ válido** (14 dígitos, dígitos verificadores certos): vai com o CNPJ, o
+  código do parceiro, o nº do título e da nota. O painel casa com
+  `solidcon_clientes.documento`.
+- **Pessoa física** (11 dígitos): vai **sem** CPF, sem código do parceiro, sem
+  título e sem nota. Só vencimento, valores e categoria (entra no total como
+  "pessoa física", sem identificar ninguém).
+- **Sem documento** (parceiro sem CNPJ válido, código com dois documentos
+  diferentes ou parceiro não encontrado): vai sem CNPJ e sem código do parceiro.
+
+Cada parcela tem um `id` estável (hash de conta + vencimento + título). Duas
+linhas iguais na view fazem a coleta **falhar** (nada é enviado), para não
+contar valor em dobro. Valores em centavos, arredondamento de metade para longe
+do zero; valor negativo ou vencimento inválido também falham a coleta.
+
+No Supabase (RPC `solidcon_receber_contas_receber`, só a conta de integração):
+
+- Confere campo a campo (lista exata), CNPJ com dígito verificador, PF sem
+  identificação, valores inteiros ≥ 0, datas válidas, sem `id` repetido.
+- Recusa coleta mais antiga que a última aceita, a mesma execução duas vezes,
+  coleta de mais de 24 h ou no futuro.
+- **Trava de sanidade:** com 20 ou mais parcelas no espelho, recusa uma coleta
+  que traga menos de 30% delas (mais provável falha na origem do que pagamento
+  em massa). Abaixo de 20, aceita até zero (tudo pago).
+- `dias_atraso` é calculado na hora da coleta (data de São Paulo); o painel pode
+  recalcular a partir de `vencimento`.
+- Leitura só para a equipe (`eh_equipe()`); anon nada. Log de coletas em
+  `solidcon_receber_sync` (só contagens e total), guardado por 90 dias.
+
+### Instalar o módulo
+
+1. O Tech Lead aplica a **030** no Supabase (depois da 029).
+2. Copie o `sync-banco.ps1` novo por cima do antigo em `C:\TempRio\solidcon\`.
+   Nada muda no `config-banco.json`, na senha nem na tarefa agendada.
+3. Para testar já, sem esperar a hora cheia (em `"modo": "teste"` nada vai ao
+   Supabase; o lote que seria enviado fica em `banco-receber-teste.json` na pasta
+   de saída — **apague esse arquivo depois de conferir**, ele tem CNPJs e valores):
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\TempRio\solidcon\sync-banco.ps1 -Config C:\TempRio\solidcon\config-banco.json -Forcar
+```
+
+4. No log deve aparecer `OK receber ... linhas=N cnpj=... pf=... sem_documento=...`.
+   A linha nunca tem CNPJ, nome nem valor.
+
+O módulo usa o código de saída **3** (vale o do primeiro módulo que falhar:
+2 saúde, depois 3 receber). Motivos no log: `fase=consulta` (banco),
+`fase=normalizacao` (`parcelas repetidas na view` ou `parcela com conta,
+vencimento ou valor invalido`), `fase=rpc motivo=...` (recusa do Supabase, por
+exemplo `queda_superior_70_porcento`).
+
+Pendente (opcional da etapa 2): o indicador "costuma pagar atrasado" por mês, a
+partir de `VW_MLP_CONTAS_A_RECEBER`, precisa do nome exato da coluna de filial
+dessa view (não está na especificação). Fica para quando for confirmado.
