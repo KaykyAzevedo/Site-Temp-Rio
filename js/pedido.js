@@ -213,7 +213,11 @@
         var d;
         try { d = JSON.parse(bruto); } catch (e) { return; }
         if (!d || typeof d !== 'object') return;
+        preencherFormulario(d);
+    }
 
+    // Usado pelo rascunho e pelo "cliente salvo neste aparelho".
+    function preencherFormulario(d) {
         var caixa = document.getElementById('f-ieIsento');
         if (caixa) caixa.checked = !!d.ieIsento;
 
@@ -839,6 +843,16 @@
         var envio = montarEnvio(comNotaDeDisplay(lerFormulario()));
         if (!envio) return;
 
+        // Memória do aparelho (js/pedido-memoria.js): o último pedido sempre; o
+        // cliente só com a caixa marcada. Nada disso sai do navegador.
+        if (window.PedidoMemoria) {
+            var dadosAparelho = lerFormulario();
+            dadosAparelho.ieIsento = isentoDeIE();
+            var guardar = document.getElementById('f-guardarAparelho');
+            PedidoMemoria.guardarEnvio(dadosAparelho, Cart.itens(), !guardar || guardar.checked);
+            montarClientesSalvos();
+        }
+
         // Registra o pedido no painel. Sem await de propósito: o que importa
         // para o cliente é a mensagem do WhatsApp, e uma falha de rede aqui não
         // pode travar o envio. O que não subir fica na fila do TempRioDB e sobe
@@ -1265,6 +1279,91 @@
     }
 
     /* ===================================================================
+     * Clientes salvos só neste aparelho
+     *
+     * Escolher um cliente preenche os ~15 campos; "Repetir o último pedido
+     * deste cliente" troca o carrinho pelo último pedido dele (esgotados e
+     * sabores fora do catálogo ficam de fora, com aviso). Apagar remove do
+     * aparelho. Nada é enviado: é só o localStorage deste navegador.
+     * =================================================================== */
+    function mascaraCnpjExibicao(d) {
+        var x = String(d || '').replace(/\D/g, '');
+        return x.length === 14 ? x.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5') : x;
+    }
+
+    function clienteEscolhido() {
+        var sel = document.getElementById('cs-select');
+        return sel && sel.value && window.PedidoMemoria ? PedidoMemoria.cliente(sel.value) : null;
+    }
+
+    function avisarCs(msg) {
+        var s = document.getElementById('cs-status');
+        if (s) s.textContent = msg;
+        CartUI.toast(msg);
+    }
+
+    function atualizarBotoesCs() {
+        var c = clienteEscolhido();
+        var rep = document.getElementById('cs-repetir');
+        if (rep) rep.hidden = !(c && c.ultimoPedido && c.ultimoPedido.itens.length);
+    }
+
+    function montarClientesSalvos() {
+        var bloco = document.getElementById('clientes-salvos');
+        var sel = document.getElementById('cs-select');
+        if (!bloco || !sel || !window.PedidoMemoria) return;
+        var lista = PedidoMemoria.clientes();
+        bloco.hidden = lista.length === 0;
+        var atual = sel.value;
+        sel.innerHTML = '<option value="">Escolha um cliente…</option>' + lista.map(function (c) {
+            var nome = c.dados.razaoSocial || 'Sem razão social';
+            return '<option value="' + esc(c.cnpj) + '">' + esc(nome + ' · ' + mascaraCnpjExibicao(c.cnpj)) + '</option>';
+        }).join('');
+        if (atual && lista.some(function (c) { return c.cnpj === atual; })) sel.value = atual;
+        atualizarBotoesCs();
+    }
+
+    function ligarClientesSalvos() {
+        var sel = document.getElementById('cs-select');
+        if (!sel || !window.PedidoMemoria) return;
+        sel.addEventListener('change', atualizarBotoesCs);
+
+        document.getElementById('cs-preencher').addEventListener('click', function () {
+            var c = clienteEscolhido();
+            if (!c) { avisarCs('Escolha um cliente na lista.'); sel.focus(); return; }
+            preencherFormulario(c.dados);
+            salvarRascunho();
+            Object.keys(REGRAS).forEach(function (nome) { if (inputDe(nome) && inputDe(nome).value) validarCampo(nome); });
+            avisarCs('Dados de ' + (c.dados.razaoSocial || 'cliente') + ' preenchidos. Confira antes de enviar.');
+        });
+
+        document.getElementById('cs-repetir').addEventListener('click', function () {
+            var c = clienteEscolhido();
+            if (!c || !c.ultimoPedido) return;
+            var r = PedidoMemoria.carregarNoCarrinho(c.ultimoPedido.itens);
+            var msg = r.carregados + (r.carregados === 1 ? ' sabor carregado.' : ' sabores carregados.');
+            if (r.pulados.length) msg += ' Ficaram de fora (esgotado ou fora do catálogo): ' + r.pulados.join(', ') + '.';
+            avisarCs(msg);
+        });
+
+        document.getElementById('cs-apagar').addEventListener('click', function () {
+            var c = clienteEscolhido();
+            if (!c) { avisarCs('Escolha um cliente na lista.'); sel.focus(); return; }
+            PedidoMemoria.apagarCliente(c.cnpj);
+            montarClientesSalvos();
+            avisarCs('Cliente apagado deste aparelho.');
+        });
+
+        document.getElementById('cs-apagar-tudo').addEventListener('click', function () {
+            PedidoMemoria.apagarTudo();
+            montarClientesSalvos();
+            avisarCs('Clientes e último pedido apagados deste aparelho.');
+        });
+
+        montarClientesSalvos();
+    }
+
+    /* ===================================================================
      * Boot
      * =================================================================== */
     function iniciar() {
@@ -1337,6 +1436,7 @@
         uf.addEventListener('change', salvarRascunho);
 
         carregarRascunho();
+        ligarClientesSalvos();
 
         // As regiões podem vir do banco depois do carregamento da página. Se
         // vierem diferentes do arquivo local, taxa e prazo mudam — então a tela

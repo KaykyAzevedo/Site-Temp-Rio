@@ -48,6 +48,7 @@
     <link rel="stylesheet" href="./css/animations.css">
     <link rel="stylesheet" href="./css/cart.css">
     <link rel="stylesheet" href="./css/glass.css">
+    <link rel="stylesheet" href="./css/pedido-rapido.css">
 
     <style>
         /* CSS specific to product modal which was mostly inline previously */
@@ -97,6 +98,12 @@
                     </a>
                 </div>
                 
+                <!-- Modo de exibicao: catalogo com fotos (padrao) ou lista compacta para o vendedor. -->
+                <div class="pr-modos mb-6" role="group" aria-label="Modo de exibição do catálogo">
+                    <button type="button" class="pr-modo" data-modo="catalogo" aria-pressed="true"><i class="fa-solid fa-table-cells-large" aria-hidden="true"></i> Catálogo</button>
+                    <button type="button" class="pr-modo" data-modo="rapido" aria-pressed="false"><i class="fa-solid fa-list-check" aria-hidden="true"></i> Pedido rápido</button>
+                </div>
+
                 <!-- Search Bar -->
                 <div class="mb-12 relative max-w-xl fade-in" style="z-index: 10;">
                     <div class="relative">
@@ -117,6 +124,20 @@
                 <p id="ordenacao-aviso" class="text-xs uppercase tracking-widest font-bold text-primary-500 mb-6 flex items-center gap-2 fade-in">
                     <i class="fa-solid fa-ranking-star"></i> Mais vendidos nos últimos 90 dias
                 </p>
+
+                <!-- Pedido rapido: lista compacta sem foto (js/pedido-rapido.js). -->
+                <div id="pedido-rapido" class="pr-raiz" hidden>
+                    <div id="pr-repetir" class="mb-4" hidden>
+                        <button type="button" id="pr-repetir-botao" class="pr-repetir" aria-live="polite"></button>
+                    </div>
+                    <div id="pr-chips" class="pr-chips" role="group" aria-label="Filtrar sabores">
+                        <button type="button" class="pr-chip" data-filtro="todos" aria-pressed="true">Todos</button>
+                        <button type="button" class="pr-chip" data-filtro="vendidos" aria-pressed="false">Mais vendidos</button>
+                        <button type="button" class="pr-chip" data-filtro="pedido" aria-pressed="false">No pedido (0)</button>
+                    </div>
+                    <ul id="pr-lista" class="pr-lista" aria-label="Sabores e caixas no pedido"></ul>
+                    <p id="pr-vazio" class="pr-vazio" hidden></p>
+                </div>
 
                 <!-- Carregado via JS -->
                 <div class="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6" id="catalogGrid">
@@ -236,9 +257,24 @@
 
 
     <!-- Scripts -->
+    <!-- Barra do pedido rapido: so aparece nesse modo. -->
+    <div id="pr-barra" class="pr-barra" hidden>
+        <div class="pr-barra-interna">
+            <div class="pr-barra-texto">
+                <p id="pr-barra-resumo" class="pr-barra-resumo" aria-live="polite"></p>
+                <div class="cart-progresso" role="progressbar" aria-label="Progresso até o pedido mínimo" aria-valuemin="0" aria-valuemax="480" aria-valuenow="0">
+                    <div id="pr-barra-progresso" class="cart-progresso-barra"></div>
+                </div>
+            </div>
+            <a href="pedido.html" class="pr-barra-botao">Revisar pedido · <span id="pr-barra-valor">R$ 0,00</span></a>
+        </div>
+    </div>
+
     <script src="./js/main.js"></script>
     <script src="./js/product-modal.js"></script>
     <script src="./js/cart-ui.js"></script>
+    <script src="./js/pedido-memoria.js"></script>
+    <script src="./js/pedido-rapido.js"></script>
     <script src="./js/content-loader.js"></script>
 
     <!-- Pop-up de pre-registro: 3s depois de carregar, uma vez por navegador. -->

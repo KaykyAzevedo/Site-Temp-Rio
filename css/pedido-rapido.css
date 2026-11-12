@@ -1,0 +1,236 @@
+/* Catálogo — modo "Pedido rápido" (js/pedido-rapido.js).
+ * Mesmas cores e fontes do site (laranja #F28C52/#F5A474, superfície #1A1A1A,
+ * bordas rgba(255,255,255,0.08), Lato/Barlow Condensed). Alvos de toque >= 44px. */
+
+:root { --pr-barra-altura: 84px; }
+
+/* ---------- alternador Catálogo | Pedido rápido ---------- */
+.pr-modos {
+    display: inline-flex;
+    padding: 4px;
+    gap: 4px;
+    border-radius: 999px;
+    background-color: #1A1A1A;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.pr-modo {
+    min-height: 44px;
+    padding: 0 18px;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: #BFBFBF;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: background-color 0.2s ease, color 0.2s ease;
+}
+.pr-modo:hover { color: #FFFFFF; }
+/* Texto escuro sobre o laranja: branco em #F28C52 da 2,4:1; #0D0D0D da ~8:1 (e ~5,9:1 no hover #D96E30). */
+.pr-modo[aria-pressed="true"] { background-color: #F28C52; color: #0D0D0D; }
+.pr-modo:focus-visible,
+.pr-chip:focus-visible,
+.pr-botao:focus-visible,
+.pr-repetir:focus-visible,
+.pr-barra-botao:focus-visible { outline: 2px solid #F5A474; outline-offset: 2px; }
+
+/* No modo rápido some a grade com fotos (e o que só faz sentido nela). */
+body.modo-rapido #catalogGrid,
+body.modo-rapido #ordenacao-aviso,
+body.modo-rapido #vitrine-secao,
+body.modo-rapido #cart-fab { display: none !important; }
+
+/* A barra fixa não pode cobrir o fim da página nem o toast. */
+body.modo-rapido { padding-bottom: calc(var(--pr-barra-altura) + env(safe-area-inset-bottom, 0px)); }
+body.modo-rapido .cart-toast { bottom: calc(var(--pr-barra-altura) + 16px + env(safe-area-inset-bottom, 0px)); }
+body.modo-rapido .whatsapp-float { bottom: calc(var(--pr-barra-altura) + 20px + env(safe-area-inset-bottom, 0px)); }
+/* No celular o botão do WhatsApp cobriria o "+" das linhas: some só neste modo. */
+@media (max-width: 767px) {
+    body.modo-rapido .whatsapp-float { display: none; }
+}
+
+/* ---------- repetir último pedido ---------- */
+.pr-repetir {
+    width: 100%;
+    min-height: 48px;
+    padding: 10px 16px;
+    border-radius: 0.75rem;
+    border: 1px solid rgba(242, 140, 82, 0.4);
+    background-color: rgba(242, 140, 82, 0.1);
+    color: #F5A474;
+    font-weight: 700;
+    font-size: 0.85rem;
+    text-align: left;
+}
+.pr-repetir:hover { background-color: rgba(242, 140, 82, 0.18); }
+
+/* ---------- chips ---------- */
+.pr-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.pr-chip {
+    min-height: 44px;
+    padding: 0 16px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background-color: #1A1A1A;
+    color: #BFBFBF;
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+.pr-chip[aria-pressed="true"] { border-color: #F28C52; color: #FFFFFF; background-color: rgba(242, 140, 82, 0.15); }
+.pr-chip[hidden] { display: none; }
+
+/* ---------- lista ---------- */
+.pr-lista {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.75rem;
+    background-color: #1A1A1A;
+    overflow: hidden;
+}
+.pr-linha {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 12px;
+    min-height: 60px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.pr-linha:first-child { border-top: 0; }
+.pr-linha.is-no-pedido { background-color: rgba(242, 140, 82, 0.06); }
+.pr-info { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pr-nome {
+    color: #FFFFFF;
+    font-weight: 700;
+    font-size: 0.95rem;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+}
+.pr-sub { color: #BFBFBF; font-size: 0.72rem; }
+.pr-sub-esgotado {
+    color: #F5A474;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    /* link pequeno, mas com área de toque de 44px */
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    margin: -12px 0;
+}
+.pr-linha.is-esgotado .pr-nome { color: #BFBFBF; }
+
+.pr-controle { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.pr-botao {
+    width: 44px;
+    height: 44px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #FFFFFF;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+.pr-botao:hover:not(:disabled) { border-color: #F28C52; }
+.pr-botao[data-pr="mais"]:not(:disabled) { background-color: #F28C52; border-color: #F28C52; color: #0D0D0D; }
+.pr-botao[data-pr="mais"]:hover:not(:disabled) { background-color: #D96E30; }
+.pr-botao:disabled { opacity: 0.35; cursor: not-allowed; }
+.pr-numero {
+    width: 3.25rem;
+    height: 44px;
+    text-align: center;
+    font-weight: 700;
+    font-size: 1rem;
+    color: #FFFFFF;
+    background-color: #111111;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.5rem;
+    outline: none;
+}
+.pr-numero:focus { border-color: #F28C52; }
+.pr-numero:disabled { opacity: 0.35; }
+
+.pr-vazio { padding: 24px 12px; text-align: center; color: #BFBFBF; font-size: 0.9rem; }
+.pr-vazio[hidden], .pr-raiz[hidden], .pr-barra[hidden], #pr-repetir[hidden] { display: none; }
+
+/* ---------- barra fixa inferior ---------- */
+.pr-barra {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1001;
+    background-color: rgba(13, 13, 13, 0.96);
+    border-top: 1px solid rgba(242, 140, 82, 0.3);
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));
+    box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.5);
+}
+.pr-barra-interna {
+    max-width: 80rem;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.pr-barra-texto { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.pr-barra-resumo { color: #FFFFFF; font-size: 0.8rem; font-weight: 700; line-height: 1.25; }
+.pr-barra-botao {
+    flex-shrink: 0;
+    min-height: 48px;
+    padding: 0 16px;
+    border-radius: 999px;
+    background-color: #F28C52;
+    color: #0D0D0D;
+    font-weight: 700;
+    font-size: 0.85rem;
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+}
+.pr-barra-botao:hover { background-color: #D96E30; }
+
+@media (max-width: 380px) {
+    .pr-barra-interna { flex-direction: column; align-items: stretch; gap: 8px; }
+    .pr-barra-botao { justify-content: center; }
+    :root { --pr-barra-altura: 124px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .pr-modo, .pr-botao { transition: none; }
+}
+
+/* ---------- pedido.html: clientes salvos só neste aparelho ---------- */
+.cs-bloco {
+    padding: 16px;
+    border-radius: 0.75rem;
+    border: 1px solid rgba(242, 140, 82, 0.25);
+    background-color: rgba(242, 140, 82, 0.06);
+}
+.cs-bloco[hidden] { display: none; }
+.cs-acoes { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.cs-botao {
+    min-height: 44px;
+    padding: 0 16px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #FFFFFF;
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+.cs-botao:hover { border-color: #F28C52; }
+.cs-botao-principal { background-color: #F28C52; border-color: #F28C52; color: #0D0D0D; }
+.cs-botao-principal:hover { background-color: #D96E30; }
+.cs-botao[hidden] { display: none; }
+.cs-nota { color: #BFBFBF; font-size: 0.75rem; line-height: 1.45; }
+.cs-link {
+    color: #F5A474;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    font-size: 0.75rem;
+    min-height: 44px;
+    padding: 0 2px;
+}
+.cs-guardar { padding-top: 4px; }
+.cs-guardar .cs-nota { margin-top: 4px; padding-left: 2px; }
+.cs-botao:focus-visible, .cs-link:focus-visible { outline: 2px solid #F5A474; outline-offset: 2px; }

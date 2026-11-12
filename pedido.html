@@ -40,6 +40,7 @@
     <link rel="stylesheet" href="./css/components.css">
     <link rel="stylesheet" href="./css/animations.css">
     <link rel="stylesheet" href="./css/cart.css">
+    <link rel="stylesheet" href="./css/pedido-rapido.css">
 </head>
 
 <!-- data-cart-ui="off": esta página reusa o Cart e o toast, mas não quer o botão
@@ -133,6 +134,22 @@
                                 Usados para montar a mensagem do pedido e registrá-lo no nosso sistema.
                                 Não compartilhamos seus dados com terceiros.
                             </p>
+
+                            <!-- Clientes salvos SO neste aparelho (js/pedido-memoria.js); some quando nao ha nenhum. -->
+                            <div id="clientes-salvos" class="cs-bloco mb-6" hidden>
+                                <label for="cs-select" class="block text-xs font-bold uppercase tracking-widest text-textSecondary mb-2">Cliente salvo neste aparelho</label>
+                                <div class="relative mb-3">
+                                    <select id="cs-select" class="campo-select"></select>
+                                    <i class="fa-solid fa-chevron-down campo-seta" aria-hidden="true"></i>
+                                </div>
+                                <div class="cs-acoes">
+                                    <button type="button" id="cs-preencher" class="cs-botao cs-botao-principal">Preencher os dados</button>
+                                    <button type="button" id="cs-repetir" class="cs-botao" hidden>Repetir o último pedido deste cliente</button>
+                                    <button type="button" id="cs-apagar" class="cs-botao">Apagar este cliente</button>
+                                </div>
+                                <p class="cs-nota">Estes dados ficam guardados <strong>só neste celular/navegador</strong> e não são enviados a lugar nenhum. <button type="button" id="cs-apagar-tudo" class="cs-link">Apagar todos os clientes e o último pedido</button></p>
+                                <p id="cs-status" class="sr-only" aria-live="polite"></p>
+                            </div>
 
                             <form id="form-pedido" novalidate class="space-y-5">
 
@@ -234,6 +251,14 @@
                                 </div>
 
                                 <div id="aviso-entrega" class="cart-aviso p-4 text-sm hidden"></div>
+
+                                <div class="cs-guardar">
+                                    <label class="campo-check" for="f-guardarAparelho">
+                                        <input type="checkbox" id="f-guardarAparelho" name="guardarAparelho" checked>
+                                        <span>Guardar este cliente e o pedido <strong>só neste aparelho</strong>, para repetir depois</span>
+                                    </label>
+                                    <p class="cs-nota">Fica salvo apenas no armazenamento deste navegador; nada é enviado a outro lugar. Dá para apagar quando quiser.</p>
+                                </div>
                             </form>
                         </div>
                     </div>
@@ -320,6 +345,7 @@
     <script src="./js/main.js"></script>
     <script src="./js/cart-ui.js"></script>
     <script src="./js/validadores.js"></script>
+    <script src="./js/pedido-memoria.js"></script>
     <script src="./js/pedido.js"></script>
 </body>
 
