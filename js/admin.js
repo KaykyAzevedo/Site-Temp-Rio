@@ -415,6 +415,7 @@
         $('#btn-atualizar').addEventListener('click', function () {
             carregar();
             recarregarErp();
+            saudeAtualizar();
         });
         $('#filtro-periodo').addEventListener('change', function () { carregar(); });
 
@@ -611,9 +612,11 @@
     }
 
     function sair() {
+        saudeParar();
         if (canalRealtime) { sb.removeChannel(canalRealtime); canalRealtime = null; }
         sb.auth.signOut().then(function () {
             usuario = null;
+            saudeParar();
             mostrarTela('login');
         });
     }
@@ -625,6 +628,7 @@
         sb.rpc('meu_papel').then(function (r) {
             papel = (r.data) || null;
             aplicarPapel();
+            saudeIniciar();
             carregar();
             ligarRealtime();
         });
@@ -3936,6 +3940,154 @@
             if (t.closest('[data-mg-todos]')) { mg.todosCustos = !mg.todosCustos; desenharMargem(); return; }
             if (t.closest('[data-mg-tentar]') && !mg.carregando) carregarMargem();
         });
+    }
+
+    /* ===================================================================
+     * Banner de integração parada/falhando (topo do painel, todas as abas, só equipe)
+     * Só lê a última linha de cada *_sync (1 linha por tabela, sem dado pessoal). Tabela ausente ou erro de
+     * leitura = sem alarme (não dá para saber). Amarelo = atraso, vermelho = erro. Fechar esconde por 1 h (localStorage).
+     *  - Coletor da API (solidcon_sync): último OK > 90 min (amarelo) ou última execução com erro (vermelho).
+     *  - Coletor do banco (solidcon_banco_sync): só alerta se já houve batida; > 20 min (amarelo) ou erro (vermelho).
+     *  - Demais rotinas (vendas, clientes, ficha, histórico por cliente, insumos, pagamentos, contas a receber, margem):
+     *    só alertam quando a última tentativa é erro (a frequência de cada uma é diferente).
+     * =================================================================== */
+    var SAUDE_API_STALE_MS = 90 * 60 * 1000, SAUDE_BANCO_STALE_MS = 20 * 60 * 1000, SAUDE_INTERVALO_MS = 5 * 60 * 1000,
+        SAUDE_OCULTAR_MS = 60 * 60 * 1000, SAUDE_CHAVE = 'temprio_alerta_integracao_v1';
+    var SAUDE_SO_ERRO = [
+        ['solidcon_vendas_sync', null, 'Vendas do ERP'], ['solidcon_clientes_sync', null, 'Cadastros de clientes do ERP'],
+        ['solidcon_ficha_sync', null, 'Ficha técnica do ERP'], ['solidcon_vendas_clientes_sync', null, 'Histórico de compras por cliente'],
+        ['solidcon_insumos_sync', null, 'Estoque da fábrica'], ['solidcon_vendas_modalidade_sync', null, 'Formas de pagamento'],
+        ['solidcon_receber_sync', null, 'Contas a receber'], ['solidcon_margem_sync', 'vendas', 'Margem (vendas)'],
+        ['solidcon_margem_sync', 'custos', 'Margem (custos)']
+    ];
+    var saude = { timer: null, itens: [], nivel: 0, carregando: false, sessao: 0, oculto: null };
+
+    function saudeUltima(tabela, colunas, ordem, filtros) {
+        var q = sb.from(tabela).select(colunas);
+        (filtros || []).forEach(function (f) { q = q.eq(f[0], f[1]); });
+        return q.order(ordem, { ascending: false }).limit(1).then(
+            function (r) { return r.error ? null : ((r.data || [])[0] || null); },
+            function () { return null; });
+    }
+
+    // Ocultação: SEMPRE guardada em memória (vale na sessão mesmo sem storage) e, se der, no localStorage (vale após recarregar).
+    // Se os dois existem, vale o que expira mais tarde.
+    function saudeLerOculto() {
+        var s = null;
+        try {
+            var o = JSON.parse(localStorage.getItem(SAUDE_CHAVE) || 'null');
+            if (o && typeof o === 'object') s = { ate: Number(o.ate) || 0, nivel: Number(o.nivel) || 0 };
+        } catch (e) { /* storage bloqueado ou inválido: só a memória */ }
+        var m = saude.oculto;
+        if (m && s) return m.ate >= s.ate ? m : s;
+        return m || s;
+    }
+    function saudeGravarOculto(nivel) {
+        saude.oculto = { ate: Date.now() + SAUDE_OCULTAR_MS, nivel: nivel };
+        try { localStorage.setItem(SAUDE_CHAVE, JSON.stringify(saude.oculto)); } catch (e) { /* sem armazenamento: vale só nesta sessão */ }
+    }
+
+    // Monta a lista de problemas {nivel: 2 erro | 1 atraso, txt} a partir das últimas linhas lidas.
+    function saudeHa(ms) {
+        var m = Math.max(0, Math.floor(ms / 60000));
+        if (m < 1) return 'menos de 1 min';
+        if (m < 60) return m + ' min';
+        if (m < 48 * 60) return Math.floor(m / 60) + ' h' + (m % 60 ? ' ' + (m % 60) + ' min' : '');
+        return Math.floor(m / 1440) + ' dias';
+    }
+
+    function saudeAvaliar(d) {
+        var it = [], agora = Date.now();
+        function ha(t) { return saudeHa(agora - new Date(t).getTime()); }
+        // Coletor da API
+        if (d.api && d.api.ult && d.api.ult.status === 'erro') {
+            it.push({ nivel: 2, txt: 'Coletor da API SOLIDCON: última execução falhou há ' + ha(d.api.ult.concluido_em || d.api.ult.em || d.api.ult.coletado_em) });
+        } else if (d.api && d.api.ok) {
+            var t = new Date(d.api.ok.coletado_em || d.api.ok.concluido_em).getTime();
+            if (isFinite(t) && agora - t > SAUDE_API_STALE_MS) it.push({ nivel: 1, txt: 'Coletor da API SOLIDCON: sem execução OK há ' + saudeHa(agora - t) });
+        }
+        // Coletor do banco: só depois da primeira batida
+        if (d.banco) {
+            var tb = new Date(d.banco.em).getTime();
+            if (d.banco.status === 'erro') it.push({ nivel: 2, txt: 'Coletor do banco SOLIDCON: última batida com erro há ' + ha(d.banco.em) });
+            else if (isFinite(tb) && agora - tb > SAUDE_BANCO_STALE_MS) it.push({ nivel: 1, txt: 'Coletor do banco SOLIDCON: sem batida há ' + saudeHa(agora - tb) });
+        }
+        d.outras.forEach(function (o) {
+            if (o.linha && o.linha.status === 'erro') it.push({ nivel: 2, txt: o.rot + ': última atualização falhou há ' + ha(o.linha.em || o.linha.coletado_em) });
+        });
+        it.sort(function (a, b) { return b.nivel - a.nivel; });
+        return it;
+    }
+
+    function saudeAtualizar() {
+        if (!usuario || !papel || saude.carregando) return Promise.resolve();
+        saude.carregando = true;
+        var sessao = saude.sessao; // respostas de uma sessão antiga (logout no meio) são descartadas
+        return Promise.all([
+            saudeUltima('solidcon_sync', 'status,concluido_em,coletado_em', 'concluido_em'),
+            saudeUltima('solidcon_sync', 'status,concluido_em,coletado_em', 'concluido_em', [['status', 'ok']]),
+            saudeUltima('solidcon_banco_sync', 'status,em', 'em')
+        ].concat(SAUDE_SO_ERRO.map(function (s) { return saudeUltima(s[0], 'status,em,coletado_em', 'em', s[1] ? [['parte', s[1]]] : []); }))).then(function (rs) {
+            if (sessao !== saude.sessao) return; // sessão encerrada no meio: não publica nem mexe no estado da nova
+            saude.carregando = false;
+            var d = { api: { ult: rs[0], ok: rs[1] }, banco: rs[2], outras: SAUDE_SO_ERRO.map(function (s, i) { return { rot: s[2], linha: rs[3 + i] }; }) };
+            saude.itens = saudeAvaliar(d);
+            saude.nivel = saude.itens.reduce(function (m, i) { return Math.max(m, i.nivel); }, 0);
+            saudeDesenhar();
+        }, function () { if (sessao === saude.sessao) saude.carregando = false; });
+    }
+
+    function saudeContainer() {
+        var el = document.getElementById('alerta-integracao');
+        if (el) return el;
+        var header = document.querySelector('#tela-painel > header');
+        if (!header) return null;
+        el = document.createElement('div');
+        el.id = 'alerta-integracao';
+        el.hidden = true;
+        header.insertAdjacentElement('afterend', el);
+        el.addEventListener('click', function (ev) {
+            if (ev.target.closest('[data-alerta-fechar]')) { saudeGravarOculto(saude.nivel); saudeDesenhar(); return; }
+            if (ev.target.closest('[data-alerta-ir]')) { trocarAba('solidcon'); window.scrollTo(0, 0); }
+        });
+        return el;
+    }
+
+    function saudeDesenhar() {
+        var el = saudeContainer();
+        if (!el) return;
+        var o = saudeLerOculto();
+        if (!saude.itens.length || (o && Date.now() < o.ate && o.nivel >= saude.nivel)) { el.hidden = true; el.innerHTML = ''; return; }
+        var vermelho = saude.nivel >= 2, cor = vermelho ? '#FCA5A5' : '#FCD34D', borda = vermelho ? 'rgba(239,68,68,.55)' : 'rgba(245,158,11,.55)';
+        var fundo = vermelho ? 'rgba(239,68,68,.12)' : 'rgba(245,158,11,.12)';
+        el.className = 'max-w-7xl mx-auto px-6 pt-4';
+        el.hidden = false;
+        el.innerHTML = '<div role="alert" class="adm-card p-4 flex items-start gap-3" style="border-color:' + borda + ';background:' + fundo + '">' +
+            '<i class="fa-solid ' + (vermelho ? 'fa-circle-exclamation' : 'fa-triangle-exclamation') + ' mt-1" style="color:' + cor + '"></i>' +
+            '<div class="flex-1 min-w-0"><p class="font-bold text-sm mb-1">' + (vermelho ? 'Integração SOLIDCON com falha' : 'Integração SOLIDCON atrasada') + '</p>' +
+            '<ul class="text-sm" style="color:var(--adm-tinta-2)">' + saude.itens.slice(0, 6).map(function (i) { return '<li>' + esc(i.txt) + '</li>'; }).join('') + '</ul>' +
+            (saude.itens.length > 6 ? '<p class="text-xs mt-1" style="color:var(--adm-tinta-3)">e mais ' + NUM.format(saude.itens.length - 6) + ' aviso(s)</p>' : '') +
+            (papel === 'admin' ? '<button type="button" class="text-xs underline mt-2" style="color:' + cor + '" data-alerta-ir="1">Ver aba Integração →</button>' : '') + '</div>' +
+            '<button type="button" class="adm-botao-fantasma shrink-0" data-alerta-fechar="1" aria-label="Fechar aviso por 1 hora" title="Fechar por 1 hora"><i class="fa-solid fa-xmark"></i></button></div>';
+    }
+
+    // Encerra a sessão do banner: para o intervalo, zera o estado, esconde e invalida consultas em andamento (nova geração).
+    function saudeParar() {
+        if (saude.timer) { clearInterval(saude.timer); saude.timer = null; }
+        saude.sessao++;
+        saude.carregando = false; saude.itens = []; saude.nivel = 0; saude.oculto = null;
+        var el = document.getElementById('alerta-integracao');
+        if (el) { el.hidden = true; el.innerHTML = ''; }
+    }
+
+    // Um único intervalo por sessão (reiniciar antes de criar evita duplicar em novo login).
+    function saudeIniciar() {
+        if (saude.timer) { clearInterval(saude.timer); saude.timer = null; }
+        saudeAtualizar();
+        saude.timer = setInterval(function () {
+            if (!usuario || !papel) { saudeParar(); return; }
+            saudeAtualizar();
+        }, SAUDE_INTERVALO_MS);
     }
 
     /* ===================================================================
