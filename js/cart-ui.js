@@ -203,7 +203,7 @@
                     '<i class="fa-solid fa-box-open mr-1 opacity-70"></i>' + item.descricaoCaixas +
                 '</p>' +
 
-                '<div class="flex items-center justify-between gap-2 mt-2.5">' +
+                '<div class="flex flex-wrap items-center justify-between gap-2 mt-2.5">' +
                     '<div class="flex items-center gap-1.5">' +
                         '<button type="button" data-acao="menos" data-id="' + esc(item.id) + '"' +
                             ' aria-label="Menos ' + PASSO + ' potes" class="' + BTN_CIRCULO + '">' +
