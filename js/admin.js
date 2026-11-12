@@ -276,7 +276,11 @@
      * como texto, sem precisar de uma legenda separada só para ele. Até 6
      * fatias na cor da marca em opacidades diferentes — mais que isso e a
      * diferença de tom para de ser distinguível; o resto vira "Outras". */
-    var CORES_FATIA = ['#F28C52', '#38BDF8', '#4ADE80', '#FDE047', '#A78BFA', '#FB7185', 'rgba(255,255,255,0.25)'];
+    // Leaflet recebe cor como texto: lê o token computado (com reserva) em vez de repetir hex.
+    function corToken(nome, reserva) {
+        try { var v = getComputedStyle(document.documentElement).getPropertyValue(nome).trim(); return v || reserva; } catch (e) { return reserva; }
+    }
+    var CORES_FATIA = ['var(--adm-cat-1)', 'var(--adm-cat-2)', 'var(--adm-cat-3)', 'var(--adm-cat-4)', 'var(--adm-cat-5)', 'var(--adm-cat-6)', 'var(--adm-cat-7)'];
 
     function desenharPizza(destino, legendaDestino, dados_, opcoes) {
         opcoes = opcoes || {};
@@ -897,11 +901,11 @@
             var min = Math.max(0, Math.round(ms / 60000));
             var ha = min < 60 ? min + ' min' : (Math.floor(min / 60) + ' h' + (min % 60 ? ' ' + (min % 60) + ' min' : ''));
             if (ms > SOLID_BANCO_STALE_MS) {
-                txt = 'Banco SOLIDCON: sem batida há ' + ha; cor = '#FCA5A5';
+                txt = 'Banco SOLIDCON: sem batida há ' + ha; cor = 'var(--adm-ruim)';
             } else if (b.status === 'ok') {
                 txt = 'Banco SOLIDCON: ok há ' + ha; cor = 'var(--adm-tinta-2)';
             } else {
-                txt = 'Banco SOLIDCON: erro há ' + ha + (b.mensagem ? ' — ' + b.mensagem : ''); cor = '#FCA5A5';
+                txt = 'Banco SOLIDCON: erro há ' + ha + (b.mensagem ? ' — ' + b.mensagem : ''); cor = 'var(--adm-ruim)';
             }
         }
         return '<div class="flex items-center gap-2 mb-3 text-sm" style="color:' + cor + '">' +
@@ -935,8 +939,8 @@
                    (ok ? '<span class="text-xs" style="color:var(--adm-tinta-3)">(' + esc(dataHora(ok.coletado_em)) + ')</span>' : '') +
                '</div>' + solidLinhaBanco() +
                alertas.map(function (a) {
-                   return '<div class="adm-card p-4 mb-3 text-sm" role="alert" style="border-color:rgba(239,68,68,.45)">' +
-                          '<i class="fa-solid fa-triangle-exclamation mr-2" style="color:#FCA5A5"></i>' + esc(a) + '</div>';
+                   return '<div class="adm-card p-4 mb-3 text-sm" role="alert" style="border-color:var(--adm-ruim-borda)">' +
+                          '<i class="fa-solid fa-triangle-exclamation mr-2" style="color:var(--adm-ruim)"></i>' + esc(a) + '</div>';
                }).join('');
     }
 
@@ -1032,7 +1036,7 @@
         else {
             var cab = vendCabecalhoAtualizacao();
             vendaSaude = '<p class="text-sm mb-3" style="color:var(--adm-tinta-2)"><i class="fa-regular fa-clock mr-2"></i>Atualizado ' + esc(cab.txt) + '</p>' +
-                (cab.alerta ? '<p class="text-sm mb-3" role="alert" style="color:#FCA5A5"><i class="fa-solid fa-triangle-exclamation mr-2"></i>' + esc(cab.alerta) + '</p>' : '') +
+                (cab.alerta ? '<p class="text-sm mb-3" role="alert" style="color:var(--adm-ruim)"><i class="fa-solid fa-triangle-exclamation mr-2"></i>' + esc(cab.alerta) + '</p>' : '') +
                 (vend.syncs.length
                     ? '<div class="overflow-x-auto" style="max-height:14rem;overflow-y:auto"><table class="adm-tabela"><thead><tr>' +
                       '<th>Execução</th><th>Dia coletado</th><th>Status</th><th class="num">Linhas</th><th>Mensagem</th></tr></thead><tbody>' +
@@ -1155,7 +1159,7 @@
     }
 
     function solidSeloSituacao(itens) {
-        if (!itens.length) return '<span class="adm-selo" style="background:rgba(255,255,255,.08);color:var(--adm-tinta-2)"><i class="fa-solid fa-link-slash"></i>Sem vínculo</span>';
+        if (!itens.length) return '<span class="adm-selo adm-selo-neutro"><i class="fa-solid fa-link-slash"></i>Sem vínculo</span>';
         var vivos = itens.filter(function (p) { return !solidEsgotado(p); });
         if (!vivos.length) return '<span class="adm-selo adm-selo-cancelado"><i class="fa-solid fa-ban"></i>Esgotado</span>';
         if (vivos.every(function (p) { return Number(p.estoque_disponivel) <= solid.limite; }))
@@ -1187,7 +1191,7 @@
     function desenharVitrineErp() {
         var alvo = $('#vitrine-erp');
         if (!alvo) return;
-        var cab = '<div class="flex items-center gap-2 mb-4"><span class="adm-selo" style="background:rgba(168,85,247,.14);color:#D8B4FE">ERP SOLIDCON</span>' +
+        var cab = '<div class="flex items-center gap-2 mb-4"><span class="adm-selo adm-selo-erp">ERP SOLIDCON</span>' +
                   '<p class="font-bold">Estoque por produto</p></div>';
         if (solid.ausente) {
             alvo.innerHTML = cab + cartaoVazio('Estoque do ERP ainda não instalado',
@@ -1365,7 +1369,7 @@
             return;
         }
         if (solid.semColuna) {
-            alvo.innerHTML = '<div class="adm-card p-5 mb-5" style="border-color:rgba(245,158,11,.45)">' + cab +
+            alvo.innerHTML = '<div class="adm-card p-5 mb-5" style="border-color:var(--adm-atencao-borda)">' + cab +
                 '<p class="text-sm mt-2" style="color:var(--adm-tinta-2)"><i class="fa-solid fa-circle-info mr-2"></i>' +
                 'A coluna <strong>codigo_erp</strong> ainda não existe no catálogo (migração 024 pendente). Enquanto isso o estoque por produto não liga e o vínculo fica indisponível.</p></div>';
             return;
@@ -1405,7 +1409,7 @@
                   ' <button type="button" class="adm-botao-fantasma" data-vinc-cancelar="1">Cancelar</button></div>'
                 : '';
             return '<tr><td>' + esc(prod.nome) + '</td><td>' + estado + '</td><td>' + seletor + conf +
-                (vinc.linhaMsg[prod.id] ? '<p class="text-xs mt-1" role="alert" style="color:#FCA5A5">' + esc(vinc.linhaMsg[prod.id]) + '</p>' : '') + '</td></tr>';
+                (vinc.linhaMsg[prod.id] ? '<p class="text-xs mt-1" role="alert" style="color:var(--adm-ruim)">' + esc(vinc.linhaMsg[prod.id]) + '</p>' : '') + '</td></tr>';
         }).join('');
         var vinculados = solid.catalogo.filter(function (p) { return p.codigo_erp; }).length;
         var acao = '';
@@ -1459,7 +1463,7 @@
         var alvo = $('#painel-vitrine');
         desenharVitrineBase();
         alvo.insertAdjacentHTML('afterbegin', '<section id="vitrine-erp" class="mb-10"></section>' +
-            '<div class="flex items-center gap-2 mb-4"><span class="adm-selo adm-selo-confirmado">Site</span><p class="font-bold">Destaques de clientes</p></div>');
+            '<div class="flex items-center gap-2 mb-4"><span class="adm-selo adm-selo-neutro">Site</span><p class="font-bold">Destaques de clientes</p></div>');
         desenharVitrineErp();
     }
 
@@ -1498,9 +1502,9 @@
         voltou_estoque: { rotulo: 'Voltou ao estoque', icone: 'fa-rotate-left', cls: 'adm-selo-confirmado' },
         estoque_baixo:  { rotulo: 'Estoque baixo',     icone: 'fa-arrow-down',  cls: 'adm-selo-aguardando' },
         preco_mudou:    { rotulo: 'Preço mudou',       icone: 'fa-tag',         cls: 'adm-selo-entregue' },
-        produto_novo:   { rotulo: 'Produto novo',      icone: 'fa-star',        cls: '', estilo: 'background:rgba(168,85,247,.14);color:#D8B4FE' },
-        sumiu:          { rotulo: 'Sumiu da lista',    icone: 'fa-eye-slash',   cls: '', estilo: 'background:rgba(255,255,255,.08);color:var(--adm-tinta-2)' },
-        reapareceu:     { rotulo: 'Reapareceu',        icone: 'fa-eye',         cls: '', estilo: 'background:rgba(255,255,255,.08);color:var(--adm-tinta-2)' }
+        produto_novo:   { rotulo: 'Produto novo',      icone: 'fa-star',        cls: 'adm-selo-erp' },
+        sumiu:          { rotulo: 'Sumiu da lista',    icone: 'fa-eye-slash',   cls: 'adm-selo-neutro' },
+        reapareceu:     { rotulo: 'Reapareceu',        icone: 'fa-eye',         cls: 'adm-selo-neutro' }
     };
 
     function carregarSolidExtra() {
@@ -1562,7 +1566,7 @@
             }).join(' · ');
         }
 
-        return '<div class="adm-card p-5 mb-5"><p class="font-bold mb-4"><i class="fa-solid fa-bell mr-2" style="color:var(--adm-marca)"></i>Alertas de estoque</p>' +
+        return '<div class="adm-card p-5 mb-5"><p class="font-bold mb-4"><i class="fa-solid fa-bell mr-2" style="color:var(--adm-atencao)"></i>Alertas de estoque</p>' +
             '<div class="grid sm:grid-cols-2 gap-5">' +
             col('Esgotados (todas as caixas)', esg.length, lista(esg, function (g) { return '<li>' + esc(g.nome) + '</li>'; })) +
             col('Estoque baixo (≤ ' + NUM.format(lim) + ' cx)', baixo.length,
@@ -1668,10 +1672,10 @@
             '<text x="' + (pl - 6) + '" y="' + (Y(0) + 4) + '" text-anchor="end" font-size="10" fill="var(--adm-tinta-3)">0</text>' +
             '<text x="' + pl + '" y="' + (H - 6) + '" font-size="10" fill="var(--adm-tinta-3)">' + esc(rot(dias[0].dia)) + '</text>' +
             '<text x="' + (W - pr) + '" y="' + (H - 6) + '" text-anchor="end" font-size="10" fill="var(--adm-tinta-3)">' + esc(rot(dias[n - 1].dia)) + '</text>' +
-            '<polyline fill="none" stroke="var(--adm-marca)" stroke-width="2" stroke-linejoin="round" points="' + pts.join(' ') + '"/>' +
+            '<polyline fill="none" stroke="var(--adm-dados)" stroke-width="2" stroke-linejoin="round" points="' + pts.join(' ') + '"/>' +
             dias.map(function (x, i) {
                 return '<circle cx="' + X(i).toFixed(1) + '" cy="' + Y(Number(x.estoque_disponivel)).toFixed(1) +
-                       '" r="2.5" fill="var(--adm-marca)"><title>' + esc(rot(x.dia) + ': ' + NUM.format(Number(x.estoque_disponivel)) + ' cx') + '</title></circle>';
+                       '" r="2.5" fill="var(--adm-dados)"><title>' + esc(rot(x.dia) + ': ' + NUM.format(Number(x.estoque_disponivel)) + ' cx') + '</title></circle>';
             }).join('') + '</svg>';
     }
 
@@ -1796,7 +1800,7 @@
         itens.forEach(function (it, i) {
             var x = pl + i * slot + (slot - bw) / 2, h = y(0) - y(it.v);
             out += '<rect x="' + x.toFixed(1) + '" y="' + y(it.v).toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(0, h).toFixed(1) +
-                   '" rx="1.5" fill="' + (it.parcial ? 'rgba(255,255,255,.28)' : 'var(--adm-marca)') + '"><title>' + esc(it.dica) + '</title></rect>';
+                   '" rx="1.5" fill="' + (it.parcial ? 'var(--adm-parcial)' : 'var(--adm-dados)') + '"><title>' + esc(it.dica) + '</title></rect>';
             if (i % cadaRotulo === 0) {
                 out += '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="10" fill="var(--adm-tinta-3)">' + esc(it.rot) + '</text>';
             }
@@ -1813,7 +1817,7 @@
             return '<div class="mb-3"><div class="flex justify-between gap-3 text-sm mb-1">' +
                 '<span style="color:var(--adm-tinta-2)">' + esc(l.rot) + '</span>' +
                 '<span class="font-bold" style="white-space:nowrap">' + esc(brl(l.v)) + '<span class="text-xs font-normal" style="color:var(--adm-tinta-3)">' + esc(pct) + '</span></span></div>' +
-                '<div style="height:6px;border-radius:99px;background:var(--adm-borda)"><div style="height:6px;border-radius:99px;background:var(--adm-marca);width:' + (l.v / max * 100).toFixed(1) + '%"></div></div></div>';
+                '<div style="height:6px;border-radius:99px;background:var(--adm-borda)"><div style="height:6px;border-radius:99px;background:var(--adm-dados);width:' + (l.v / max * 100).toFixed(1) + '%"></div></div></div>';
         }).join('');
     }
 
@@ -1934,7 +1938,7 @@
             return '<div class="mb-2"><div class="flex justify-between gap-3 text-xs mb-1"><span style="color:var(--adm-tinta-2)">' + esc(l.rot) + '</span>' +
                 '<span class="font-bold" style="' + (baixo ? 'color:var(--adm-ruim)' : '') + '">' + esc(brl(Math.round(preco))) + '</span></div>' +
                 '<div style="position:relative;height:8px;border-radius:99px;background:var(--adm-borda)">' +
-                '<div style="height:8px;border-radius:99px;background:' + (baixo ? 'var(--adm-ruim)' : 'var(--adm-marca)') + ';width:' + pos(preco) + '"></div>' +
+                '<div style="height:8px;border-radius:99px;background:' + (baixo ? 'var(--adm-ruim)' : 'var(--adm-dados)') + ';width:' + pos(preco) + '"></div>' +
                 '<div style="position:absolute;top:-3px;bottom:-3px;left:' + pos(VEND_PRECO_MIN) + ';width:2px;background:var(--adm-ruim)"></div>' +
                 '<div style="position:absolute;top:-3px;bottom:-3px;left:' + pos(site) + ';width:2px;background:var(--adm-tinta-2)"></div></div></div>';
         }).join('');
@@ -1943,7 +1947,7 @@
             '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">Valor vendido ÷ potes (pote avulso, caixa 24 e caixa 48 convertidos), ' + cols.length +
                 ' meses (' + vendMesRotulo(cols[0]) + ' a ' + vendMesRotulo(cols[cols.length - 1]) + '; mês sem venda fica em branco). Site: ' + esc(brl(site)) + '/pote. Vermelho: abaixo de ' + esc(brl(VEND_PRECO_MIN)) + ' (mínimo definido).</p>' +
             (abaixo.length
-                ? '<div class="text-sm mb-3 p-3" role="status" style="border:1px solid rgba(239,68,68,.45);border-radius:.6rem"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:var(--adm-ruim)"></i>' +
+                ? '<div class="text-sm mb-3 p-3" role="status" style="border:1px solid var(--adm-ruim-borda);border-radius:.6rem"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:var(--adm-ruim)"></i>' +
                   NUM.format(abaixo.length) + (abaixo.length === 1 ? ' sabor está' : ' sabores estão') + ' com preço médio abaixo do mínimo no período: ' +
                   esc(abaixo.slice(0, 6).map(function (l) { return l.rot; }).join(', ') + (abaixo.length > 6 ? ' e mais ' + (abaixo.length - 6) : '')) + '.</div>'
                 : '') +
@@ -1981,10 +1985,10 @@
                 linhas.map(function (l) {
                     return '<tr><td style="white-space:nowrap">' + esc(l.rot) + '</td>' + cols.map(function (m) {
                         var v = val(l.meses[m]);
-                        var a = l.max > 0 ? Math.round(Math.sqrt(v / l.max) * 85) : 0; // intensidade relativa ao pico do próprio sabor
+                        var a = l.max > 0 ? Math.round(Math.sqrt(v / l.max) * 45) : 0; // relativa ao pico do próprio sabor; teto 45% mantém o texto claro >= 4,5:1 (também no hover)
                         var txt = v > 0 ? (usaValor ? brlCurto(v) : NUM.format(Math.round(v))) : '';
                         var dica = l.rot + ' · ' + vendMesRotulo(m) + ': ' + (usaValor ? brl(Math.round(v)) : NUM.format(Math.round(v)) + ' potes');
-                        return '<td title="' + esc(dica) + '" style="text-align:center;padding-left:.25rem;padding-right:.25rem;background:color-mix(in srgb, var(--adm-marca) ' + a + '%, transparent)">' + esc(txt) + '</td>';
+                        return '<td title="' + esc(dica) + '" style="text-align:center;padding-left:.25rem;padding-right:.25rem;color:var(--adm-tinta);background:color-mix(in srgb, var(--adm-dados) ' + a + '%, transparent)">' + esc(txt) + '</td>';
                     }).join('') + '</tr>';
                 }).join('') + '</tbody></table></div>' +
                 '<p class="text-xs mt-2" style="color:var(--adm-tinta-3)">Cada linha é colorida pelo pico do próprio sabor (mais escuro = mês mais forte). * mês parcial.</p>';
@@ -2094,7 +2098,7 @@
 
         alvo.innerHTML =
             '<div class="flex items-center gap-2 mb-3 text-sm" style="color:var(--adm-tinta-2)"><i class="fa-regular fa-clock"></i><span>Atualizado ' + esc(cab.txt) + '</span></div>' +
-            (cab.alerta ? '<div class="adm-card p-4 mb-3 text-sm" role="alert" style="border-color:rgba(239,68,68,.45)"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:#FCA5A5"></i>' + esc(cab.alerta) + '</div>' : '') +
+            (cab.alerta ? '<div class="adm-card p-4 mb-3 text-sm" role="alert" style="border-color:var(--adm-ruim-borda)"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:var(--adm-ruim)"></i>' + esc(cab.alerta) + '</div>' : '') +
             '<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">' +
                 kpi('Total no período', brl(total), vendMesRotulo(vend.meses[0].mes) + ' a ' + vendMesRotulo(vend.meses[vend.meses.length - 1].mes)) +
                 kpi('Média por mês completo', completos.length ? brl(Math.round(media)) : '—', completos.length + ' meses completos') +
@@ -2133,8 +2137,8 @@
      * Painel por assunto — junção site x ERP SOLIDCON (somente leitura)
      * Cada aba de assunto ganha um bloco do ERP, com etiqueta de origem.
      * =================================================================== */
-    var SELO_ERP = '<span class="adm-selo" style="background:rgba(168,85,247,.14);color:#D8B4FE">ERP SOLIDCON</span>';
-    var SELO_SITE = '<span class="adm-selo adm-selo-confirmado">Site</span>';
+    var SELO_ERP = '<span class="adm-selo adm-selo-erp">ERP SOLIDCON</span>';
+    var SELO_SITE = '<span class="adm-selo adm-selo-neutro">Site</span>';
 
     // Carrega sob demanda o que a aba precisa do ERP (uma vez; "Atualizar" força de novo).
     function carregarErpDaAba(qual, forcar) {
@@ -2222,7 +2226,7 @@
                 '<div class="adm-card p-5"><p class="font-bold">Top 5 produtos</p><p class="text-xs mb-3" style="color:var(--adm-tinta-3)">' + esc(vendMesRotulo(ult.mes)) + '</p>' +
                     vendLista(top, vendNum(ult.valor_centavos)) + '</div>' +
             '</div>' +
-            (podeVerGraficos ? '<p class="text-xs mt-4" style="color:var(--adm-tinta-3)">Gráficos e comparativos completos: <button type="button" class="underline" id="pedidos-erp-ir" style="color:var(--adm-marca)">Dashboard de vendas</button>.</p>' : '');
+            (podeVerGraficos ? '<p class="text-xs mt-4" style="color:var(--adm-tinta-3)">Gráficos e comparativos completos: <button type="button" class="underline" id="pedidos-erp-ir" style="color:var(--adm-acao)">Dashboard de vendas</button>.</p>' : '');
         var ir = $('#pedidos-erp-ir');
         if (ir) ir.addEventListener('click', function () { trocarAba('vendas'); });
     }
@@ -2625,7 +2629,7 @@
                 var pri = x === d.primeiroMes; // só o primeiro mês REAL do histórico
                 return '<tr><td>' + esc(vendMesRotulo(x)) + (x === d.atual ? ' <span class="text-xs" style="color:var(--adm-tinta-3)">(parcial)</span>' : '') + '</td>' +
                     '<td class="num">' + NUM.format(d.ativos[x]) + '</td>' +
-                    '<td><div style="height:6px;border-radius:99px;background:var(--adm-borda)"><div style="height:6px;border-radius:99px;background:var(--adm-marca);width:' + (d.ativos[x] / maxA * 100).toFixed(1) + '%"></div></div></td>' +
+                    '<td><div style="height:6px;border-radius:99px;background:var(--adm-borda)"><div style="height:6px;border-radius:99px;background:var(--adm-dados);width:' + (d.ativos[x] / maxA * 100).toFixed(1) + '%"></div></div></td>' +
                     '<td class="num"' + (pri ? ' title="Primeiro mês do histórico: não dá para separar novos de antigos"' : '') + '>' + (pri ? '—' : NUM.format(d.novos[x])) + '</td>' +
                     '<td class="num">' + NUM.format(d.perdidos[x]) + '</td></tr>';
             }).join('') + '</tbody></table></div>';
@@ -2761,7 +2765,7 @@
     function giroFmtData(iso) { var q = String(iso).split('-'); return q[2] + '/' + q[1] + '/' + q[0]; }
 
     function giroSeloCobertura(dias, semGiro) {
-        if (semGiro) return '<span class="adm-selo" style="background:rgba(255,255,255,.08);color:var(--adm-tinta-2)"><i class="fa-solid fa-hourglass-half"></i>Sem giro</span>';
+        if (semGiro) return '<span class="adm-selo adm-selo-neutro"><i class="fa-solid fa-hourglass-half"></i>Sem giro</span>';
         if (dias <= GIRO_CRITICO) return '<span class="adm-selo adm-selo-cancelado"><i class="fa-solid fa-triangle-exclamation"></i>Crítico</span>';
         if (dias <= GIRO_ATENCAO) return '<span class="adm-selo adm-selo-aguardando"><i class="fa-solid fa-arrow-down"></i>Atenção</span>';
         return '<span class="adm-selo adm-selo-confirmado"><i class="fa-solid fa-check"></i>Ok</span>';
@@ -2872,7 +2876,7 @@
                   var pct = total > 0 ? x.potes / total * 100 : 0;
                   return '<tr><td class="num">' + (i + 1) + '</td><td>' + esc(x.rot) + '</td><td class="num">' + esc(NUM.format(Math.round(x.potes))) + '</td>' +
                       '<td><div style="display:flex;align-items:center;gap:.5rem"><div style="flex:1;min-width:4rem;height:6px;border-radius:99px;background:var(--adm-borda)">' +
-                      '<div style="height:6px;border-radius:99px;background:var(--adm-marca);width:' + (x.potes / max * 100).toFixed(1) + '%"></div></div>' +
+                      '<div style="height:6px;border-radius:99px;background:var(--adm-dados);width:' + (x.potes / max * 100).toFixed(1) + '%"></div></div>' +
                       '<span class="text-xs" style="color:var(--adm-tinta-3);white-space:nowrap">' + esc(giroFmt(pct, 1) + '%') + '</span></div></td></tr>';
               }).join('') + '</tbody></table></div>' +
               (lista.length > 30 ? '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">Top 30 de ' + NUM.format(lista.length) + ' sabores.</p>' : '');
@@ -2884,7 +2888,7 @@
     function desenharGiro() {
         var alvo = $('#vitrine-giro');
         if (!alvo) return;
-        var cab = '<div class="flex items-center gap-2 mb-4"><span class="adm-selo" style="background:rgba(168,85,247,.14);color:#D8B4FE">ERP SOLIDCON</span><p class="font-bold">Giro de estoque</p></div>';
+        var cab = '<div class="flex items-center gap-2 mb-4"><span class="adm-selo adm-selo-erp">ERP SOLIDCON</span><p class="font-bold">Giro de estoque</p></div>';
         if (giro.ausente) { alvo.innerHTML = cab + cartaoVazio('Vendas do ERP ainda não instaladas', 'A tabela solidcon_vendas_dia não existe neste banco.'); return; }
         if (giro.erro) {
             alvo.innerHTML = cab + '<div class="adm-card p-6 mb-5"><p class="text-sm mb-3" style="color:var(--adm-tinta-2)">Não foi possível carregar as vendas: ' + esc(giro.erro) + '</p>' +
@@ -2898,8 +2902,8 @@
         }
         if (giro.truncado) {
             // Limite atingido: as linhas lidas podem não cobrir os 180 dias; nada é calculado nem recomendado.
-            alvo.innerHTML = cab + '<div class="adm-card p-6 mb-5" role="alert" style="border-color:rgba(239,68,68,.45)">' +
-                '<p class="font-bold mb-2"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:#FCA5A5"></i>Giro indisponível: limite de ' + NUM.format(GIRO_LIMITE) + ' linhas atingido</p>' +
+            alvo.innerHTML = cab + '<div class="adm-card p-6 mb-5" role="alert" style="border-color:var(--adm-ruim-borda)">' +
+                '<p class="font-bold mb-2"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:var(--adm-ruim)"></i>Giro indisponível: limite de ' + NUM.format(GIRO_LIMITE) + ' linhas atingido</p>' +
                 '<p class="text-sm" style="color:var(--adm-tinta-2)">O histórico de vendas dos últimos ' + GIRO_JANELA + ' dias é maior do que o painel consegue ler de uma vez, ' +
                 'então cobertura, reposição, produtos parados e ranking não são exibidos para não induzir decisão errada.</p></div>';
             return;
@@ -3045,9 +3049,9 @@
         itens.forEach(function (it, i) {
             var x0 = pl + i * slot + (slot - bw * (comB ? 2 : 1)) / 2;
             out += '<rect x="' + x0.toFixed(1) + '" y="' + y(it.a).toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(0, y(0) - y(it.a)).toFixed(1) +
-                   '" rx="1.5" fill="var(--adm-marca)"><title>' + esc(it.dica) + '</title></rect>';
+                   '" rx="1.5" fill="var(--adm-dados)"><title>' + esc(it.dica) + '</title></rect>';
             if (comB) out += '<rect x="' + (x0 + bw).toFixed(1) + '" y="' + y(it.b).toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + Math.max(0, y(0) - y(it.b)).toFixed(1) +
-                   '" rx="1.5" fill="rgba(255,255,255,.35)"><title>' + esc(it.dica) + '</title></rect>';
+                   '" rx="1.5" fill="var(--adm-tinta-3)"><title>' + esc(it.dica) + '</title></rect>';
             if (i % cada === 0) out += '<text x="' + (pl + i * slot + slot / 2).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="10" fill="var(--adm-tinta-3)">' + esc(it.rot) + '</text>';
         });
         return out + '</svg>';
@@ -3126,7 +3130,7 @@
             resKpi('Saídas sem venda', entFmt(A.tot.sai), 'potes (ajuste/perda, fora das entradas)') + '</div>' +
             '<p class="adm-tile-rotulo mb-2">Entradas por dia (potes)</p>' + entBarras(diario, 'Entradas de estoque por dia, em potes', ent.dias > 30 ? 7 : 3, false) +
             '<p class="adm-tile-rotulo mt-5 mb-1">Semana: entradas x vendas (potes)</p>' +
-            '<p class="text-xs mb-2" style="color:var(--adm-tinta-3)"><span style="color:var(--adm-marca)">■</span> entradas · <span style="color:rgba(255,255,255,.55)">■</span> vendas</p>' +
+            '<p class="text-xs mb-2" style="color:var(--adm-tinta-3)"><span style="color:var(--adm-dados)">■</span> entradas · <span style="color:var(--adm-tinta-3)">■</span> vendas</p>' +
             entBarras(barSem, 'Entradas e vendas por semana, em potes', 1, true) +
             '<div class="mt-4">' + tabSemana + '</div>' +
             '<p class="adm-tile-rotulo mt-5 mb-2">Por sabor</p>' + tabSab +
@@ -3136,7 +3140,7 @@
     function desenharEntradas() {
         var alvo = $('#vitrine-entradas');
         if (!alvo) return;
-        var cab = '<div class="flex items-center gap-2 mb-4"><span class="adm-selo" style="background:rgba(168,85,247,.14);color:#D8B4FE">ERP SOLIDCON</span><p class="font-bold">Entradas de estoque</p></div>';
+        var cab = '<div class="flex items-center gap-2 mb-4"><span class="adm-selo adm-selo-erp">ERP SOLIDCON</span><p class="font-bold">Entradas de estoque</p></div>';
         var est = resEstado(solid, 'estoque do ERP', 'solid') || resEstado(giro, 'vendas do ERP', 'giro') || resEstado(ent, 'fotos diárias do estoque', 'ent');
         if (est) {
             alvo.innerHTML = cab + '<div class="adm-card p-5 mb-5">' + est + '</div>';
@@ -3252,7 +3256,7 @@
         }[sit];
         if (m) return '<span class="adm-selo ' + m[0] + '"><i class="fa-solid ' + m[1] + '"></i>' + m[2] + '</span>';
         var rot = sit === 'fora' ? 'Fora da lista' : sit === 'sem-consumo' ? 'Sem consumo' : 'Sem histórico';
-        return '<span class="adm-selo" style="background:rgba(255,255,255,.08);color:var(--adm-tinta-2)"><i class="fa-solid fa-hourglass-half"></i>' + rot + '</span>';
+        return '<span class="adm-selo adm-selo-neutro"><i class="fa-solid fa-hourglass-half"></i>' + rot + '</span>';
     }
 
     function insContagens(itens) {
@@ -3264,7 +3268,7 @@
     function insLinhas(lista) {
         return lista.map(function (i) {
             return '<tr><td>' + esc(i.p.nome) + '</td><td>' + esc(i.p.categoria || '—') + '</td><td>' + esc(i.p.unidade || '—') + '</td>' +
-                '<td class="num"' + (i.est < 0 ? ' style="color:#FCA5A5"' : '') + '>' + esc(insFmt(i.est)) + '</td>' +
+                '<td class="num"' + (i.est < 0 ? ' style="color:var(--adm-ruim)"' : '') + '>' + esc(insFmt(i.est)) + '</td>' +
                 '<td class="num">' + (i.media == null ? '—' : esc(insFmt(i.media))) + '</td>' +
                 '<td class="num">' + (i.dias == null ? '—' : esc(giroFmt(i.dias, 0) + ' dias')) + '</td>' +
                 '<td>' + insSelo(i.sit) + '</td></tr>';
@@ -3274,7 +3278,7 @@
     function desenharInsumos() {
         var alvo = $('#vitrine-insumos');
         if (!alvo) return;
-        var cab = '<div class="flex items-center gap-2 mb-1"><span class="adm-selo" style="background:rgba(168,85,247,.14);color:#D8B4FE">ERP SOLIDCON</span><p class="font-bold">Estoque da fábrica</p></div>' +
+        var cab = '<div class="flex items-center gap-2 mb-1"><span class="adm-selo adm-selo-erp">ERP SOLIDCON</span><p class="font-bold">Estoque da fábrica</p></div>' +
             '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Matéria-prima e embalagens (somente leitura).</p>';
         var est = resEstado(ins, 'estoque da fábrica', 'ins');
         if (est) {
@@ -3348,7 +3352,7 @@
      * Só leitura; admin (como o resto do ERP financeiro). Sem 027: "ainda não instalado".
      * =================================================================== */
     var PAG_LIMITE = 40000, PAG_LEITURA_MESES = 18, PAG_TOPO = 6;
-    var PAG_CORES = ['#F28C4B', '#60A5FA', '#34D399', '#FBBF24', '#A78BFA', '#F472B6', '#94A3B8'];
+    var PAG_CORES = ['var(--adm-cat-1)', 'var(--adm-cat-2)', 'var(--adm-cat-3)', 'var(--adm-cat-4)', 'var(--adm-cat-5)', 'var(--adm-cat-6)', 'var(--adm-cat-7)'];
     var pag = { carregado: false, carregando: false, ausente: false, erro: null, linhas: [], truncado: false, metrica: 'valor', memo: null };
 
     function carregarPagamentos() {
@@ -3607,7 +3611,7 @@
             resKpi('Parcelas', NUM.format(A.tot.parcelas), 'em aberto') +
             resKpi('Clientes (CNPJ)', NUM.format(A.cnpjs.length), 'com parcela em aberto') + '</div>' +
             '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">' + esc(linha) + '</p>' +
-            (aviso ? '<div class="adm-card p-4 mb-4" role="alert" style="border-color:rgba(239,68,68,.45)"><p class="text-sm"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:#FCA5A5"></i>' + esc(aviso) + '</p></div>' : '');
+            (aviso ? '<div class="adm-card p-4 mb-4" role="alert" style="border-color:var(--adm-ruim-borda)"><p class="text-sm"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:var(--adm-ruim)"></i>' + esc(aviso) + '</p></div>' : '');
     }
 
     function recMoeda(v) { return v == null ? '—' : esc(brl(vendNum(v))); }
@@ -3643,7 +3647,7 @@
             return;
         }
         if (rec.truncado) {
-            alvo.innerHTML = cab + '<div class="adm-card p-6" role="alert" style="border-color:rgba(239,68,68,.45)"><p class="text-sm"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:#FCA5A5"></i>' +
+            alvo.innerHTML = cab + '<div class="adm-card p-6" role="alert" style="border-color:var(--adm-ruim-borda)"><p class="text-sm"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:var(--adm-ruim)"></i>' +
                 'Contas a receber indisponíveis: o limite de ' + esc(NUM.format(REC_LIMITE)) + ' parcelas foi atingido e os totais ficariam incompletos.</p></div>';
             return;
         }
@@ -3658,7 +3662,7 @@
             vis.map(function (g, i) {
                 var aberto = !!rec.abertos[g.doc], nome = g.nome || recCnpj(g.doc);
                 return '<tr><td>' + esc(nome) + (g.nome ? '<br><span class="text-xs" style="color:var(--adm-tinta-3)">' + esc(recCnpj(g.doc)) + '</span>' : '') + '</td>' +
-                    '<td class="num">' + esc(brl(g.aberto)) + '</td><td class="num"' + (g.vencido > 0 ? ' style="color:#FCA5A5"' : '') + '>' + esc(brl(g.vencido)) + '</td>' +
+                    '<td class="num">' + esc(brl(g.aberto)) + '</td><td class="num"' + (g.vencido > 0 ? ' style="color:var(--adm-ruim)"' : '') + '>' + esc(brl(g.vencido)) + '</td>' +
                     '<td class="num">' + (g.atraso > 0 ? esc(recDias(g.atraso)) : '—') + '</td><td>' + (g.prox ? esc(giroFmtData(g.prox)) : '—') + '</td><td class="num">' + NUM.format(g.n) + '</td>' +
                     '<td><button type="button" class="adm-botao-fantasma" data-rec-i="' + i + '" aria-expanded="' + aberto + '"><i class="fa-solid ' + (aberto ? 'fa-chevron-up' : 'fa-chevron-down') + ' mr-1"></i>Parcelas</button></td></tr>' +
                     (aberto ? '<tr><td colspan="7">' + recParcelas(g) + '</td></tr>' : '');
@@ -3802,7 +3806,7 @@
     }
 
     function mgPct(v) { return v == null ? '—' : giroFmt(v, 1) + '%'; }
-    function mgNeg(v) { return v < 0 ? ' style="color:#FCA5A5"' : ''; }
+    function mgNeg(v) { return v < 0 ? ' style="color:var(--adm-ruim)"' : ''; }
 
     // Linhas de custo/preço atuais. cods = lista de códigos (ou null = todos), ordenadas com alertas primeiro.
     function mgCustos(cods) {
@@ -3848,8 +3852,8 @@
             else if (!isFinite(t)) alertas.push(pt[1] + ': nenhuma atualização com sucesso.');
         });
         return (linhas.length ? '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">' + esc(linhas.join(' · ')) + '</p>' : '') +
-            (alertas.length ? '<div class="adm-card p-4 mb-4" role="alert" style="border-color:rgba(239,68,68,.45)">' + alertas.map(function (a) {
-                return '<p class="text-sm"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:#FCA5A5"></i>' + esc(a) + '</p>';
+            (alertas.length ? '<div class="adm-card p-4 mb-4" role="alert" style="border-color:var(--adm-ruim-borda)">' + alertas.map(function (a) {
+                return '<p class="text-sm"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:var(--adm-ruim)"></i>' + esc(a) + '</p>';
             }).join('') + '</div>' : '');
     }
 
@@ -3869,7 +3873,7 @@
             return;
         }
         if (mg.truncado) {
-            alvo.innerHTML = cab + '<div class="adm-card p-5 mb-5" role="alert" style="border-color:rgba(239,68,68,.45)"><p class="text-sm"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:#FCA5A5"></i>' +
+            alvo.innerHTML = cab + '<div class="adm-card p-5 mb-5" role="alert" style="border-color:var(--adm-ruim-borda)"><p class="text-sm"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:var(--adm-ruim)"></i>' +
                 'Margem indisponível: o limite de linhas foi atingido e os totais ficariam incompletos.</p></div>';
             return;
         }
@@ -3885,7 +3889,7 @@
             var cob = A.cob;
             html += '<div class="flex items-center justify-between flex-wrap gap-3 mb-3"><p class="text-sm" style="color:var(--adm-tinta-2)">Período: ' + esc(giroFmtData(corte)) + ' a ' + esc(giroFmtData(recHoje())) + ' (horário de São Paulo)</p>' +
                 '<div class="flex gap-1 flex-wrap">' + chips + '</div></div>' +
-                (cob.completo ? '' : '<div class="adm-card p-4 mb-4" role="alert" style="border-color:rgba(245,158,11,.5)"><p class="text-sm"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:#FCD34D"></i>' +
+                (cob.completo ? '' : '<div class="adm-card p-4 mb-4" role="alert" style="border-color:var(--adm-atencao-borda)"><p class="text-sm"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:var(--adm-atencao)"></i>' +
                     esc('Histórico parcial: ' + NUM.format(cob.cobertos) + ' de ' + NUM.format(cob.n) + ' dias confirmados' + (cob.desde ? ' (desde ' + giroFmtData(cob.desde) + ')' : '') +
                     '. Os números abaixo são só dos dias confirmados, não do período inteiro. Rodar o backfill da margem para completar.') + '</p></div>') +
                 '<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">' +
@@ -4058,8 +4062,8 @@
         if (!el) return;
         var o = saudeLerOculto();
         if (!saude.itens.length || (o && Date.now() < o.ate && o.nivel >= saude.nivel)) { el.hidden = true; el.innerHTML = ''; return; }
-        var vermelho = saude.nivel >= 2, cor = vermelho ? '#FCA5A5' : '#FCD34D', borda = vermelho ? 'rgba(239,68,68,.55)' : 'rgba(245,158,11,.55)';
-        var fundo = vermelho ? 'rgba(239,68,68,.12)' : 'rgba(245,158,11,.12)';
+        var vermelho = saude.nivel >= 2, cor = vermelho ? 'var(--adm-ruim)' : 'var(--adm-atencao)', borda = vermelho ? 'var(--adm-ruim-borda)' : 'var(--adm-atencao-borda)';
+        var fundo = vermelho ? 'var(--adm-ruim-fundo)' : 'var(--adm-atencao-fundo)';
         el.className = 'max-w-7xl mx-auto px-6 pt-4';
         el.hidden = false;
         el.innerHTML = '<div role="alert" class="adm-card p-4 flex items-start gap-3" style="border-color:' + borda + ';background:' + fundo + '">' +
@@ -4287,8 +4291,8 @@
     }
 
     function geoCor(reg) {
-        if (!reg) return '#C084FC';
-        return reg.ativo ? '#F28C52' : '#94A3B8';
+        if (!reg) return corToken('--adm-atencao', '#e3b14b');
+        return reg.ativo ? corToken('--adm-dados', '#6fa8e0') : corToken('--adm-tinta-3', '#93a1b1');
     }
 
     function desenharRegioes() {
@@ -4331,10 +4335,10 @@
                 '<p class="text-xs mb-3 hidden" id="geo-modo-aviso" role="status" style="color:var(--adm-tinta-2)"></p>' +
                 '<div id="mapa-clientes" style="height:420px;border-radius:.75rem;overflow:hidden"></div>' +
                 '<div class="flex gap-4 flex-wrap text-xs mt-3" style="color:var(--adm-tinta-2)">' +
-                    '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#F28C52"></span> Dentro de região que entrega</span>' +
-                    '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#94A3B8"></span> Região sem entrega</span>' +
-                    '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:#C084FC"></span> Fora das regiões</span>' +
-                    '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;border:2px solid #fff"></span> Ponto central aproximado da região</span>' +
+                    '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--adm-dados)"></span> Dentro de região que entrega</span>' +
+                    '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--adm-tinta-3)"></span> Região sem entrega</span>' +
+                    '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--adm-atencao)"></span> Fora das regiões</span>' +
+                    '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;border:2px solid var(--adm-tinta)"></span> Ponto central aproximado da região</span>' +
                 '</div></div>' +
             '<div id="geo-resumo"></div><div id="geo-tabela"></div><div id="geo-naoloc"></div>';
 
@@ -4392,7 +4396,7 @@
             });
             dados.regioes.forEach(function (r) {
                 if (!REGIAO_COORDS[r.id]) return;
-                L.circleMarker(REGIAO_COORDS[r.id], { radius: 6, color: '#FFFFFF', weight: 2, fillOpacity: 0, dashArray: r.ativo ? null : '3 3' })
+                L.circleMarker(REGIAO_COORDS[r.id], { radius: 6, color: corToken('--adm-tinta', '#e9eef4'), weight: 2, fillOpacity: 0, dashArray: r.ativo ? null : '3 3' })
                     .bindTooltip(esc(r.nome) + (r.ativo ? '' : ' (sem entrega)'), { permanent: true, direction: 'top', opacity: 0.85 })
                     .addTo(mapaClientesCamada);
             });
@@ -4463,7 +4467,7 @@
             ? '<div class="adm-card p-5"><p class="font-bold mb-1">Não localizados no mapa (' + NUM.format(nao.length) + ')</p>' +
               '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">Sem posição no OpenStreetMap ou sem cidade/UF no cadastro. Continuam contados na tabela e nos totais.</p>' +
               '<div class="flex gap-2 flex-wrap">' + nao.map(function (l) {
-                  return '<span class="adm-selo" style="background:rgba(255,255,255,.08);color:var(--adm-tinta-2)">' + esc((l.bairro || '(sem bairro)') + ', ' + (l.cidade || '—') + (l.uf ? '/' + l.uf : '')) + ' · ' + NUM.format(l.total) + '</span>';
+                  return '<span class="adm-selo adm-selo-neutro">' + esc((l.bairro || '(sem bairro)') + ', ' + (l.cidade || '—') + (l.uf ? '/' + l.uf : '')) + ' · ' + NUM.format(l.total) + '</span>';
               }).join('') + '</div></div>' : '';
     }
 
@@ -4600,14 +4604,14 @@
 
     function resCard(titulo, aba, sub, corpo, largo) {
         return '<div class="adm-card p-5' + (largo ? ' lg:col-span-2' : '') + '"><div class="flex items-start justify-between gap-3 mb-1"><p class="font-bold">' + esc(titulo) + '</p>' +
-            '<button type="button" class="text-xs underline shrink-0" style="color:var(--adm-marca)" data-ir-aba="' + aba + '">ver detalhes →</button></div>' +
+            '<button type="button" class="text-xs underline shrink-0" style="color:var(--adm-acao)" data-ir-aba="' + aba + '">ver detalhes →</button></div>' +
             (sub ? '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">' + esc(sub) + '</p>' : '<div class="mb-3"></div>') + corpo + '</div>';
     }
 
     function resSecao(icone, titulo, cards) {
         var c = cards.filter(Boolean).join('');
         if (!c) return '';
-        return '<section class="mb-8"><div class="flex items-center gap-2 mb-3"><i class="fa-solid ' + icone + '" style="color:var(--adm-marca)"></i>' +
+        return '<section class="mb-8"><div class="flex items-center gap-2 mb-3"><i class="fa-solid ' + icone + '" style="color:var(--adm-tinta-3)"></i>' +
                '<p class="font-bold text-lg">' + esc(titulo) + '</p></div><div class="grid lg:grid-cols-2 gap-5">' + c + '</div></section>';
     }
 
@@ -4673,7 +4677,7 @@
                 pior.map(function (l) { return '<tr><td>' + esc(l.rot) + '</td>' + vendCelulaPreco(l.potes, l.valor, D.site) + '</tr>'; }).join('') + '</tbody></table></div>'));
         }
         cards.push('<div class="lg:col-span-2">' + vendHtmlSazonalidade('res-metrica', 10, 12) +
-            '<p class="text-right mt-2"><button type="button" class="text-xs underline" style="color:var(--adm-marca)" data-ir-aba="vendas">ver detalhes →</button></p></div>');
+            '<p class="text-right mt-2"><button type="button" class="text-xs underline" style="color:var(--adm-acao)" data-ir-aba="vendas">ver detalhes →</button></p></div>');
         return cards;
     }
 
@@ -4704,7 +4708,7 @@
                     var pct = totRk > 0 ? x.potes / totRk * 100 : 0;
                     return '<div class="mb-2"><div class="flex justify-between gap-3 text-xs mb-1"><span style="color:var(--adm-tinta-2)">' + (i + 1) + '. ' + esc(x.rot) + '</span>' +
                         '<span class="font-bold">' + esc(NUM.format(Math.round(x.potes))) + ' <span class="font-normal" style="color:var(--adm-tinta-3)">' + esc(giroFmt(pct, 1) + '%') + '</span></span></div>' +
-                        '<div style="height:6px;border-radius:99px;background:var(--adm-borda)"><div style="height:6px;border-radius:99px;background:var(--adm-marca);width:' + (x.potes / mx * 100).toFixed(1) + '%"></div></div></div>';
+                        '<div style="height:6px;border-radius:99px;background:var(--adm-borda)"><div style="height:6px;border-radius:99px;background:var(--adm-dados);width:' + (x.potes / mx * 100).toFixed(1) + '%"></div></div></div>';
                 }).join('') : '<p class="text-sm" style="color:var(--adm-tinta-3)">Sem vendas nesse período.</p>', true),
             cardEnt
         ];
@@ -4800,7 +4804,7 @@
             cards.push(resCard('Visitas e leads (30 dias)', 'visitas', 'Movimento do site',
                 '<div class="grid grid-cols-2 gap-3"><div><p class="adm-tile-rotulo mb-1">Sessões</p><p class="adm-tile-valor">' + NUM.format(Object.keys(sess).length) + '</p></div>' +
                 '<div><p class="adm-tile-rotulo mb-1">Leads</p><p class="adm-tile-valor">' + NUM.format(leads30) + '</p></div></div>' +
-                '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">Sessões contadas nas últimas ' + NUM.format(dados.visitasBrutas.length) + ' visitas carregadas. <button type="button" class="underline" style="color:var(--adm-marca)" data-ir-aba="leads">ver leads →</button></p>'));
+                '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">Sessões contadas nas últimas ' + NUM.format(dados.visitasBrutas.length) + ' visitas carregadas. <button type="button" class="underline" style="color:var(--adm-acao)" data-ir-aba="leads">ver leads →</button></p>'));
         }
         return cards;
     }
@@ -5280,7 +5284,7 @@
                 : '') +
 
             (p.observacoes
-                ? '<p class="text-xs mb-4 p-3 rounded-lg" style="background:rgba(255,255,255,0.04);color:var(--adm-tinta-2)">' +
+                ? '<p class="text-xs mb-4 p-3 rounded-lg" style="background:var(--adm-neutro-fundo);color:var(--adm-tinta-2)">' +
                   '<strong>Obs:</strong> ' + esc(p.observacoes) + '</p>'
                 : '') +
 
@@ -5324,7 +5328,7 @@
         var st = cadastroErpDoPedido(p);
         if (!st) return '';
         return st === 'ja'
-            ? '<span class="adm-selo" style="background:rgba(168,85,247,.14);color:#D8B4FE" title="O CNPJ/CPF deste pedido tem cadastro no SOLIDCON">' +
+            ? '<span class="adm-selo adm-selo-erp" title="O CNPJ/CPF deste pedido tem cadastro no SOLIDCON">' +
               '<i class="fa-solid fa-link"></i>Já cadastrado no ERP</span>'
             : '<span class="adm-selo adm-selo-aguardando" title="Não há cadastro com este CNPJ/CPF no SOLIDCON">' +
               '<i class="fa-solid fa-user-plus"></i>Cadastrar no ERP antes de faturar</span>';
@@ -5424,7 +5428,7 @@
         var difValor = p.valor_site_centavos != null && Number(p.valor_site_centavos) !== Number(p.valor_centavos);
         var difFrete = p.frete_site_centavos != null && Number(p.frete_site_centavos) !== frete;
         if (difValor || difFrete) {
-            avisos += '<p class="text-xs p-3 rounded-lg mb-3" style="background:rgba(234,179,8,0.14);color:#FDE047">' +
+            avisos += '<p class="text-xs p-3 rounded-lg mb-3" style="background:var(--adm-atencao-fundo);color:var(--adm-atencao)">' +
                 '<i class="fa-solid fa-triangle-exclamation mr-1"></i>O valor que o cliente viu era ' +
                 (difValor ? 'produtos ' + esc(brl(p.valor_site_centavos)) + ' (gravado ' + esc(brl(p.valor_centavos)) + ')' : '') +
                 (difValor && difFrete ? ' e ' : '') +
@@ -5432,10 +5436,10 @@
                 '. Confirme com o cliente antes de lançar.</p>';
         }
         if (!temColuna || info.semColuna) {
-            avisos += '<p class="text-xs p-3 rounded-lg mb-3" style="background:rgba(255,255,255,0.04);color:var(--adm-tinta-2)">' +
+            avisos += '<p class="text-xs p-3 rounded-lg mb-3" style="background:var(--adm-neutro-fundo);color:var(--adm-tinta-2)">' +
                 'Migração 021 ainda não aplicada no banco: códigos SOLIDCON e o registro de lançamento ficam indisponíveis.</p>';
         } else if (semCodigo) {
-            avisos += '<p class="text-xs p-3 rounded-lg mb-3" style="background:rgba(239,68,68,0.14);color:#FCA5A5">' +
+            avisos += '<p class="text-xs p-3 rounded-lg mb-3" style="background:var(--adm-ruim-fundo);color:var(--adm-ruim)">' +
                 '<i class="fa-solid fa-circle-exclamation mr-1"></i>Há produto sem código SOLIDCON — procure pelo nome.</p>';
         }
 
@@ -5483,7 +5487,7 @@
                 '<th style="text-align:right">Unit.</th><th style="text-align:right">Subtotal</th></tr></thead><tbody>' +
                 (info.linhas.length ? info.linhas.map(function (l) {
                     var cod = info.codigos[l.produto_id];
-                    return '<tr><td>' + (cod ? esc(cod) : '<span style="color:#FCA5A5">sem código</span>') + '</td>' +
+                    return '<tr><td>' + (cod ? esc(cod) : '<span style="color:var(--adm-ruim)">sem código</span>') + '</td>' +
                         '<td>' + esc(l.nome) + '</td><td class="num">' + esc(NUM.format(l.potes)) + '</td>' +
                         '<td class="num">' + (l.unit == null ? '—' : esc(brl(l.unit))) + '</td>' +
                         '<td class="num">' + (l.unit == null ? '—' : esc(brl(l.unit * l.potes))) + '</td></tr>';
@@ -5519,7 +5523,7 @@
             var falha = function (texto) {
                 if (!aindaAberto()) return;
                 botoes.forEach(function (b) { b.disabled = false; });
-                msg.style.color = '#FCA5A5';
+                msg.style.color = 'var(--adm-ruim)';
                 msg.textContent = texto;
             };
             sb.rpc('marcar_lancado_solidcon', { p_pedido: p.id, p_numero: numero }).then(function (r) {
@@ -5542,7 +5546,7 @@
             var n = alvo.querySelector('#solidcon-numero').value.trim();
             if (!n) {
                 var m = alvo.querySelector('#solidcon-msg');
-                m.style.color = '#FCA5A5';
+                m.style.color = 'var(--adm-ruim)';
                 m.textContent = 'Informe o nº do pedido no SOLIDCON.';
                 return;
             }
@@ -5799,7 +5803,7 @@
     function linhaCliente(c) {
         return '<tr>' +
             '<td>' + esc(c.nome) + ' ' + SELO_SITE +
-                (jaNoErp(c.cnpj || c.cpf, c.cnpj ? 'cnpj' : 'cpf') ? ' <span class="adm-selo" style="background:rgba(168,85,247,.14);color:#D8B4FE" title="Este documento já tem cadastro no SOLIDCON"><i class="fa-solid fa-link"></i>Já no ERP</span>' : '') +
+                (jaNoErp(c.cnpj || c.cpf, c.cnpj ? 'cnpj' : 'cpf') ? ' <span class="adm-selo adm-selo-erp" title="Este documento já tem cadastro no SOLIDCON"><i class="fa-solid fa-link"></i>Já no ERP</span>' : '') +
                 (c.ativo ? '' : ' <span class="adm-selo adm-selo-cancelado" style="margin-left:.4rem">Inativo</span>') + '</td>' +
             '<td>' + esc(c.telefone || '—') + '</td>' +
             '<td>' + esc(c.tipo) + '</td>' +
@@ -5811,7 +5815,7 @@
                 '<button type="button" class="adm-botao-fantasma" data-editar-cliente="' + esc(c.clienteId) + '">' +
                     '<i class="fa-solid fa-pen mr-1"></i>Editar</button>' +
                 '<button type="button" class="adm-botao-fantasma" data-excluir-cliente="' + esc(c.clienteId) + '" ' +
-                    'data-documento="' + esc(c.cnpj || c.cpf || '') + '" style="color:#FCA5A5">' +
+                    'data-documento="' + esc(c.cnpj || c.cpf || '') + '" style="color:var(--adm-ruim)">' +
                     '<i class="fa-solid fa-trash mr-1"></i>Excluir</button>' +
                 linkWhats(c.telefone) +
             '</div></td>' +
@@ -5874,7 +5878,7 @@
                 '<textarea id="edit-observacoes" class="adm-input mb-5" rows="3">' + esc(c.observacoes) + '</textarea>' +
                 '<div class="flex items-center gap-2">' +
                     '<button type="submit" class="adm-botao">Salvar</button>' +
-                    '<span id="edit-cliente-erro" class="text-xs hidden" style="color:#FCA5A5"></span>' +
+                    '<span id="edit-cliente-erro" class="text-xs hidden" style="color:var(--adm-ruim)"></span>' +
                 '</div>' +
             '</form>';
     }
@@ -6455,7 +6459,7 @@
                 '<div>' +
                     '<p class="adm-tile-rotulo mb-1">Plano sugerido</p>' +
                     '<p class="text-white"><i class="fa-solid ' + plano.icone + ' mr-1" ' +
-                        'style="color:var(--adm-marca)"></i>' + esc(plano.rotulo) + ' · ' +
+                        'style="color:var(--adm-dados)"></i>' + esc(plano.rotulo) + ' · ' +
                         v.dias + (v.dias === 1 ? ' dia' : ' dias') + '</p>' +
                 '</div>' +
                 '<div>' +
@@ -6471,7 +6475,7 @@
             '</div>' +
 
             (v.motivos && v.motivos.length
-                ? '<p class="text-xs mb-4 p-3 rounded-lg" style="background:rgba(255,255,255,.04);color:var(--adm-tinta-2)">' +
+                ? '<p class="text-xs mb-4 p-3 rounded-lg" style="background:var(--adm-neutro-fundo);color:var(--adm-tinta-2)">' +
                   '<strong>Ganhou por:</strong> ' + esc(v.motivos.join(' · ')) + '</p>'
                 : '') +
 
@@ -6570,7 +6574,7 @@
                       (lista.length - comFaixa.length) ? 'nunca vão casar com um CEP' : 'todas configuradas') +
             '</div>' +
 
-            '<div class="adm-card p-4 mb-5" style="border-color:rgba(242,140,82,.3);background:rgba(242,140,82,.06)">' +
+            '<div class="adm-card p-4 mb-5" style="border-color:var(--adm-acao-borda);background:var(--adm-acao-fundo)">' +
                 '<p class="text-xs leading-relaxed" style="color:var(--adm-tinta-2)">' +
                     '<strong>As taxas e prazos vieram de um exemplo, não de você.</strong> ' +
                     'As faixas de CEP também são aproximadas, não uma fonte oficial dos Correios. ' +
@@ -6596,7 +6600,7 @@
                             ? faixas.map(function (f) {
                                   return esc(formatarCep(f.cep_inicio)) + ' a ' + esc(formatarCep(f.cep_fim));
                               }).join(' · ')
-                            : '<span style="color:#FCA5A5">Sem faixa de CEP — esta região nunca vai casar com um pedido</span>') +
+                            : '<span style="color:var(--adm-ruim)">Sem faixa de CEP — esta região nunca vai casar com um pedido</span>') +
                     '</p>' +
                 '</div>' +
                 (r.ativo
@@ -6854,8 +6858,8 @@
                 var n = porRegiaoMapa[id];
                 var raio = 8 + Math.round((n / maiorContagem) * 26);
                 L.circleMarker(REGIAO_COORDS[id], {
-                    radius: raio, color: '#F28C52', weight: 1,
-                    fillColor: '#F28C52', fillOpacity: 0.45
+                    radius: raio, color: corToken('--adm-dados', '#6fa8e0'), weight: 1,
+                    fillColor: corToken('--adm-dados', '#6fa8e0'), fillOpacity: 0.45
                 }).bindTooltip(esc(regiaoNome(id)) + ': ' + NUM.format(n) + (n === 1 ? ' sessão' : ' sessões'))
                   .addTo(mapaVisitasCamada);
             });

@@ -10,23 +10,55 @@
  */
 
 :root {
-    --adm-fundo: #0A0A0A;
-    --adm-superficie: #121212;
-    --adm-superficie-2: #191919;
-    --adm-borda: rgba(255, 255, 255, 0.08);
-    --adm-borda-forte: rgba(255, 255, 255, 0.14);
+    /* Paleta C (escuro suave). REGRA: laranja = AÇÃO e aba ativa; azul = DADOS (gráficos, barras, séries);
+       verde/amarelo/vermelho = SITUAÇÃO (ok/atenção/ruim). Nenhuma cor solta fora destes tokens. */
+    --adm-fundo: #181c22;
+    --adm-lateral: #11151a;          /* menu/cabeçalho */
+    --adm-superficie: #212730;       /* cartão */
+    --adm-superficie-2: #2a313c;     /* área aninhada dentro do cartão */
+    --adm-borda: #313946;
+    --adm-borda-forte: #3d4756;
 
-    --adm-tinta: #FFFFFF;
-    --adm-tinta-2: #BFBFBF;
-    --adm-tinta-3: rgba(255, 255, 255, 0.45);
+    --adm-tinta: #e9eef4;
+    --adm-tinta-2: #c3cdd8;
+    --adm-tinta-3: #93a1b1;          /* apagado */
 
-    --adm-marca: #F28C52;
+    /* Ação */
+    --adm-acao: #f0915a;
+    --adm-acao-texto: #1a1410;       /* texto sobre fundo laranja */
+    --adm-acao-fundo: rgba(240, 145, 90, 0.14);
+    --adm-acao-borda: rgba(240, 145, 90, 0.40);
+    --adm-marca: var(--adm-acao);    /* nome antigo: só ação */
 
-    /* Status: cada um sempre acompanhado de ícone e rótulo, nunca cor sozinha. */
-    --adm-espera: #EAB308;
-    --adm-bom: #22C55E;
-    --adm-entregue: #38BDF8;
-    --adm-ruim: #EF4444;
+    /* Dados */
+    --adm-dados: #6fa8e0;
+    --adm-dados-fundo: rgba(111, 168, 224, 0.14);
+    --adm-parcial: rgba(147, 161, 177, 0.45);   /* período parcial / série secundária */
+
+    /* Situação */
+    --adm-ok: #5fc28a;
+    --adm-ok-fundo: rgba(95, 194, 138, 0.14);
+    --adm-atencao: #e3b14b;
+    --adm-atencao-fundo: rgba(227, 177, 75, 0.14);
+    --adm-atencao-borda: rgba(227, 177, 75, 0.50);
+    --adm-ruim: #f08a80;
+    --adm-ruim-fundo: rgba(240, 138, 128, 0.14);
+    --adm-ruim-borda: rgba(240, 138, 128, 0.50);
+    --adm-espera: var(--adm-atencao);   /* nomes antigos */
+    --adm-bom: var(--adm-ok);
+    --adm-entregue: var(--adm-dados);
+
+    --adm-neutro-fundo: rgba(233, 238, 244, 0.05);
+    --adm-neutro-fundo-2: rgba(233, 238, 244, 0.09);
+
+    /* Paleta categórica (séries sem significado de situação), harmônica com o azul de dados. */
+    --adm-cat-1: #6fa8e0;
+    --adm-cat-2: #8e9be8;
+    --adm-cat-3: #5bb8c9;
+    --adm-cat-4: #b08fd9;
+    --adm-cat-5: #d98fb0;
+    --adm-cat-6: #c9b26a;
+    --adm-cat-7: #93a1b1;            /* "Outras" */
 }
 
 body.admin {
@@ -71,8 +103,8 @@ body.admin {
 
 /* Grade e eixos: linha de 1px, sólida (nunca tracejada), um passo acima do
    fundo. Tracejado vira ruído e sugere "projeção" onde só há grade. */
-.adm-grade { stroke: rgba(255, 255, 255, 0.07); stroke-width: 1; }
-.adm-eixo { stroke: rgba(255, 255, 255, 0.12); stroke-width: 1; }
+.adm-grade { stroke: var(--adm-borda); stroke-width: 1; }
+.adm-eixo { stroke: var(--adm-borda-forte); stroke-width: 1; }
 
 .adm-tick {
     fill: var(--adm-tinta-3);
@@ -81,7 +113,7 @@ body.admin {
 }
 
 .adm-barra {
-    fill: var(--adm-marca);
+    fill: var(--adm-dados);
     transition: opacity 0.15s ease;
 }
 
@@ -91,17 +123,17 @@ body.admin {
 
 .adm-linha {
     fill: none;
-    stroke: var(--adm-marca);
+    stroke: var(--adm-dados);
     stroke-width: 2;
     stroke-linejoin: round;
     stroke-linecap: round;
 }
 
-.adm-area { fill: var(--adm-marca); opacity: 0.1; }
+.adm-area { fill: var(--adm-dados); opacity: 0.1; }
 
 /* Marcador com anel na cor da superfície, para seguir legível ao cruzar a linha. */
 .adm-ponto {
-    fill: var(--adm-marca);
+    fill: var(--adm-dados);
     stroke: var(--adm-superficie);
     stroke-width: 2;
 }
@@ -142,7 +174,7 @@ body.admin {
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--adm-tinta-3);
-    background-color: rgba(255, 255, 255, 0.03);
+    background-color: var(--adm-neutro-fundo);
     font-weight: 700;
     white-space: nowrap;
 }
@@ -159,7 +191,7 @@ body.admin {
     color: var(--adm-tinta);
 }
 
-.adm-tabela tbody tr:hover td { background-color: rgba(255, 255, 255, 0.03); }
+.adm-tabela tbody tr:hover td { background-color: var(--adm-neutro-fundo); }
 
 /* Linha de detalhe expansível (ex.: "Detalhes" de um cliente): abre embaixo da
    própria linha, não num modal. `grid-template-rows` de 0fr a 1fr seria o
@@ -188,7 +220,7 @@ body.admin {
 .adm-detalhe-conteudo {
     padding: 1rem 0.7rem 1.25rem;
     border-top: 1px solid var(--adm-borda);
-    background-color: rgba(255, 255, 255, 0.02);
+    background-color: var(--adm-neutro-fundo);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -209,10 +241,13 @@ body.admin {
     white-space: nowrap;
 }
 
-.adm-selo-aguardando { background: rgba(234, 179, 8, 0.14);  color: #FDE047; }
-.adm-selo-confirmado { background: rgba(34, 197, 94, 0.14);  color: #4ADE80; }
-.adm-selo-entregue   { background: rgba(56, 189, 248, 0.14); color: #7DD3FC; }
-.adm-selo-cancelado  { background: rgba(239, 68, 68, 0.14);  color: #FCA5A5; }
+.adm-selo-aguardando { background: var(--adm-atencao-fundo); color: var(--adm-atencao); }
+.adm-selo-confirmado { background: var(--adm-ok-fundo);       color: var(--adm-ok); }
+.adm-selo-entregue   { background: var(--adm-dados-fundo);    color: var(--adm-dados); }
+.adm-selo-cancelado  { background: var(--adm-ruim-fundo);     color: var(--adm-ruim); }
+/* Origem do dado: ERP em azul (dados), Site e demais etiquetas neutras. */
+.adm-selo-erp    { background: var(--adm-dados-fundo);      color: var(--adm-dados); }
+.adm-selo-neutro { background: var(--adm-neutro-fundo-2);    color: var(--adm-tinta-2); }
 
 /* ===================== Abas e filtro ===================== */
 .adm-aba {
@@ -227,12 +262,12 @@ body.admin {
     transition: color 0.2s ease, background-color 0.2s ease;
 }
 
-.adm-aba:hover { color: var(--adm-tinta); background-color: rgba(255, 255, 255, 0.04); }
+.adm-aba:hover { color: var(--adm-tinta); background-color: var(--adm-neutro-fundo); }
 
 .adm-aba.is-ativa {
     color: var(--adm-tinta);
-    background-color: rgba(242, 140, 82, 0.14);
-    border-color: rgba(242, 140, 82, 0.35);
+    background-color: var(--adm-acao-fundo);
+    border-color: var(--adm-acao-borda);
 }
 
 /* Filtro num só lugar, acima de tudo o que ele afeta. */
@@ -248,7 +283,7 @@ body.admin {
     outline: none;
 }
 
-.adm-filtro:focus { border-color: var(--adm-marca); }
+.adm-filtro:focus { border-color: var(--adm-acao); }
 
 /* ===================== Entrada ===================== */
 .adm-input {
@@ -263,11 +298,11 @@ body.admin {
     transition: border-color 0.2s ease;
 }
 
-.adm-input:focus { border-color: var(--adm-marca); }
+.adm-input:focus { border-color: var(--adm-acao); }
 
 .adm-botao {
-    background: linear-gradient(180deg, #F28C52 0%, #D96E30 100%);
-    color: #FFFFFF;
+    background: var(--adm-acao);
+    color: var(--adm-acao-texto);
     border: none;
     border-radius: 0.6rem;
     padding: 0.75rem 1rem;
@@ -294,7 +329,7 @@ body.admin {
     transition: color 0.2s ease, border-color 0.2s ease;
 }
 
-.adm-botao-fantasma:hover { color: var(--adm-tinta); border-color: var(--adm-marca); }
+.adm-botao-fantasma:hover { color: var(--adm-tinta); border-color: var(--adm-acao); }
 
 /* Refazer a busca não pode piscar esqueleto: mantém o desenho anterior
    esmaecido, sem salto de layout. */
@@ -343,7 +378,7 @@ body.admin {
     padding: 0 0.25rem;
     border-radius: 999px;
     background: var(--adm-ruim);
-    color: #fff;
+    color: var(--adm-acao-texto);
     font-size: 0.62rem;
     font-weight: 700;
     line-height: 1.1rem;
@@ -361,7 +396,7 @@ body.admin {
     75% { transform: rotate(-2deg); }
 }
 
-.adm-sino.is-tocando { animation: adm-sino-toca 0.6s ease; color: var(--adm-marca); }
+.adm-sino.is-tocando { animation: adm-sino-toca 0.6s ease; color: var(--adm-acao); }
 
 /* ===================== Filtros globais ===================== */
 .adm-chip {
@@ -379,8 +414,8 @@ body.admin {
 .adm-chip:hover { color: var(--adm-tinta); }
 
 .adm-chip.is-ativo {
-    background: rgba(242, 140, 82, 0.14);
-    border-color: rgba(242, 140, 82, 0.4);
+    background: var(--adm-acao-fundo);
+    border-color: var(--adm-acao-borda);
     color: var(--adm-tinta);
 }
 
@@ -455,7 +490,7 @@ body.admin {
     font-size: 0.7rem;
     font-weight: 700;
     color: var(--adm-tinta-3);
-    background: rgba(255, 255, 255, 0.06);
+    background: var(--adm-neutro-fundo);
     border-radius: 999px;
     padding: 0.05rem 0.5rem;
 }
@@ -470,7 +505,7 @@ body.admin {
     transition: background-color 0.15s ease;
 }
 
-.adm-kanban-corpo.is-zona-de-solta { background: rgba(242, 140, 82, 0.08); }
+.adm-kanban-corpo.is-zona-de-solta { background: var(--adm-acao-fundo); }
 
 .adm-kanban-cartao {
     background: var(--adm-superficie);
@@ -507,9 +542,9 @@ body.admin {
     cursor: pointer;
 }
 
-.adm-pagina-botao:hover:not(:disabled) { border-color: var(--adm-marca); color: var(--adm-tinta); }
+.adm-pagina-botao:hover:not(:disabled) { border-color: var(--adm-acao); color: var(--adm-tinta); }
 .adm-pagina-botao:disabled { opacity: 0.35; cursor: not-allowed; }
-.adm-pagina-botao.is-ativa { background: var(--adm-marca); border-color: var(--adm-marca); color: #fff; }
+.adm-pagina-botao.is-ativa { background: var(--adm-acao); border-color: var(--adm-acao); color: var(--adm-acao-texto); }
 
 /* ===================== Modal de detalhes ===================== */
 .adm-modal-fundo {
@@ -548,7 +583,7 @@ body.admin {
     cursor: pointer;
 }
 
-.adm-modal-fechar:hover { color: var(--adm-tinta); background: rgba(255, 255, 255, 0.06); }
+.adm-modal-fechar:hover { color: var(--adm-tinta); background: var(--adm-neutro-fundo); }
 
 /* ===================== Exportar / imprimir ===================== */
 .adm-exportar { display: flex; gap: 0.5rem; }
