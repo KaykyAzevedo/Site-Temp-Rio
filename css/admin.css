@@ -519,6 +519,8 @@ body.admin {
 .adm-kanban-cartao:hover { border-color: var(--adm-borda-forte); }
 .adm-kanban-cartao.is-arrastando { opacity: 0.4; }
 .adm-kanban-cartao:active { cursor: grabbing; }
+/* Pedido em Aguardando que já casou com uma venda do ERP: destaque discreto (borda verde à esquerda). */
+.adm-kanban-cartao.adm-kanban-faturado { border-color: var(--adm-ok); box-shadow: inset 3px 0 0 var(--adm-ok); }
 
 /* ===================== Paginação ===================== */
 .adm-paginacao {

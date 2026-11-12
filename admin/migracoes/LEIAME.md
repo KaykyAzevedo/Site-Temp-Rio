@@ -16,7 +16,7 @@ separação eh_equipe/eh_admin por papel. Consulte MERGE_DECISOES.md.
 | 016_corrige_validacao_retroativa.sql | B | JÁ APLICADA — trg_pedidos_valida |
 | 019_solidcon_espelho.sql | A, antes 012 | JÁ APLICADA COMO 012 DE A; NÃO REAPLICAR |
 | 020_solidcon_historico.sql | A, antes 017 | JÁ APLICADA COMO 017 DE A; NÃO REAPLICAR |
-| 021_total_servidor_solidcon.sql | A, antes 011 | NÃO APLICADA; depende de revisão/aprovação |
+| 021_total_servidor_solidcon.sql | A, antes 011 | ABANDONADA (2026-11-12, decisão do dono): não aplicar. O "lançado no SOLIDCON" manual foi substituído pelo casamento com as vendas do ERP (034 / js/admin-erp-casamento.js). Arquivo mantido só como registro. |
 | 022_solidcon_vendas.sql | A, antes 018 | APLICADA (2026-11-11) |
 | 023_solidcon_clientes.sql | Espelho minimizado de clientes | APLICADA (2026-11-11) |
 | 024_solidcon_publico.sql | Disponibilidade e ranking públicos, vínculo codigo_erp | APLICADA (2026-11-11) |
@@ -29,6 +29,7 @@ separação eh_equipe/eh_admin por papel. Consulte MERGE_DECISOES.md.
 | 031_solidcon_margem.sql | Margem por produto da filial 4: vendas por dia e custos (módulo margem) | APLICADA (2026-11-12) |
 | 032_antispam.sql | Anti-spam: limite por origem (IP hasheado) + disjuntor global + honeypot nos INSERTs anônimos | APLICADA (2026-11-12) |
 | 033_solidcon_clientes_geo.sql | Coordenadas por cliente CNPJ + leitura do mapa de expansão (linha do tempo) | APLICADA (2026-11-12) |
+| 034_pedidos_erp_vinculo.sql | Kanban pelo ERP, fase 2: vínculo pedido↔venda SOLIDCON e confirmação automática | NÃO APLICADA (aguarda o dono) |
 
 019/020 são nomes de organização do repositório. Os objetos SQL, RPCs e a
 assinatura chamada pelo script continuam iguais. 017/018 não são reutilizados
@@ -1114,3 +1115,84 @@ commit;
 ```
 
 Perde só as coordenadas (refazê-las custa novas requisições ao Nominatim). Nada da 023/026 muda.
+
+## 034_pedidos_erp_vinculo.sql — Kanban andando pelo ERP, fase 2 (NÃO APLICADA)
+
+Pedido do dono: os pedidos do site andam sozinhos conforme a venda aparece no ERP.
+
+- **Fase 1** (sem migração) é a função pura `js/admin-erp-casamento.js`. O painel busca `solidcon_vendas_clientes` só dos CNPJs com pedido aberto e mostra o selo "Faturado no ERP · cupom · dd/mm · R$" ou "Conferir no ERP". Os casados em Aguardando ganham o botão **"Confirmar (faturado no ERP)"**, que usa o fluxo de status já existente.
+- **Fase 2** (esta migração) faz a mesma conta no banco, grava o vínculo e move **aguardando → confirmado** sem clique. Fica para o dono aprovar.
+
+Requer pedidos (com `frete_centavos`), 015 (`auditoria`), 026 e `eh_equipe()`. Idempotente, `begin/commit`, todos os UPDATE/DELETE com WHERE (safeupdate). Não acessa o ERP nem altera o coletor.
+
+### Regra (idêntica no SQL e no JS; mudar nos dois lugares)
+
+1. `venda.tipo='cnpj'` e `venda.documento` = dígitos de `pedidos.cnpj` (CPF nunca).
+2. `venda.dt >= pedido.criado_em - 30 min` e `venda.dia <= dia_SP(pedido.criado_em) + 7`.
+3. `|venda - alvo| <= max(5% do alvo, R$ 10,00)`. O alvo é `valor_centavos` **ou** `valor_centavos + frete_centavos` (não se sabe se o cupom inclui frete). Vale a menor diferença; no empate fica "produtos".
+4. Uma venda `(dia, cd_pdv, nr_cupom)` casa com no máximo um pedido: índice único no banco.
+5. Pedidos em ordem `(criado_em, id)`. **Casado** = exatamente uma venda livre na tolerância, e essa venda não serve para nenhum outro pedido aberto ainda sem vínculo. Qualquer dúvida não grava; a tela mostra "Conferir":
+   - várias vendas;
+   - venda disputada;
+   - valor fora da tolerância;
+   - soma de 2–3 cupons que bate.
+6. Só `aguardando` e `confirmado` dos últimos 120 dias. `entregue` e `cancelado` nunca são tocados. Status nunca volta. `confirmado` só ganha o vínculo.
+
+O casamento usa as **vendas registradas no ERP** (cupons de `GetVendasResumo`, migração 026). Venda lançada por outro caminho do ERP que não chegue a esse endpoint não casa; o pedido fica como hoje (manual).
+
+### Objetos
+
+| Objeto | Acesso |
+|---|---|
+| `pedidos_erp_vinculo` (PK `pedido_id` → `pedidos` on delete cascade; único `(dia,cd_pdv,nr_cupom)`; `dt`, `valor_erp_centavos`, `alvo`, `diferenca_centavos`, `confirmou`, `venda_presente`, `casado_em`, `casado_por`) | SELECT só equipe (RLS); sem escrita direta |
+| `pedidos_erp_recusa` (pares pedido/cupom desfeitos pela equipe; o automático não recasa) | SELECT só equipe; sem escrita direta |
+| `pedidos_casar_erp()` → `{status, casados, confirmados, em_duvida, vendas_sumiram, vendas_voltaram}` | DEFINER, `search_path=pg_catalog`. EXECUTE authenticated. Exige equipe autenticada, **ou** sessão sem JWT de `postgres`/`supabase_admin` (lista fechada: SQL Editor e pg_cron). Pela API a sessão é `authenticator` e não passa; qualquer outro login direto é recusado |
+| `pedidos_desvincular_erp(p_pedido uuid)` → `{status, removido}` | DEFINER, só equipe. Status **não** muda: quem confirmou errado reabre pelo fluxo normal |
+| `pedidos_034_pode()` | helper interno, sem EXECUTE para a API |
+
+Ao confirmar sozinho:
+- **dois UPDATEs:** o primeiro faz a transição; o gatilho `marcar_atualizacao` carimba `now()`. O segundo grava `confirmado_em = dt da venda`, para o faturamento cair no mês da venda.
+- **auditoria:** registra `auditoria(acao='pedido_confirmado_erp', ator='automatico')` com cupom e valor; `executado_por` = e-mail da equipe ou `automatico`.
+- **WhatsApp:** não abre (exige clique). O painel deve oferecer "Avisar cliente".
+
+Cupom que some do ERP (estorno) vira `venda_presente=false` na próxima rodada. O status **não** é revertido; a tela deve alertar "venda não está mais no ERP".
+
+Com `pg_cron` habilitado, a instalação agenda `pedidos_034_casar_erp` a cada 30 min. Sem ele, rodar `select public.pedidos_casar_erp();` no SQL Editor. **O painel (fase 1) não chama esta RPC**: ele só faz SELECT. Duas integrações ficam para depois de aplicar a 034:
+- chamar `sb.rpc('pedidos_casar_erp')` ao abrir Pedidos;
+- ler `pedidos_erp_vinculo` e passar os vínculos para `TempRioErpCasamento.casar(..., {vinculos})`, para não sugerir de novo o que o banco já casou.
+
+Fase 1, completude: lote de vendas que bate no teto de 5000 linhas é dividido ao meio até isolar o CNPJ. O CNPJ que sozinho passa do teto fica **fora** do casamento (o pedido aparece como antes) e a tela informa. Resultado parcial nunca vira "Faturado no ERP".
+
+### Validação (PG 18 local isolado, mesmo ambiente da 033, gatilho da 021 desligado como em produção)
+
+034 aplicada 2x sem erro. Casos testados:
+- **acesso:** anon sem EXECUTE e sem SELECT; autenticado fora da equipe → `somente equipe`; INSERT direto negado; índice único barra o segundo vínculo do mesmo cupom;
+- **casamentos:**
+  - pedido com frete casa pelo alvo "produtos+frete" e vai a confirmado com `confirmado_em` = dt da venda;
+  - pedido já confirmado só ganha o vínculo;
+  - duas vendas → dúvida; dois pedidos para uma venda → dúvida nos dois;
+  - não casam: cancelado e entregue, venda antes do pedido (−30 min), venda após 7 dias e valor fora da tolerância;
+- **rodadas seguintes:**
+  - 2ª rodada não muda nada;
+  - desvincular mantém o status, registra recusa e não recasa;
+  - cupom removido → `venda_presente=false` com status mantido;
+  - quando uma das duas vendas some, o pedido passa a casar (rodada como `postgres`, sem JWT, como o pg_cron);
+- **auditoria:** registros corretos.
+
+`js/admin-erp-casamento.js` testado em Node com os mesmos cenários: mesmo resultado, mais "conferir" por valor diferente e soma de cupons, CPF nunca, limite de 30 min e corte de 120 dias. Desfazer + reinstalar OK.
+
+### Desfazer
+
+```sql
+begin;
+do $$ begin if exists (select 1 from pg_catalog.pg_extension where extname = 'pg_cron') then
+  perform cron.unschedule(jobid) from cron.job where jobname = 'pedidos_034_casar_erp'; end if; end $$;
+drop function if exists public.pedidos_casar_erp();
+drop function if exists public.pedidos_desvincular_erp(uuid);
+drop function if exists public.pedidos_034_pode();
+drop table if exists public.pedidos_erp_vinculo;
+drop table if exists public.pedidos_erp_recusa;
+commit;
+```
+
+Status e `confirmado_em` já gravados permanecem; o histórico fica em `auditoria`.

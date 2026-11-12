@@ -867,8 +867,10 @@
             dados.visitasBrutas = rs[11].data || [];
             dados.leads = rs[12].data || [];
             dados.solicitacoesLgpd = rs[13].data || [];
+            erpvCalcular(); // pedidos novos com as vendas já em memória; a carga abaixo atualiza
             montarChipsDeFiltro();
             desenharTudo();
+            carregarCasamentoErp();
         });
     }
 
@@ -2523,8 +2525,8 @@
         var alvo = $('#pedidos-erp');
         if (!alvo) return;
         var cab = '<div class="flex items-center gap-2 mb-2">' + SELO_ERP + '<p class="font-bold">Vendas registradas no SOLIDCON</p></div>' +
-            '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">O ERP informa apenas o total vendido por dia e por produto — ele não traz pedido nem cliente. ' +
-            'Por isso estes números não se cruzam linha a linha com os pedidos do site acima.</p>';
+            '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Totais vendidos por dia e por produto no ERP; não se cruzam linha a linha com os pedidos do site acima. ' +
+            'O selo "Faturado no ERP" dos cartões vem das vendas por cliente (cupons).</p>';
         if (vend.carregando && !vend.carregado) {
             alvo.innerHTML = cab + '<div class="adm-card p-6 text-center text-sm" style="color:var(--adm-tinta-2)"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando vendas do SOLIDCON…</div>';
             return;
@@ -2705,7 +2707,6 @@
     function cmpDias(a, b) { return Math.round((cmpUtc(b) - cmpUtc(a)) / 86400000); }
     function cmpSomaDias(iso, n) { return new Date(cmpUtc(iso) + n * 86400000).toISOString().slice(0, 10); }
     function cmpData(iso) { var p = String(iso).split('-'); return p[2] + '/' + p[1] + '/' + p[0]; }
-    function cmpMesSeguinte(x) { var p = x.split('-'), a = Number(p[0]), mm = Number(p[1]) + 1; if (mm > 12) { mm = 1; a++; } return a + '-' + String(mm).padStart(2, '0') + '-01'; }
     // Hoje menos N meses, com o dia limitado ao último dia do mês de destino (31/08 - 6 meses = 28/02).
     function cmpMesesAtras(d, n) {
         var a = d.getFullYear(), m = d.getMonth() - n;
@@ -3214,12 +3215,6 @@
         desenharAbaSeSuja(abaAtual);
     }
 
-    // Fontes prontas (estoque do ERP, vendas do giro e fotos diárias), sem truncamento.
-    function entPronto() {
-        return solid.carregado && !solid.erro && !solid.ausente && giro.carregado && !giro.erro && !giro.ausente && !giro.truncado &&
-               ent.carregado && !ent.erro && !ent.ausente && !ent.truncado;
-    }
-
     // Registros por produto/dia em potes: {dia, chave, nome, ent, sai, vend}. Memoizado pelas fontes.
     function entCalcular() {
         var m = ent.memo;
@@ -3571,8 +3566,6 @@
         if (t) t.addEventListener('click', function () { ins.todos = !ins.todos; desenharInsLista(); });
     }
 
-    // Card do Resumão: contagens e os itens mais urgentes (mesma conta da Vitrine).
-
     /* ===================================================================
      * Dashboard de vendas (ERP) — Formas de pagamento (solidcon_vendas_modalidade, migração 027)
      * Valor e quantidade de pagamentos por forma e por mês (barras empilhadas) e % do total.
@@ -3710,8 +3703,6 @@
             pagLegenda(D) + pagBarras(D, m) + '<div class="mt-5">' + pagTabela(D) + '</div></div>';
         $('#pag-metrica').addEventListener('change', function (ev) { pag.metrica = ev.target.value === 'qtde' ? 'qtde' : 'valor'; desenharVendasPagamentos(); });
     }
-
-    // Card do Resumão: últimos 6 meses (valor) e principais formas.
 
     /* ===================================================================
      * Clientes — Financeiro: contas a receber do ERP (solidcon_receber, migração 030) — SOMENTE LEITURA
@@ -4762,9 +4753,6 @@
      * =================================================================== */
     var dash = { iniciado: false, rodando: false };
 
-    // Gate positivo: áreas restritas só com papel === 'admin' (papel nulo/desconhecido não libera). A RLS continua sendo a proteção real.
-    function dashVe(aba) { return papel === 'admin' || ABAS_SO_ADMIN.indexOf(aba) === -1; }
-
     function dashAtualizarResumo() {
         if (secaoVisivel('dashboard') && $('#hoje')) desenharHoje();
         else abasParaRedesenhar.dashboard = true;
@@ -4834,13 +4822,15 @@
         }
         var ag = dados.pedidos.filter(function (p) { return p.status === 'aguardando'; }).length;
         if (ag) item('fa-hourglass-half', 'var(--adm-atencao)', NUM.format(ag) + (ag === 1 ? ' pedido aguardando confirmação' : ' pedidos aguardando confirmação'), 'pedidos');
+        var fat = erpv.res ? erpv.res.resumo.paraConfirmar : 0;
+        if (fat) item('fa-file-invoice-dollar', 'var(--adm-ok)', NUM.format(fat) + (fat === 1 ? ' pedido já faturado no ERP para confirmar' : ' pedidos já faturados no ERP para confirmar'), 'pedidos');
+        else if (erpv.erro && ag) discretos.push('Vendas do ERP para os pedidos: falha ao carregar');
 
         if (pronto(scli)) {
             var faltam = {}; // clientes distintos (documento tipado), não pedidos
             dados.pedidos.forEach(function (p) {
                 if (cadastroErpDoPedido(p) !== 'falta') return;
-                var tp = p.cnpj ? 'cnpj' : 'cpf';
-                faltam[tp + ':' + docNorm(p.cnpj || p.cpf, tp)] = true;
+                faltam[docNorm(p.cnpj, 'cnpj')] = true; // pedidos só têm CNPJ (admin/supabase.sql: cnpj not null)
             });
             var nf = Object.keys(faltam).length;
             if (nf) item('fa-user-plus', 'var(--adm-atencao)', NUM.format(nf) + (nf === 1 ? ' cliente a cadastrar no ERP antes de faturar' : ' clientes a cadastrar no ERP antes de faturar'), 'pedidos');
@@ -5199,7 +5189,14 @@
             return;
         }
 
-        alvo.innerHTML = cabecalho +
+        var notaErp = erpv.carregado
+            ? '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)"><i class="fa-solid fa-file-invoice-dollar mr-1"></i>' + esc(ERPV_NOTA) +
+              (erpv.res && erpv.res.resumo.paraConfirmar ? ' <strong style="color:var(--adm-tinta-2)">' + NUM.format(erpv.res.resumo.paraConfirmar) +
+                  (erpv.res.resumo.paraConfirmar === 1 ? ' pedido já faturado no ERP para confirmar.' : ' pedidos já faturados no ERP para confirmar.') + '</strong>' : '') +
+              (Object.keys(erpv.incompletos).length ? ' ' + NUM.format(Object.keys(erpv.incompletos).length) +
+                  ' cliente(s) com vendas demais no período ficaram fora do casamento (aparecem como sempre).' : '') + '</p>'
+            : erpv.erro ? '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">Vendas do ERP indisponíveis agora: os pedidos aparecem como sempre.</p>' : '';
+        alvo.innerHTML = cabecalho + notaErp +
             (pedidosVista === 'kanban' ? htmlKanban(filtrados) : htmlTabelaPedidos(filtrados));
 
         if (pedidosVista === 'kanban') {
@@ -5274,6 +5271,8 @@
         '<div class="adm-kanban">' +
             COLUNAS_KANBAN.map(function (col) {
                 var itens = lista.filter(function (p) { return p.status === col.status; });
+                // Aguardando: já faturados no ERP primeiro (ordem estável: o resto mantém a ordem de chegada).
+                if (col.status === 'aguardando') itens = itens.filter(erpCasado).concat(itens.filter(function (p) { return !erpCasado(p); }));
                 return '<div class="adm-kanban-coluna' + (kanbanSegmento === col.status ? ' is-seg-ativa' : '') + '" data-kanban-col="' + col.status + '">' +
                     '<div class="adm-kanban-cabecalho">' +
                         '<span class="adm-kanban-titulo">' + esc(col.titulo) + '</span>' +
@@ -5288,7 +5287,8 @@
     }
 
     function cartaoKanban(p, extra) {
-        return '<div class="adm-kanban-cartao' + (extra || '') + '" draggable="true" data-id="' + esc(p.id) +
+        var destaque = p.status === 'aguardando' && erpCasado(p) ? ' adm-kanban-faturado' : '';
+        return '<div class="adm-kanban-cartao' + destaque + (extra || '') + '" draggable="true" data-id="' + esc(p.id) +
                 '" data-status-atual="' + esc(p.status) + '">' +
             '<div class="flex items-start justify-between gap-2">' +
                 '<p class="text-sm font-bold truncate">' + esc(p.razao_social) + '</p>' +
@@ -5304,7 +5304,7 @@
                     : '') +
             '</div>' +
             '<p class="text-xs mt-1 mb-2" style="color:var(--adm-tinta-3)">' + esc(dataHora(p.criado_em)) + '</p>' +
-            (seloSolidcon(p) || seloCadastroErp(p) ? '<div class="mb-2 flex flex-wrap gap-1">' + seloSolidcon(p) + seloCadastroErp(p) + '</div>' : '') +
+            (seloErpPedido(p) || seloCadastroErp(p) ? '<div class="mb-2 flex flex-wrap gap-1">' + seloErpPedido(p) + seloCadastroErp(p) + '</div>' : '') +
             '<div class="flex items-center gap-1 flex-wrap pt-2" style="border-top:1px solid var(--adm-borda)">' +
                 acoesDeStatus(p) +
             '</div>' +
@@ -5322,7 +5322,7 @@
                     '<td>' + esc(dataHora(p.criado_em)) + '</td>' +
                     '<td>' + esc(p.razao_social) + '</td>' +
                     '<td>' + esc((p.cidade || '') + '/' + (p.uf || '')) + '</td>' +
-                    '<td>' + selo(p.status) + ' ' + seloSolidcon(p) + ' ' + seloCadastroErp(p) + '</td>' +
+                    '<td>' + selo(p.status) + ' ' + seloErpPedido(p) + ' ' + seloCadastroErp(p) + '</td>' +
                     '<td class="num">' + esc(brl(p.valor_centavos)) + '</td>' +
                     '<td><div class="flex items-center gap-1 flex-wrap">' + acoesDeStatus(p) + '</div></td>' +
                 '</tr>';
@@ -5429,6 +5429,7 @@
                   '<strong>Obs:</strong> ' + esc(p.observacoes) + '</p>'
                 : '') +
 
+            htmlErpPedido(p) +
             '<div id="bloco-solidcon" class="mb-4"></div>' +
 
             '<div class="flex items-center gap-2 flex-wrap pt-3" style="border-top:1px solid var(--adm-borda)">' +
@@ -5442,27 +5443,26 @@
     }
 
     /* ===================================================================
-     * Lançar no SOLIDCON
+     * Dados para lançar no SOLIDCON
      *
      * O Marcio digita cada pedido do site no comercial do SOLIDCON. Este
-     * bloco junta tudo o que ele precisa em um lugar só (+ "Copiar tudo") e
-     * registra o número do pedido lançado. Depende da migração 021: sem ela,
-     * as colunas novas não vêm no select('*') e o bloco avisa em vez de quebrar.
+     * bloco junta tudo o que ele precisa em um lugar só (+ "Copiar tudo"),
+     * com o código do ERP de cada item (catalogo_produtos.codigo_erp, 024).
+     * Não há registro manual de "lançado": quem diz que o pedido foi
+     * faturado é o casamento com as vendas do ERP (selo "Faturado no ERP").
      * =================================================================== */
     function abrirPedido(p) {
         abrirModal(cartaoPedido(p));
         carregarBlocoSolidcon(p);
     }
 
-    function lancadoNoSolidcon(p) { return !!p.lancado_solidcon_em; }
-
     // Cliente do pedido já existe no ERP? Sem a lista do ERP (carregando, ausente ou erro) não afirma nada.
     // 'ja' | 'falta' | null (sem como afirmar: cancelado, fonte indisponível ou sem documento).
     function cadastroErpDoPedido(p) {
         if (p.status === 'cancelado' || scli.carregando || scli.erro || scli.ausente || !scli.carregado || !scli.docs) return null;
-        var tp = p.cnpj ? 'cnpj' : 'cpf', doc = p.cnpj || p.cpf;
-        if (!docNorm(doc, tp)) return null;
-        return jaNoErp(doc, tp) ? 'ja' : 'falta';
+        // Pedidos só têm CNPJ (admin/supabase.sql: cnpj not null; não há coluna cpf em pedidos).
+        if (!docNorm(p.cnpj, 'cnpj')) return null;
+        return jaNoErp(p.cnpj, 'cnpj') ? 'ja' : 'falta';
     }
 
     function seloCadastroErp(p) {
@@ -5475,13 +5475,136 @@
               '<i class="fa-solid fa-user-plus"></i>Cadastrar no ERP antes de faturar</span>';
     }
 
-    // Sem a coluna (migração 021 pendente) não há selo: não dá para afirmar nada.
-    function seloSolidcon(p) {
-        if (!('lancado_solidcon_em' in p) || p.status === 'cancelado') return '';
-        return lancadoNoSolidcon(p)
-            ? '<span class="adm-selo adm-selo-confirmado" title="Pedido ' + esc(p.numero_solidcon || '') + '">' +
-              '<i class="fa-solid fa-check"></i>Lançado no SOLIDCON</span>'
-            : '<span class="adm-selo adm-selo-aguardando"><i class="fa-regular fa-clock"></i>Falta lançar</span>';
+    /* ===================================================================
+     * Pedidos × vendas do ERP (Kanban, fase 1) — SOMENTE LEITURA
+     *
+     * Busca em solidcon_vendas_clientes (026) só os cupons dos CNPJs com pedido
+     * aberto e casa com os pedidos pela regra de js/admin-erp-casamento.js
+     * (mesma da migração 034). Só SUGERE: nada é gravado aqui; o botão
+     * "Confirmar (faturado no ERP)" usa o mudarStatus de sempre. Pedido que
+     * não casar fica exatamente como antes.
+     * =================================================================== */
+    var ERPV_LIMITE = 5000, ERPV_LOTE_DOCS = 100;
+    // incompletos: CNPJs cujo lote bateu no teto (ERPV_LIMITE). Resultado parcial não prova que a venda é a única:
+    // esses pedidos ficam FORA do casamento (aparecem como sempre), nunca viram "Faturado no ERP".
+    var erpv = { carregado: false, carregando: false, erro: null, ausente: false, vendas: [], res: null, seq: 0, incompletos: {} };
+    var ERPV_NOTA = 'O casamento usa as vendas registradas no ERP (cupons). Se um pedido não casar, ele fica como hoje.';
+    var ERPV_MOTIVO = {
+        varias_vendas: 'Mais de uma venda do cliente bate com este pedido',
+        venda_disputada: 'A venda bate com mais de um pedido deste cliente',
+        valor_diferente: 'Há venda do cliente no período, mas com valor diferente',
+        varios_cupons: 'A soma de mais de um cupom bate com o pedido'
+    };
+
+    function erpvCalcular() {
+        var C = window.TempRioErpCasamento;
+        if (!C || !erpv.carregado) { erpv.res = null; return; }
+        var inc = erpv.incompletos;
+        erpv.res = C.casar(dados.pedidos.filter(function (p) { return !inc[C.docCnpj(p.cnpj)]; }), erpv.vendas);
+    }
+
+    function erpvRedesenhar() {
+        if (secaoVisivel('pedidos')) desenharPedidos(); else abasParaRedesenhar.pedidos = true;
+        dashAtualizarResumo();
+    }
+
+    function carregarCasamentoErp() {
+        var C = window.TempRioErpCasamento;
+        if (!C) return;
+        var q = C.consulta(dados.pedidos), seq = ++erpv.seq;
+        if (!q) { erpv.vendas = []; erpv.incompletos = {}; erpv.carregado = true; erpv.erro = null; erpvCalcular(); erpvRedesenhar(); return; }
+        erpv.carregando = true;
+        // Lote no teto (ERPV_LIMITE) não prova que veio inteiro: divide ao meio até isolar o CNPJ; CNPJ sozinho
+        // no teto é descartado e fica FORA do casamento. Devolve {vendas, inc} ou {error}.
+        function buscarLote(docs) {
+            return vendPaginar(function () {
+                return sb.from('solidcon_vendas_clientes').select('dia,dt,documento,tipo,valor_centavos,cd_pdv,nr_cupom')
+                    .eq('tipo', 'cnpj').in('documento', docs).gte('dia', q.desde)
+                    .order('dia', { ascending: true }).order('cd_pdv', { ascending: true }).order('nr_cupom', { ascending: true });
+            }, ERPV_LIMITE).then(function (r) {
+                if (r.error) return { error: r.error };
+                var linhas = r.data || [];
+                if (linhas.length < ERPV_LIMITE) return { vendas: linhas, inc: {} };
+                if (docs.length === 1) { var um = {}; um[docs[0]] = true; return { vendas: [], inc: um }; }
+                var meio = Math.ceil(docs.length / 2);
+                return Promise.all([buscarLote(docs.slice(0, meio)), buscarLote(docs.slice(meio))]).then(function (dois) {
+                    var e = dois.filter(function (x) { return x.error; })[0];
+                    if (e) return e;
+                    var inc = {};
+                    dois.forEach(function (x) { Object.keys(x.inc).forEach(function (d) { inc[d] = true; }); });
+                    return { vendas: dois[0].vendas.concat(dois[1].vendas), inc: inc };
+                });
+            });
+        }
+        var lotes = [];
+        for (var i = 0; i < q.documentos.length; i += ERPV_LOTE_DOCS) lotes.push(q.documentos.slice(i, i + ERPV_LOTE_DOCS));
+        Promise.all(lotes.map(buscarLote)).then(function (rs) {
+            if (seq !== erpv.seq) return; // chegou resposta de uma carga mais nova
+            erpv.carregando = false;
+            var falha = rs.filter(function (r) { return r.error; })[0];
+            if (falha) {
+                erpv.ausente = solidTabelaAusente(falha.error);
+                erpv.erro = erpv.ausente ? null : String(falha.error.message || falha.error);
+                erpv.carregado = false; erpv.vendas = []; erpv.incompletos = {};
+            } else {
+                erpv.ausente = false; erpv.erro = null; erpv.carregado = true;
+                var vendas = [], inc = {};
+                rs.forEach(function (r) {
+                    vendas = vendas.concat(r.vendas);
+                    Object.keys(r.inc).forEach(function (d) { inc[d] = true; });
+                });
+                erpv.vendas = vendas; erpv.incompletos = inc;
+            }
+            erpvCalcular();
+            erpvRedesenhar();
+        }).catch(function (e) {
+            if (seq !== erpv.seq) return;
+            erpv.carregando = false; erpv.carregado = false; erpv.erro = String(e && e.message || e);
+            erpvCalcular(); erpvRedesenhar();
+        });
+    }
+
+    function erpResultado(p) { return (erpv.res && erpv.res.porPedido[p.id]) || null; }
+    function erpCasado(p) { var r = erpResultado(p); return !!(r && r.estado === 'casado'); }
+    function erpDiaCurto(dia) { var s = String(dia || '').split('-'); return s.length === 3 ? s[2] + '/' + s[1] : String(dia || ''); }
+
+    function seloErpPedido(p) {
+        var r = erpResultado(p);
+        if (!r) return '';
+        if (r.estado === 'casado') {
+            var v = r.venda;
+            return '<span class="adm-selo adm-selo-confirmado" title="' + esc('Venda no ERP: PDV ' + v.cd_pdv + ', cupom ' + v.nr_cupom +
+                    ' (' + (r.alvo === 'produtos_frete' ? 'produtos + frete' : 'produtos') + ', diferença ' + brl(r.diferenca) + '). ' + ERPV_NOTA) + '">' +
+                '<i class="fa-solid fa-file-invoice-dollar"></i>Faturado no ERP · cupom ' + esc(String(v.nr_cupom)) + ' · ' +
+                esc(erpDiaCurto(v.dia)) + ' · ' + esc(brl(v.valor_centavos)) + '</span>';
+        }
+        return '<span class="adm-selo adm-selo-aguardando" title="' + esc((ERPV_MOTIVO[r.motivo] || 'Conferir') + '. ' + ERPV_NOTA) + '">' +
+            '<i class="fa-solid fa-magnifying-glass"></i>Conferir no ERP</span>';
+    }
+
+    // Detalhe no modal: por que casou (ou o que conferir), com as vendas candidatas.
+    function htmlErpPedido(p) {
+        var r = erpResultado(p);
+        var nota = '<p class="text-xs mt-2" style="color:var(--adm-tinta-3)">' + esc(ERPV_NOTA) + '</p>';
+        if (!r) {
+            if (p.status !== 'aguardando' && p.status !== 'confirmado') return '';
+            var txt = erpv.carregando ? 'Procurando a venda no ERP…' : erpv.erro ? 'Vendas do ERP indisponíveis agora.' :
+                erpv.ausente ? 'Vendas por cliente do ERP ainda não instaladas neste banco.' : 'Nenhuma venda do ERP casou com este pedido até agora.';
+            return '<div class="mb-4 text-xs" style="color:var(--adm-tinta-2)">' + esc(txt) + nota + '</div>';
+        }
+        var vendas = r.estado === 'casado' ? [r.venda] : (r.candidatos || []);
+        var linhas = vendas.map(function (v) {
+            return '<tr><td>' + esc(cmpData(v.dia)) + '</td><td>' + esc(String(v.cd_pdv)) + ' / ' + esc(String(v.nr_cupom)) + '</td>' +
+                '<td class="num">' + esc(brl(v.valor_centavos)) + '</td></tr>';
+        }).join('');
+        var titulo = r.estado === 'casado'
+            ? 'Faturado no ERP' + (r.alvo === 'produtos_frete' ? ' (valor com frete)' : '') + ' · diferença ' + brl(r.diferenca)
+            : 'Conferir no ERP: ' + (ERPV_MOTIVO[r.motivo] || '') + (r.soma_centavos != null ? ' (soma ' + brl(r.soma_centavos) + ')' : '');
+        return '<div class="adm-card p-4 mb-4" style="border:1px solid var(--adm-borda)">' +
+            '<div class="mb-2">' + seloErpPedido(p) + '</div>' +
+            '<p class="text-sm font-bold mb-2">' + esc(titulo) + '</p>' +
+            '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Dia</th><th>PDV / cupom</th>' +
+            '<th style="text-align:right">Valor</th></tr></thead><tbody>' + linhas + '</tbody></table></div>' + nota + '</div>';
     }
 
     // Itens com preço congelado (pedido_items) + código do ERP; cai no jsonb se faltar.
@@ -5559,26 +5682,14 @@
     }
 
     function desenharBlocoSolidcon(alvo, p, info) {
-        var temColuna = 'lancado_solidcon_em' in p;
         var frete = Number(p.frete_centavos) || 0;
         var total = (p.valor_centavos || 0) + frete;
         var semCodigo = info.linhas.some(function (l) { return !info.codigos[l.produto_id]; });
         var avisos = '';
 
-        // O que o cliente viu no site pode divergir do gravado (preço recalculado no servidor).
-        var difValor = p.valor_site_centavos != null && Number(p.valor_site_centavos) !== Number(p.valor_centavos);
-        var difFrete = p.frete_site_centavos != null && Number(p.frete_site_centavos) !== frete;
-        if (difValor || difFrete) {
-            avisos += '<p class="text-xs p-3 rounded-lg mb-3" style="background:var(--adm-atencao-fundo);color:var(--adm-atencao)">' +
-                '<i class="fa-solid fa-triangle-exclamation mr-1"></i>O valor que o cliente viu era ' +
-                (difValor ? 'produtos ' + esc(brl(p.valor_site_centavos)) + ' (gravado ' + esc(brl(p.valor_centavos)) + ')' : '') +
-                (difValor && difFrete ? ' e ' : '') +
-                (difFrete ? 'frete ' + esc(brl(p.frete_site_centavos)) + ' (gravado ' + esc(brl(frete)) + ')' : '') +
-                '. Confirme com o cliente antes de lançar.</p>';
-        }
-        if (!temColuna || info.semColuna) {
+        if (info.semColuna) {
             avisos += '<p class="text-xs p-3 rounded-lg mb-3" style="background:var(--adm-neutro-fundo);color:var(--adm-tinta-2)">' +
-                'Migração 021 ainda não aplicada no banco: códigos SOLIDCON e o registro de lançamento ficam indisponíveis.</p>';
+                'Não foi possível ler os códigos do ERP no catálogo agora: procure os produtos pelo nome.</p>';
         } else if (semCodigo) {
             avisos += '<p class="text-xs p-3 rounded-lg mb-3" style="background:var(--adm-ruim-fundo);color:var(--adm-ruim)">' +
                 '<i class="fa-solid fa-circle-exclamation mr-1"></i>Há produto sem código SOLIDCON — procure pelo nome.</p>';
@@ -5590,29 +5701,9 @@
         var endereco = (p.logradouro || '') + (p.numero ? ', ' + p.numero : '') + (p.complemento ? ' - ' + p.complemento : '') +
             ' · ' + (p.bairro || '') + ' · ' + (p.cidade || '') + '/' + (p.uf || '') + (p.cep ? ' · CEP ' + p.cep : '');
 
-        var lancamento = !temColuna ? '' :
-            '<div class="pt-3 mt-3" style="border-top:1px solid var(--adm-borda)">' +
-                '<label class="adm-tile-rotulo block mb-1" for="solidcon-numero">Nº do pedido no SOLIDCON</label>' +
-                '<div class="flex gap-2 flex-wrap items-center">' +
-                    '<input id="solidcon-numero" class="adm-input" style="max-width:14rem;padding:.55rem .7rem" ' +
-                        'inputmode="numeric" autocomplete="off" value="' + esc(p.numero_solidcon || '') + '">' +
-                    '<button type="button" id="solidcon-marcar" class="adm-botao">' +
-                        '<i class="fa-solid fa-check mr-1"></i>Marcar como lançado</button>' +
-                    (lancadoNoSolidcon(p)
-                        ? '<button type="button" id="solidcon-desfazer" class="adm-botao-fantasma">' +
-                          '<i class="fa-solid fa-rotate-left mr-1"></i>Desfazer</button>' : '') +
-                '</div>' +
-                '<p id="solidcon-msg" class="text-xs mt-2" role="status" style="color:var(--adm-tinta-2)">' +
-                    (lancadoNoSolidcon(p)
-                        ? '<i class="fa-solid fa-circle-check mr-1" style="color:var(--adm-bom)"></i>Lançado em ' +
-                          esc(dataHora(p.lancado_solidcon_em)) + (p.numero_solidcon ? ' · pedido ' + esc(p.numero_solidcon) : '')
-                        : 'Ainda não lançado.') +
-                '</p>' +
-            '</div>';
-
         alvo.innerHTML = '<div class="adm-card p-4" style="border:1px solid var(--adm-borda)">' +
             '<div class="flex items-center justify-between gap-2 flex-wrap mb-3">' +
-                '<p class="font-bold text-sm">Lançar no SOLIDCON ' + seloSolidcon(p) + '</p>' +
+                '<p class="font-bold text-sm">Dados para lançar no SOLIDCON</p>' +
                 '<button type="button" id="solidcon-copiar" class="adm-botao-fantasma">' +
                     '<i class="fa-regular fa-copy mr-1"></i>Copiar tudo</button>' +
             '</div>' + avisos +
@@ -5638,7 +5729,7 @@
                 'Produtos ' + esc(brl(p.valor_centavos)) + ' · Frete ' + esc(brl(frete)) +
                 ' · <strong style="color:var(--adm-tinta)">Total ' + esc(brl(total)) + '</strong></div>' +
             (p.observacoes ? '<p class="text-xs mt-2" style="color:var(--adm-tinta-2)"><strong>Obs:</strong> ' + esc(p.observacoes) + '</p>' : '') +
-            lancamento + '</div>';
+            '</div>';
 
         var btnCopiar = alvo.querySelector('#solidcon-copiar');
         btnCopiar.addEventListener('click', function () {
@@ -5649,58 +5740,14 @@
             });
         });
 
-        if (!temColuna) return;
-        function gravar(numero) {
-            var msg = alvo.querySelector('#solidcon-msg');
-            var botoes = alvo.querySelectorAll('#solidcon-marcar, #solidcon-desfazer');
-            botoes.forEach(function (b) { b.disabled = true; });
-            msg.style.color = 'var(--adm-tinta-2)';
-            msg.textContent = 'Salvando…';
-            // A resposta pode chegar com outro pedido aberto: o bloco só é
-            // tocado se ainda for o deste pedido; o objeto em memória sempre.
-            var aindaAberto = function () {
-                return alvo.isConnected && alvo.getAttribute('data-pedido-id') === String(p.id);
-            };
-            var falha = function (texto) {
-                if (!aindaAberto()) return;
-                botoes.forEach(function (b) { b.disabled = false; });
-                msg.style.color = 'var(--adm-ruim)';
-                msg.textContent = texto;
-            };
-            sb.rpc('marcar_lancado_solidcon', { p_pedido: p.id, p_numero: numero }).then(function (r) {
-                if (r.error) { falha('Não foi possível salvar: ' + r.error.message); return; }
-                // A RPC devolve a linha do pedido; NULL = pedido não visível/inexistente.
-                var linha = Array.isArray(r.data) ? r.data[0] : r.data;
-                if (!linha || String(linha.id) !== String(p.id)) {
-                    falha('Não foi possível salvar: o pedido não foi encontrado ou você não tem acesso.');
-                    return;
-                }
-                p.numero_solidcon = linha.numero_solidcon || null;
-                p.lancado_solidcon_em = linha.lancado_solidcon_em || null;
-                if (aindaAberto()) desenharBlocoSolidcon(alvo, p, info);
-                desenharPedidos(); // atualiza o selo na lista/Kanban
-            }, function (e) {
-                falha('Falha de rede: ' + (e && e.message || e));
-            });
-        }
-        alvo.querySelector('#solidcon-marcar').addEventListener('click', function () {
-            var n = alvo.querySelector('#solidcon-numero').value.trim();
-            if (!n) {
-                var m = alvo.querySelector('#solidcon-msg');
-                m.style.color = 'var(--adm-ruim)';
-                m.textContent = 'Informe o nº do pedido no SOLIDCON.';
-                return;
-            }
-            gravar(n);
-        });
-        var desf = alvo.querySelector('#solidcon-desfazer');
-        if (desf) desf.addEventListener('click', function () { gravar(''); });
     }
 
     function acoesDeStatus(p) {
         var botoes = [];
         if (p.status === 'aguardando') {
-            botoes.push(botaoStatus(p.id, 'confirmado', 'Confirmar venda', 'fa-circle-check'));
+            botoes.push(erpCasado(p)
+                ? botaoStatus(p.id, 'confirmado', 'Confirmar (faturado no ERP)', 'fa-file-invoice-dollar')
+                : botaoStatus(p.id, 'confirmado', 'Confirmar venda', 'fa-circle-check'));
             botoes.push(botaoStatus(p.id, 'cancelado', 'Cancelar', 'fa-circle-xmark'));
         } else if (p.status === 'confirmado') {
             botoes.push(botaoStatus(p.id, 'entregue', 'Marcar entregue', 'fa-truck'));
@@ -7564,6 +7611,7 @@
                 function (payload) {
                     var novo = payload.new;
                     dados.pedidos.unshift(novo);
+                    erpvCalcular();
                     pedidosNaoVistos++;
                     atualizarSino();
                     tocarAlerta();
