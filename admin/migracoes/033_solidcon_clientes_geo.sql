@@ -1,4 +1,4 @@
--- 033: coordenadas por cliente CNPJ (mapa de expansao com linha do tempo). NAO APLICADA.
+-- 033: coordenadas por cliente CNPJ (mapa de expansao com linha do tempo). APLICADA em 2026-11-12.
 -- Instalacao manual no SQL Editor (papel postgres). Idempotente: pode rodar de novo.
 -- Nao acessa o ERP, nao altera o coletor, nao altera nem apaga dados existentes.
 -- Nao toca solidcon_clientes (023/027) nem solidcon_vendas_clientes (026): so le.

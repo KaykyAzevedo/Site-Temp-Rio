@@ -28,7 +28,7 @@ separação eh_equipe/eh_admin por papel. Consulte MERGE_DECISOES.md.
 | 030_solidcon_contas_receber.sql | Contas a receber abertas da filial 4 (módulo receber) | APLICADA (2026-11-12) |
 | 031_solidcon_margem.sql | Margem por produto da filial 4: vendas por dia e custos (módulo margem) | APLICADA (2026-11-12) |
 | 032_antispam.sql | Anti-spam: limite por origem (IP hasheado) + disjuntor global + honeypot nos INSERTs anônimos | APLICADA (2026-11-12) |
-| 033_solidcon_clientes_geo.sql | Coordenadas por cliente CNPJ + leitura do mapa de expansão (linha do tempo) | NÃO APLICADA |
+| 033_solidcon_clientes_geo.sql | Coordenadas por cliente CNPJ + leitura do mapa de expansão (linha do tempo) | APLICADA (2026-11-12) |
 
 019/020 são nomes de organização do repositório. Os objetos SQL, RPCs e a
 assinatura chamada pelo script continuam iguais. 017/018 não são reutilizados
