@@ -473,7 +473,8 @@
             caixas: d.caixas,
             valor_centavos: d.valorCentavos,
             itens: d.itens,
-            observacoes: d.observacoes
+            observacoes: d.observacoes,
+            armadilha: typeof d.armadilha === 'string' ? d.armadilha : ''
         };
     }
 
@@ -551,7 +552,8 @@
             valorCentavos: esperaProduto ? 0 : t.valorCentavos,
             valor: Cart.formatarBRL(esperaProduto ? 0 : t.valorCentavos),
             itens: esperaProduto ? esperaProduto.nome : Cart.itens().map(function (i) { return i.nome + ' ' + i.potes; }).join(', '),
-            observacoes: (esperaProduto ? 'Interesse em reposição: ' + esperaProduto.nome + '. ' : '') + (d.observacoes || '')
+            observacoes: (esperaProduto ? 'Interesse em reposição: ' + esperaProduto.nome + '. ' : '') + (d.observacoes || ''),
+            armadilha: window.TempRioDB ? TempRioDB.armadilhaDe(document.getElementById('form-pedido')) : ''
         };
     }
 
@@ -629,10 +631,16 @@
                 enviandoEspera = false;
                 marcarEsperaConfirmada();
             })
-            .catch(function () {
+            .catch(function (e) {
+                enviandoEspera = false;
+                if (window.TempRioDB && TempRioDB.ehLimite(e)) {
+                    // Limite de tentativas: não vira "enviado" nem entra na fila; o formulário segue preenchido para tentar de novo.
+                    render();
+                    CartUI.toast(TempRioDB.MSG_LIMITE);
+                    return;
+                }
                 // Rede fora: não perde o cadastro, tenta de novo na próxima visita.
                 gravarFila(lerFila().concat([dados]));
-                enviandoEspera = false;
                 mostrarEsperaSalvaLocal();
             });
     }
@@ -835,7 +843,13 @@
         // para o cliente é a mensagem do WhatsApp, e uma falha de rede aqui não
         // pode travar o envio. O que não subir fica na fila do TempRioDB e sobe
         // na próxima visita.
-        if (window.TempRioDB) TempRioDB.registrarPedido(pedidoParaBanco());
+        if (window.TempRioDB) {
+            var ped = pedidoParaBanco();
+            ped.armadilha = TempRioDB.armadilhaDe(document.getElementById('form-pedido'));
+            TempRioDB.registrarPedido(ped).then(function (r) {
+                if (r === 'limite' && window.CartUI && CartUI.toast) CartUI.toast(TempRioDB.MSG_LIMITE);
+            });
+        }
 
         // Copiar ANTES de navegar: a escrita na área de transferência exige o
         // gesto do usuário e pode não rodar depois que a aba perde o foco.
@@ -933,6 +947,7 @@
             '</div>';
 
         document.body.appendChild(caixa);
+        if (window.TempRioDB) TempRioDB.adicionarArmadilha(caixa);
         window.ScrollLock.acquire('convite-vitrine');
 
         function fechar() {
@@ -948,8 +963,9 @@
             b.textContent = 'Enviando...';
             solicitarVitrine(s, d, t).then(function (ok) {
                 fechar();
-                CartUI.toast(ok
+                CartUI.toast(ok === true
                     ? 'Pedido de destaque enviado! Um vendedor aprova em breve.'
+                    : ok === 'limite' ? TempRioDB.MSG_LIMITE
                     : 'Não conseguimos enviar agora — fale com um vendedor no WhatsApp.');
             });
         });
@@ -974,9 +990,13 @@
                 regiao: (consultaEntrega().regiao || {}).nome || null,
                 caixas: t.caixas, valor_centavos: t.valorCentavos,
                 motivos: s.motivos,
-                tipo: s.tipo, dias: s.dias, status: 'pendente'
+                tipo: s.tipo, dias: s.dias, status: 'pendente',
+                armadilha: window.TempRioDB ? TempRioDB.armadilhaDe(document.getElementById('convite-vitrine')) : ''
             })
-        }).then(function (r) { return r.ok; }).catch(function () { return false; });
+        }).then(function (r) {
+            if (r.ok) return true;
+            return r.text().then(function (t) { return window.TempRioDB && TempRioDB.corpoEhLimite(t) ? 'limite' : false; });
+        }).catch(function () { return false; });
     }
 
     /* ===================================================================
@@ -1324,6 +1344,8 @@
         if (window.Entrega) {
             Entrega.pronto().then(function () { atualizarAvisoEntrega(); });
         }
+
+        if (window.TempRioDB) TempRioDB.adicionarArmadilha(document.getElementById('form-pedido'));
 
         // Cadastro que ficou preso numa falha de rede sobe agora.
         reenviarPendentes();

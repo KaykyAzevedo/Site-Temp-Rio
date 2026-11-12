@@ -167,6 +167,7 @@
         });
 
         document.getElementById('form-pre-registro').addEventListener('submit', aoEnviar);
+        if (window.TempRioDB) window.TempRioDB.adicionarArmadilha(document.getElementById('form-pre-registro'));
     }
 
     /* ===================================================================
@@ -219,6 +220,7 @@
         botao.disabled = true;
         botao.textContent = 'Enviando...';
 
+        if (window.TempRioDB) dados.armadilha = window.TempRioDB.armadilhaDe(document.getElementById('form-pre-registro'));
         var salvo = window.TempRioDB && window.TempRioDB.configurado()
             ? window.TempRioDB.registrarPreRegistro(dados)
             : Promise.resolve(false);
@@ -230,12 +232,14 @@
                     window.CartUI.toast('Obrigado! Vamos te avisar das novidades.');
                 }
             })
-            .catch(function () {
+            .catch(function (e) {
                 botao.disabled = false;
                 botao.textContent = 'Quero receber novidades';
                 marcarErro('nome', ''); // limpa foco de erro anterior sem duplicar mensagem
                 document.getElementById('pr-consentimento-erro').textContent =
-                    'Não conseguimos salvar agora. Tente de novo em instantes.';
+                    window.TempRioDB && window.TempRioDB.ehLimite(e)
+                        ? window.TempRioDB.MSG_LIMITE
+                        : 'Não conseguimos salvar agora. Tente de novo em instantes.';
             });
     }
 

@@ -173,7 +173,8 @@
                 });
         } else {
             acao = window.TempRioDB.registrarSolicitacaoLgpd(
-                tipoAtual, dados.documento, dados.telefone, dados.contato, dados.mensagem
+                tipoAtual, dados.documento, dados.telefone, dados.contato, dados.mensagem,
+                window.TempRioDB.armadilhaDe($('#form-lgpd'))
             ).then(function () {
                 $('#lgpd-resultado').innerHTML = '<div class="cart-line p-4 text-sm text-white">' +
                     '<i class="fa-solid fa-circle-check text-green-400 mr-1"></i> ' +
@@ -184,9 +185,10 @@
         }
 
         acao
-            .catch(function () {
+            .catch(function (e) {
                 $('#lgpd-resultado').innerHTML = '<div class="cart-aviso p-4 text-sm">' +
-                    'Não conseguimos processar agora. Tente de novo em instantes, ou fale com a gente pelo WhatsApp.</div>';
+                    (window.TempRioDB.ehLimite(e) ? window.TempRioDB.MSG_LIMITE
+                        : 'Não conseguimos processar agora. Tente de novo em instantes, ou fale com a gente pelo WhatsApp.') + '</div>';
             })
             .then(function () {
                 botao.disabled = false;
@@ -202,6 +204,7 @@
         });
         ligarMascaras();
         $('#form-lgpd').addEventListener('submit', aoEnviar);
+        if (window.TempRioDB) window.TempRioDB.adicionarArmadilha($('#form-lgpd'));
     }
 
     if (document.readyState === 'loading') {

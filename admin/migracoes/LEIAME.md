@@ -27,6 +27,7 @@ separação eh_equipe/eh_admin por papel. Consulte MERGE_DECISOES.md.
 | 029_solidcon_banco_saude.sql | Batidas do coletor pelo banco SQL SOLIDCON (módulo saúde) | APLICADA (2026-11-12) |
 | 030_solidcon_contas_receber.sql | Contas a receber abertas da filial 4 (módulo receber) | APLICADA (2026-11-12) |
 | 031_solidcon_margem.sql | Margem por produto da filial 4: vendas por dia e custos (módulo margem) | APLICADA (2026-11-12) |
+| 032_antispam.sql | Anti-spam: limite por origem (IP hasheado) + disjuntor global + honeypot nos INSERTs anônimos | APLICADA (2026-11-12) |
 
 019/020 são nomes de organização do repositório. Os objetos SQL, RPCs e a
 assinatura chamada pelo script continuam iguais. 017/018 não são reutilizados
@@ -867,3 +868,83 @@ antigas fora do limite preservadas; TRUNCATE revogado; nenhuma definer com
 public.pedido_028_estado_inicial();` · `alter table ... drop constraint <tabela>_028_tamanhos;` ·
 recriar `historico_do_cliente` a partir de `admin/supabase-vitrine.sql` · `grant truncate,
 references, trigger on all tables in schema public to anon, authenticated;` (não recomendado).
+
+## 032_antispam.sql — Anti-spam nos INSERTs anônimos (NÃO APLICADA)
+
+Pendência da auditoria da 028 ("spam/rate limit"). Sem serviço externo e sem conta nova.
+Instalar no SQL Editor como `postgres`; idempotente; não altera nem apaga dados existentes.
+
+**O que faz**
+
+1. **Limite por origem + disjuntor global.** Trigger `a000_antispam_032` (BEFORE INSERT; o nome
+   começa com `a000` para rodar **antes** dos outros triggers, inclusive os que têm efeito
+   colateral como `pedidos_resolver_cliente`) em 7 tabelas. Vale só para `anon` e
+   `authenticated` fora da equipe; equipe, `service_role` e SQL Editor nunca são limitados.
+
+   | Tabela | Por origem (curto) | Por origem (dia) | Global por minuto |
+   |---|---|---|---|
+   | pedidos | 5 / 10 min | 20 | 30 |
+   | leads | 10 / hora | 30 | 30 |
+   | lista_espera | 10 / hora | 30 | 30 |
+   | consentimentos | 20 / hora | 60 | 60 |
+   | vitrines | 10 / hora | 30 | 30 |
+   | solicitacoes_lgpd | 5 / hora | 10 | 20 |
+   | visitas | 120 / hora | 600 | 600 |
+
+   Estourou: erro `muitas tentativas, tente novamente em alguns minutos`, SQLSTATE **`TR429`**
+   (PostgREST responde HTTP 400 com `"code":"TR429"`; o site mostra mensagem amigável).
+   Tentativa recusada não conta. Inserts concorrentes da mesma tabela são serializados
+   (advisory lock) para a contagem não ter corrida.
+
+2. **Origem.** IP lido de `request.headers` (PostgREST): `cf-connecting-ip`, senão `x-real-ip`,
+   senão o 1º item de `x-forwarded-for` (o que a documentação do Supabase indica). Valor que não
+   é IP válido é ignorado. Sem IP: usa a `sessao` do próprio registro (visitas, leads); sem nada,
+   só o disjuntor global. **Limite conhecido:** o 1º item de `x-forwarded-for` pode ser forjado
+   pelo cliente (a Cloudflare acrescenta ao header, não substitui). Se em produção só chegar
+   `x-forwarded-for`, um robô que troca o header a cada envio escapa do limite por origem — o
+   disjuntor global (que não depende de IP) continua valendo.
+
+   **Conferir em produção:** abra o painel (`admin.html`) e entre como **admin**; aperte F12,
+   aba Console, cole e dê Enter (cria um cliente novo que reaproveita a sessão já salva no
+   navegador; não mostra token nem IP):
+
+   ```js
+   window.supabase.createClient(siteConfig.supabase.url, siteConfig.supabase.anonKey).rpc('antispam_032_diagnostico').then(r => console.log(r.error ? r.error.message : r.data))
+   ```
+
+   Resposta: `tem_cf_connecting_ip`, `tem_x_real_ip`, `itens_x_forwarded_for`,
+   `ip_reconhecido`, `eventos_48h` (só presença/contagem). Não admin recebe `somente admin`.
+   O aviso "Multiple GoTrueClient instances" no console é inofensivo. Se `tem_cf_connecting_ip`
+   for `false`, avaliar o Turnstile (abaixo).
+
+3. **Honeypot.** Coluna `armadilha` (text) em pedidos, leads, lista_espera, consentimentos,
+   vitrines e solicitacoes_lgpd (visitas não tem formulário). Os formulários mandam o campo-isca
+   oculto; se vier preenchido, o insert é **descartado em silêncio** (o trigger devolve NULL:
+   HTTP 201 sem gravar), para o robô não aprender. Vazio/espaços = humano. A coluna é sempre
+   gravada como NULL. Precisa ser coluna porque o PostgREST recusa campo desconhecido no JSON.
+
+**LGPD.** O IP **nunca** é gravado: só `sha256(sal || ip)` em `antispam_032_eventos` (chave,
+tabela, instante). O sal é aleatório, gerado na instalação e guardado em `antispam_032_config`
+(sem acesso pela API, fora do repositório) — com sal público o hash seria reversível testando
+os ~4 bilhões de IPv4. Retenção de 48 h: eventos vencidos são apagados em **toda** escrita
+protegida (DELETE com WHERE) e, com a extensão `pg_cron` habilitada no Supabase (Database →
+Extensions), também por um job de hora em hora (`antispam_032_limpeza`, criado pela 032 se a
+extensão existir; senão a instalação só avisa). Sem `pg_cron` e sem nenhuma escrita no site, um
+evento vencido fica até a próxima escrita — habilite o `pg_cron` antes de aplicar para o prazo
+valer sempre (rodar a 032 de novo cria o job). Nenhuma das duas tabelas é legível pela API, nem pela equipe. Finalidade: segurança do
+serviço (legítimo interesse); citar na política de privacidade na próxima revisão.
+
+**Opção não implementada: Cloudflare Turnstile.** Desafio invisível no formulário + validação do
+token no servidor. Exige conta Cloudflare e uma Edge Function do Supabase (com a chave secreta)
+recebendo os envios no lugar do POST direto às tabelas. Resolve o robô que forja IP; custa conta
+nova, um serviço a manter e mudança no fluxo de envio. Avaliar se o diagnóstico mostrar que só
+`x-forwarded-for` chega ou se o disjuntor global começar a disparar com tráfego legítimo.
+
+**Ajustar limites:** os números ficam no `case` de `public.antispam_032_trigger()`; mudar e
+rodar o `create or replace function` de novo (revisão antes).
+
+**Desfazer:** para cada tabela, `drop trigger a000_antispam_032 on public.<tabela>;` depois
+`select cron.unschedule('antispam_032_limpeza');` (se existir), `drop function public.antispam_032_trigger(), public.antispam_032_ip(),
+public.antispam_032_diagnostico(); drop table public.antispam_032_eventos,
+public.antispam_032_config;`. A coluna `armadilha` pode ficar (sempre NULL) ou sair com
+`alter table ... drop column armadilha` **depois** de tirar o campo do site.
