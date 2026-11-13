@@ -871,3 +871,13 @@ body.admin {
     .adm-kanban-novo, .adm-kanban-moveu { animation: none !important; }
     .adm-layout, .adm-lateral, .adm-lateral .adm-aba span { transition: none !important; }
 }
+
+/* Mapa de expansão (Regiões): fundo apagado/escuro na paleta C, sem destacar o relevo do OSM; atribuição preservada */
+.adm-mapa-escuro { background: var(--adm-fundo); }
+.adm-mapa-escuro .leaflet-tile-pane { filter: grayscale(1) invert(1) brightness(0.62) contrast(0.78) sepia(0.25) hue-rotate(185deg) saturate(1.6); }
+.adm-mapa-escuro .leaflet-control-attribution { background: rgba(24, 28, 34, 0.8); color: var(--adm-tinta-3); }
+.adm-mapa-escuro .leaflet-control-attribution a { color: var(--adm-tinta-2); }
+.adm-mapa-escuro .leaflet-popup-content-wrapper, .adm-mapa-escuro .leaflet-popup-tip { background: var(--adm-superficie); color: var(--adm-tinta); }
+.adm-range { flex: 1 1 12rem; min-width: 8rem; accent-color: var(--adm-acao); height: 2.75rem; }
+.adm-progresso { width: 12rem; max-width: 100%; height: 0.6rem; accent-color: var(--adm-dados); }
+.adm-progresso.hidden { display: none; }

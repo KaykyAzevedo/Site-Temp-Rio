@@ -760,6 +760,7 @@
     }
 
     function sair() {
+        gmapEncerrar(true);
         saudeParar();
         if (canalRealtime) { sb.removeChannel(canalRealtime); canalRealtime = null; }
         sb.auth.signOut().then(function () {
@@ -916,6 +917,7 @@
         qual = ALIAS_ABA[qual] || qual;
         if (!NAV[qual]) qual = 'hoje';
         if (papel === 'vendedor' && NAV[qual].restrito) qual = 'pedidos';
+        if (abaAtual !== qual && secoesDe(abaAtual).indexOf('regioes') >= 0 && secoesDe(qual).indexOf('regioes') < 0) gmapEncerrar(false);
         abaAtual = qual;
         document.querySelectorAll('.adm-aba').forEach(function (b) {
             b.classList.toggle('is-ativa', b.getAttribute('data-aba') === qual);
@@ -2502,6 +2504,7 @@
         if ((qual === 'clientes' || qual === 'pedidos') && precisa(scli)) carregarSolidClientes();
         if ((qual === 'clientes' || qual === 'regioes' || qual === 'vendas') && precisa(cmp)) carregarCompras();
         if (qual === 'regioes' && precisa(geo)) carregarGeoClientes();
+        if (qual === 'regioes' && papel === 'admin' && precisa(gmap)) carregarMapaClientes();
         if (qual === 'clientes' && papel === 'admin' && precisa(rec)) carregarReceber();
         if (qual === 'vitrine' && precisa(giro)) carregarGiro();
         if (qual === 'vitrine' && precisa(ent)) carregarEntradas();
@@ -4437,6 +4440,7 @@
 
     function geoFinalizar() {
         geo.rodando = false; geo.parar = false;
+        if (geo.liberarTrava) { var lib = geo.liberarTrava; geo.liberarTrava = null; geoResfriar().then(lib); }
         if (geo.timerEspera) { clearTimeout(geo.timerEspera); geo.timerEspera = null; }
         if (geo.abortar) { try { geo.abortar(); } catch (e) { /* já encerrada */ } geo.abortar = null; }
         geoAtualizarMapa();
@@ -4464,22 +4468,31 @@
                                                 function (e) { clearTimeout(timer); geo.abortar = null; throw e; });
     }
 
+    // Mapa antigo por bairro: usa a MESMA trava entre abas do mapa novo (nunca correm juntos).
     function geoLocalizar() {
-        if (geo.rodando) return;
+        if (geo.rodando || gmap.run.rodando) return;
+        if (!geoTravaOk()) { geoAtualizarMapa(); var st0 = $('#geo-status'); if (st0) st0.textContent = 'Este navegador não permite a trava entre abas; a localização não roda aqui.'; return; }
+        geo.rodando = true;
+        navigator.locks.request(GEO_TRAVA, { ifAvailable: true }, function (trava) {
+            if (!trava) { geo.rodando = false; geoAtualizarMapa(); return null; }
+            return new Promise(function (liberar) { geo.liberarTrava = liberar; geoLocalizarInterno(); });
+        });
+    }
+    function geoLocalizarInterno() {
         var fila = geo.locais.filter(function (l) { return !(l.chave in geo.coords) && l.cidade && l.uf; });
-        if (!fila.length) return;
+        if (!fila.length) { geoFinalizar(); return; }
         geo.rodando = true; geo.parar = false; geo.feitos = 0; geo.total = fila.length; geo.falhasSeguidas = 0;
         geoAtualizarMapa();
         (function proximo(i) {
             if (geo.parar || i >= fila.length) { geoFinalizar(); return; }
             // Throttle global: respeita o intervalo desde a ÚLTIMA requisição iniciada, mesmo após Parar/abort/reinício.
-            var espera = GEO_INTERVALO_MS - (Date.now() - (geo.ultimoInicio || 0));
+            var espera = GEO_INTERVALO_MS - (Date.now() - geoUltimo());
             if (espera > 0) {
                 geo.timerEspera = setTimeout(function () { geo.timerEspera = null; proximo(i); }, espera);
                 return;
             }
             var l = fila[i];
-            geo.ultimoInicio = Date.now();
+            geoMarcarInicio();
             var url = 'https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=' + encodeURIComponent(geoTexto(l));
             geoBuscar(url).then(function (res) {
                 geo.falhasSeguidas = 0;
@@ -4491,8 +4504,10 @@
                     geo.coords[l.chave] = null; c[l.chave] = { nf: 1, ts: Date.now() };
                 }
                 geoGravarCache(c);
-            }, function () {
-                geo.falhasSeguidas++; // rede/timeout/abort: não grava; fica pendente
+            }, function (e) {
+                // HTTP 429/403: bloqueio por excesso — para na hora (nenhuma requisição a mais); rede/timeout/abort: não grava, fica pendente
+                if (/HTTP (429|403)/.test(String(e && e.message || ''))) { geo.parar = true; geo.bloqueado = true; geo.falhasSeguidas = 3; }
+                else geo.falhasSeguidas++;
             }).then(function () {
                 geo.feitos = i + 1;
                 geoAtualizarMapa();
@@ -4509,7 +4524,7 @@
 
     function desenharRegioes() {
         var alvo = $('#painel-regioes');
-        if (mapaClientes) { mapaClientes.remove(); mapaClientes = null; mapaClientesCamada = null; }
+        if (mapaClientes) { mapaClientes.remove(); mapaClientes = null; mapaClientesCamada = null; gmap.camada = null; gmap.marcadores = {}; }
         desenharRegioesBase();
         alvo.insertAdjacentHTML('afterbegin', '<section id="geo-clientes" class="mb-8"></section>');
         desenharGeoClientes();
@@ -4537,7 +4552,8 @@
             '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Contagem de cadastros do ERP por bairro — sem nome, documento ou contato. ' +
             'A região vem do <strong>nome do bairro/cidade</strong> cadastrado em cada região (não há polígono): é uma aproximação. ' +
             'As posições são buscadas no OpenStreetMap (Nominatim) enviando só “bairro, cidade, UF”, e ficam salvas neste navegador.</p>' +
-            '<div class="adm-card p-5 mb-5"><div class="flex items-center flex-wrap gap-3 mb-3">' +
+            '<div class="adm-card p-5 mb-5"><div id="geo-tl" class="mb-3">' + gmapControlesHtml() + '</div>' +
+                '<div class="flex items-center flex-wrap gap-3 mb-3' + (gmapAtivo() ? ' hidden' : '') + '" id="geo-barra-antiga">' +
                 '<button type="button" class="adm-botao" id="geo-localizar">Localizar bairros no mapa</button>' +
                 '<button type="button" class="adm-botao-fantasma hidden" id="geo-parar">Parar</button>' +
                 '<label for="geo-modo" class="adm-tile-rotulo ml-auto">Tamanho do círculo</label>' +
@@ -4545,15 +4561,21 @@
                     '<option value="valor"' + (geo.modo === 'valor' ? ' selected' : '') + '>Valor comprado (' + CMP_MESES_VALOR + ' meses)</option></select>' +
                 '<span class="text-xs" id="geo-status" role="status" style="color:var(--adm-tinta-3)"></span></div>' +
                 '<p class="text-xs mb-3 hidden" id="geo-modo-aviso" role="status" style="color:var(--adm-tinta-2)"></p>' +
-                '<div id="mapa-clientes" style="height:420px;border-radius:.75rem;overflow:hidden"></div>' +
-                '<div class="flex gap-4 flex-wrap text-xs mt-3" style="color:var(--adm-tinta-2)">' +
+                '<div id="mapa-clientes" class="adm-mapa-escuro" style="height:420px;border-radius:.75rem;overflow:hidden"></div>' +
+                (gmapAtivo()
+                    ? '<div class="flex gap-4 flex-wrap text-xs mt-3" style="color:var(--adm-tinta-2)">' +
+                        '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--adm-dados)"></span> Cliente CNPJ (tamanho = vendido até a data)</span>' +
+                        '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;border:1px dashed var(--adm-dados)"></span> Posição aproximada (centro do bairro)</span>' +
+                      '</div>'
+                    : '<div class="flex gap-4 flex-wrap text-xs mt-3" style="color:var(--adm-tinta-2)">' +
                     '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--adm-dados)"></span> Dentro de região que entrega</span>' +
                     '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--adm-tinta-3)"></span> Região sem entrega</span>' +
                     '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--adm-atencao)"></span> Fora das regiões</span>' +
                     '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;border:2px solid var(--adm-tinta)"></span> Ponto central aproximado da região</span>' +
-                '</div></div>' +
-            '<div id="geo-resumo"></div><div id="geo-tabela"></div><div id="geo-naoloc"></div>';
+                '</div>') + '</div>' +
+            '<div id="geo-resumo-tempo"></div><div id="geo-resumo"></div><div id="geo-tabela"></div><div id="geo-naoloc"></div>';
 
+        gmapLigar();
         alvo.querySelector('#geo-localizar').addEventListener('click', geoLocalizar);
         alvo.querySelector('#geo-parar').addEventListener('click', geoParar);
         alvo.querySelector('#geo-modo').addEventListener('change', function (ev) { geo.modo = ev.target.value === 'valor' ? 'valor' : 'n'; geoAtualizarMapa(); });
@@ -4590,9 +4612,10 @@
         if (alvoMapa && typeof L !== 'undefined') {
             if (!mapaClientes) {
                 mapaClientes = L.map('mapa-clientes', { scrollWheelZoom: false }).setView([-22.92, -43.35], 10);
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; OpenStreetMap', maxZoom: 18 }).addTo(mapaClientes);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 18 }).addTo(mapaClientes);
             }
-            if (mapaClientesCamada) mapaClientes.removeLayer(mapaClientesCamada);
+            if (mapaClientesCamada) { mapaClientes.removeLayer(mapaClientesCamada); mapaClientesCamada = null; }
+            if (gmapAtivo()) { gmapCriarPinos(); gmapPinosAtualizar(); } else {
             mapaClientesCamada = L.layerGroup();
             var maior = Math.max.apply(null, geo.locais.map(medida).concat([1]));
             var pts = [];
@@ -4614,6 +4637,7 @@
             });
             mapaClientesCamada.addTo(mapaClientes);
             if (pts.length && !geo.ajustou) { mapaClientes.fitBounds(pts, { padding: [30, 30], maxZoom: 12 }); geo.ajustou = true; }
+            }
             setTimeout(function () { if (mapaClientes) mapaClientes.invalidateSize(); }, 50);
         } else if (alvoMapa) {
             alvoMapa.innerHTML = '<p class="adm-vazio">Mapa indisponível (biblioteca não carregou).</p>';
@@ -4683,6 +4707,383 @@
               }).join('') + '</div></div>' : '';
     }
 
+
+    /* ===================================================================
+     * Mapa de expansão: UM pino por cliente CNPJ (migração 033) + linha do tempo + geocodificação sob demanda. Só admin.
+     * Dados: RPC solidcon_mapa_clientes (1 linha por CNPJ; CPF nunca aparece). Coordenadas vêm do banco (cache compartilhado);
+     * o Nominatim só é chamado por clique em "Localizar endereços novos", 1 req/s, só pendentes (solidcon_geo_pendentes),
+     * gravando em lotes de 10 via solidcon_gravar_geo_clientes. Para em HTTP 429/403. Sem a 033: mapa antigo por bairro.
+     * =================================================================== */
+    var GMAP_LOTE_CLIQUE = 100, GMAP_LOTE_GRAVAR = 10, GMAP_PASSO_MS = 800;
+    var gmap = { sessao: 0, carregado: false, carregando: false, ausente: false, erro: null, linhas: [], meses: [], idx: 0, fixouIdx: false,
+                 tocando: false, timer: null, marcadores: {}, camada: null, max: 1,
+                 pend: null, pendErro: null, run: { rodando: false, parar: false, feitos: 0, total: 0, gravados: 0, ignorados: 0, falhas: 0, msg: '' } };
+
+    function gmapRedesenhar() {
+        abasParaRedesenhar.regioes = true;
+        desenharAbaSeSuja(abaAtual);
+    }
+    function gmapAusente(e) { return /PGRST202|42883|42P01|PGRST205|does not exist|Could not find the function|Could not find the table/i.test(String((e && e.message) || '') + ' ' + String((e && e.code) || '')); }
+    function gmapAtivo() { return papel === 'admin' && gmap.carregado && gmap.linhas.length > 0 && gmap.meses.length > 0; }
+    function gmapMesRot(m) { return m.slice(5, 7) + '/' + m.slice(0, 4); }
+    function gmapReduzMov() { try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { return false; } }
+
+    function carregarMapaClientes() {
+        if (papel !== 'admin' || gmap.carregando) return Promise.resolve();
+        gmap.carregando = true; gmapRedesenhar();
+        return vendPaginar(function () { return sb.rpc('solidcon_mapa_clientes').order('documento', { ascending: true }); }, 20000).then(function (r) {
+            gmap.carregando = false; gmap.ausente = false; gmap.erro = null;
+            if (r.error) {
+                if (gmapAusente(r.error)) gmap.ausente = true; else gmap.erro = String(r.error.message || r.error);
+                gmap.carregado = false;
+            } else { gmapPreparar(r.data || []); gmap.carregado = true; }
+            gmapRedesenhar();
+            gmapCarregarPendentes();
+        }).catch(function (e) { gmap.carregando = false; gmap.erro = String(e && e.message || e); gmap.carregado = false; gmapRedesenhar(); });
+    }
+
+    // Lista de meses (do primeiro mês com compra até o atual) e acumulados por cliente alinhados a ela.
+    function gmapPreparar(linhas) {
+        var hoje = recHoje().slice(0, 7), min = hoje;
+        linhas.forEach(function (l) {
+            var pc = l.primeira_compra ? String(l.primeira_compra).slice(0, 7) : '';
+            if (pc && pc < min) min = pc;
+        });
+        var meses = [], m = min;
+        while (m <= hoje && meses.length < 400) { meses.push(m); var p = m.split('-'), a = Number(p[0]), mm = Number(p[1]) + 1; if (mm > 12) { mm = 1; a++; } m = a + '-' + String(mm).padStart(2, '0'); }
+        var max = 1;
+        linhas.forEach(function (l) {
+            var ms = l.meses && typeof l.meses === 'object' ? l.meses : {}, ac = 0, cu = 0, ult = '';
+            l._ac = []; l._cu = []; l._ult = [];
+            meses.forEach(function (k) {
+                var v = ms[k];
+                if (v) { ac += Number(v[0]) || 0; cu += Number(v[1]) || 0; ult = k; }
+                l._ac.push(ac); l._cu.push(cu); l._ult.push(ult);
+            });
+            l._pm = l.primeira_compra ? String(l.primeira_compra).slice(0, 7) : '';
+            l._reg = undefined;
+            if (ac > max) max = ac;
+        });
+        gmap.linhas = linhas; gmap.meses = meses; gmap.max = max;
+        if (!gmap.fixouIdx || gmap.idx >= meses.length) gmap.idx = meses.length - 1;
+    }
+
+    function gmapCarregarPendentes() {
+        if (papel !== 'admin') return;
+        sb.rpc('solidcon_geo_pendentes', { p_limite: 500 }).then(function (r) {
+            if (r.error) { gmap.pend = null; gmap.pendErro = gmapAusente(r.error) ? 'ausente' : String(r.error.message || r.error); }
+            else { gmap.pend = (r.data || []).length; gmap.pendErro = null; }
+            gmapUI();
+        }, function () { gmap.pend = null; });
+    }
+
+    // ---- pinos ----
+    function gmapPopup(l) {
+        var i = gmap.idx, mes = gmap.meses[i];
+        var local = [l.bairro, l.cidade].filter(Boolean).join(', ') + (l.estado ? '/' + l.estado : '');
+        return '<strong>' + esc(l.nome || '(sem nome)') + '</strong><br>' + esc(local || '—') + '<br>' +
+            'Vendido até ' + esc(gmapMesRot(mes)) + ': ' + esc(brl(l._ac[i])) + '<br>' +
+            'Compras: ' + NUM.format(l._cu[i]) + '<br>' +
+            '1ª compra: ' + (l.primeira_compra ? esc(cmpData(String(l.primeira_compra).slice(0, 10))) : '—') + '<br>' +
+            'Última (até a data): ' + (l._ult[i] ? esc(gmapMesRot(l._ult[i])) : '—') +
+            (l.precisao === 'bairro' ? '<br><em>Posição aproximada (centro do bairro)</em>' : l.precisao === 'cep' ? '<br><em>Posição pelo CEP</em>' : '');
+    }
+
+    function gmapPino(l, i) {
+        var visivel = l._pm && l._pm <= gmap.meses[i];
+        var raio = 4 + Math.sqrt((l._ac[i] || 0) / gmap.max) * 10;
+        var cor = corToken('--adm-dados', '#6fa8e0'), aprox = l.precisao === 'bairro';
+        return { visivel: !!visivel, raio: raio, estilo: { color: cor, weight: aprox ? 1.5 : 1, dashArray: aprox ? '3 3' : null, fillColor: cor, fillOpacity: aprox ? 0.18 : 0.55 } };
+    }
+
+    // Reposiciona/ajusta os pinos para o mês escolhido (sem refazer o mapa).
+    function gmapPinosAtualizar() {
+        if (!gmapAtivo() || !mapaClientes || !gmap.camada) return;
+        var i = gmap.idx, n = 0, semPos = 0, total = 0;
+        gmap.linhas.forEach(function (l) {
+            var pino = gmapPino(l, i);
+            if (pino.visivel) { n++; total += l._ac[i]; if (!gmap.marcadores[l.documento]) semPos++; }
+            var mk = gmap.marcadores[l.documento];
+            if (!mk) return;
+            if (pino.visivel) {
+                mk.setRadius(pino.raio); mk.setStyle(pino.estilo);
+                if (!gmap.camada.hasLayer(mk)) gmap.camada.addLayer(mk);
+            } else if (gmap.camada.hasLayer(mk)) gmap.camada.removeLayer(mk);
+        });
+        var rot = $('#geo-tl-rotulo');
+        if (rot) rot.textContent = 'Até ' + gmapMesRot(gmap.meses[i]) + ': ' + NUM.format(n) + (n === 1 ? ' cliente' : ' clientes') + ' · ' + brl(total) +
+            (semPos ? ' (' + NUM.format(semPos) + ' sem posição no mapa)' : '');
+        var barra = $('#geo-tl-barra'); if (barra && Number(barra.value) !== i) barra.value = String(i);
+        gmapResumoTempo();
+    }
+
+    function gmapCriarPinos() {
+        if (!mapaClientes) return;
+        if (gmap.camada) { try { mapaClientes.removeLayer(gmap.camada); } catch (e) { /* mapa novo */ } }
+        gmap.camada = L.layerGroup().addTo(mapaClientes); gmap.marcadores = {};
+        var pts = [];
+        gmap.linhas.forEach(function (l) {
+            if (l.lat == null || l.lng == null || l.pino_desatualizado) return;
+            var lat = Number(l.lat), lng = Number(l.lng);
+            if (!geoCoordValida(lat, lng)) return;
+            var mk = L.circleMarker([lat, lng], { radius: 5 });
+            mk.bindPopup(function () { return gmapPopup(l); });
+            gmap.marcadores[l.documento] = mk; pts.push([lat, lng]);
+        });
+        if (pts.length && !geo.ajustou) { mapaClientes.fitBounds(pts, { padding: [30, 30], maxZoom: 12 }); geo.ajustou = true; }
+    }
+
+    // ---- totais por região para a data escolhida ----
+    function gmapResumoTempo() {
+        var alvo = $('#geo-resumo-tempo');
+        if (!alvo || !gmapAtivo()) { if (alvo) alvo.innerHTML = ''; return; }
+        var i = gmap.idx, porReg = {}, fora = { n: 0, v: 0, c: 0 };
+        gmap.linhas.forEach(function (l) {
+            if (!l._pm || l._pm > gmap.meses[i]) return;
+            if (l._reg === undefined) l._reg = geoClassificar({ bairro: l.bairro, cidade: l.cidade, uf: l.estado }) || null;
+            var o = l._reg ? (porReg[l._reg.id] || (porReg[l._reg.id] = { n: 0, v: 0, c: 0 })) : fora;
+            o.n++; o.v += l._ac[i]; o.c += l._cu[i];
+        });
+        var linhas = dados.regioes.filter(function (r) { return porReg[r.id]; }).map(function (r) {
+            var o = porReg[r.id];
+            return '<tr><td>' + esc(r.nome) + '</td><td>' + (r.ativo ? 'Entrega' : 'Sem entrega') + '</td><td class="num">' + NUM.format(o.n) + '</td><td class="num">' + esc(brl(o.v)) + '</td><td class="num">' + NUM.format(o.c) + '</td></tr>';
+        }).join('');
+        alvo.innerHTML = '<div class="adm-card p-5 mb-5"><p class="font-bold mb-1">Clientes CNPJ por região até ' + esc(gmapMesRot(gmap.meses[i])) + '</p>' +
+            '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">Só clientes CNPJ com compra até a data escolhida (valores acumulados). A tabela “dentro e fora de cada região” abaixo continua mostrando todos os cadastros do ERP hoje.</p>' +
+            '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th>Região</th><th>Situação</th><th class="num">Clientes</th><th class="num">Vendido até a data</th><th class="num">Compras</th></tr></thead><tbody>' + linhas +
+            '<tr><td><strong>Fora das regiões cadastradas</strong></td><td>—</td><td class="num">' + NUM.format(fora.n) + '</td><td class="num">' + esc(brl(fora.v)) + '</td><td class="num">' + NUM.format(fora.c) + '</td></tr>' +
+            '</tbody></table></div></div>';
+    }
+
+    // ---- controles: linha do tempo + localizar ----
+    function gmapControlesHtml() {
+        if (papel !== 'admin') return '';
+        var cab = '<div class="flex items-center gap-2 mb-2">' + SELO_ERP + '<p class="font-bold text-sm">Expansão: um pino por cliente CNPJ</p></div>';
+        if (gmap.carregando && !gmap.carregado) return cab + '<p class="adm-vazio-linha"><i class="fa-solid fa-spinner fa-spin"></i><span class="adm-vazio-texto">Carregando clientes do mapa…</span></p>';
+        if (gmap.ausente) return cab + cartaoVazio('Mapa de expansão ainda não instalado', 'As funções da migração 033 não existem neste banco; mostrando o mapa por bairro.', 'erp');
+        if (gmap.erro) return cab + '<p class="adm-vazio-linha"><span class="adm-vazio-titulo">Não foi possível carregar o mapa de expansão</span><span class="adm-vazio-texto">' + esc(gmap.erro) + '</span>' +
+            '<button type="button" class="adm-botao-fantasma" id="gmap-tentar">Tentar de novo</button></p>';
+        if (!gmap.carregado) return '';
+        if (!gmap.linhas.length || !gmap.meses.length) return cab + cartaoVazio('Nenhum cliente CNPJ com compras no mapa ainda', 'Quando houver compras ligadas a clientes CNPJ, os pinos aparecem aqui.', 'erp');
+        var red = gmapReduzMov();
+        return cab +
+            '<div class="flex items-center flex-wrap gap-3 mb-3">' +
+                '<button type="button" class="adm-botao-fantasma" id="geo-tl-play" aria-label="Reproduzir crescimento"' + (red ? ' disabled title="Reprodução desativada (movimento reduzido): use o controle deslizante"' : '') + '><i class="fa-solid fa-play"></i></button>' +
+                '<input type="range" id="geo-tl-barra" class="adm-range" min="0" max="' + (gmap.meses.length - 1) + '" step="1" value="' + gmap.idx + '" aria-label="Mês da linha do tempo">' +
+            '</div>' +
+            '<p class="text-sm font-bold mb-3" id="geo-tl-rotulo" role="status" aria-live="polite"></p>' +
+            '<div class="flex items-center flex-wrap gap-3 mb-3">' +
+                '<button type="button" class="adm-botao" id="geo-pend-btn">Localizar endereços novos</button>' +
+                '<button type="button" class="adm-botao-fantasma hidden" id="geo-pend-parar">Parar</button>' +
+                '<progress id="geo-pend-prog" class="adm-progresso hidden" max="100" value="0"></progress>' +
+                '<span class="text-xs" id="geo-pend-status" role="status" style="color:var(--adm-tinta-3)"></span>' +
+            '</div>';
+    }
+
+    function gmapLigar() {
+        var t = $('#gmap-tentar'); if (t) t.addEventListener('click', carregarMapaClientes);
+        var barra = $('#geo-tl-barra');
+        if (barra) barra.addEventListener('input', function () { gmapParar(); gmap.idx = Number(barra.value) || 0; gmap.fixouIdx = true; gmapPinosAtualizar(); });
+        var play = $('#geo-tl-play');
+        if (play) play.addEventListener('click', function () { if (gmap.tocando) gmapParar(); else gmapTocar(); });
+        var b = $('#geo-pend-btn'); if (b) b.addEventListener('click', gmapGeocodificar);
+        var p = $('#geo-pend-parar'); if (p) p.addEventListener('click', function () { gmap.run.parar = true; if (geo.abortar) { try { geo.abortar(); } catch (e) { /* já encerrada */ } } gmapUI(); });
+        gmapUI();
+    }
+
+    function gmapTocar() {
+        if (gmapReduzMov() || !gmapAtivo()) return;
+        if (gmap.idx >= gmap.meses.length - 1) gmap.idx = 0;
+        gmap.tocando = true; gmap.fixouIdx = true; gmapUIPlay();
+        gmap.timer = setInterval(function () {
+            if (!gmapAtivo() || !$('#geo-tl-barra') || !usuario || papel !== 'admin' || !secaoVisivel('regioes')) { gmapParar(); return; }
+            if (gmap.idx >= gmap.meses.length - 1) { gmapParar(); return; }
+            gmap.idx++; gmapPinosAtualizar();
+        }, GMAP_PASSO_MS);
+        gmapPinosAtualizar();
+    }
+    function gmapParar() {
+        if (gmap.timer) { clearInterval(gmap.timer); gmap.timer = null; }
+        if (gmap.tocando) { gmap.tocando = false; gmapUIPlay(); }
+    }
+    function gmapUIPlay() {
+        var p = $('#geo-tl-play');
+        if (p) { p.innerHTML = '<i class="fa-solid ' + (gmap.tocando ? 'fa-pause' : 'fa-play') + '"></i>'; p.setAttribute('aria-label', gmap.tocando ? 'Pausar' : 'Reproduzir crescimento'); }
+    }
+
+    function gmapUI() {
+        var R = gmap.run, b = $('#geo-pend-btn'), p = $('#geo-pend-parar'), pr = $('#geo-pend-prog'), st = $('#geo-pend-status');
+        if (!b) return;
+        var n = gmap.pend;
+        b.textContent = 'Localizar endereços novos' + (n == null ? '' : ' (' + (n >= 500 ? '500+' : NUM.format(n)) + ')');
+        b.disabled = R.rodando || geo.rodando || !n;
+        if (p) p.classList.toggle('hidden', !R.rodando);
+        if (pr) { pr.classList.toggle('hidden', !R.rodando); pr.max = Math.max(1, R.total); pr.value = R.feitos; }
+        if (st) st.textContent = R.rodando ? 'Localizando ' + NUM.format(R.feitos) + ' de ' + NUM.format(R.total) + '… (1 por segundo)'
+            : (R.msg || (gmap.pendErro === 'ausente' ? 'Pendências indisponíveis (migração 033).' : gmap.pendErro ? 'Falha ao consultar pendências: ' + gmap.pendErro : n === 0 ? 'Todos os endereços já foram localizados.' : ''));
+    }
+
+    // ---- geocodificação (Nominatim): 1 req/s, só pendentes, por clique ----
+    // Trava entre abas: navigator.locks (posse real, solta sozinha se a aba fechar). Sem suporte: NÃO geocodifica (falha fechado).
+    var GEO_TRAVA = 'temprio-geo-nominatim';
+    function geoTravaOk() { return typeof navigator !== 'undefined' && navigator.locks && typeof navigator.locks.request === 'function'; }
+    // Espaçamento de 1 req/s GLOBAL (vale entre donos da trava e entre abas): último início guardado também no localStorage.
+    function geoUltimo() {
+        var a = geo.ultimoInicio || 0;
+        try { var b = Number(localStorage.getItem('temprio_geo_ultimo')) || 0; if (b > a) a = b; } catch (e) { /* só o relógio desta aba */ }
+        return a;
+    }
+    // Antes de SOLTAR a trava, cumpre o que falta do intervalo desde a última requisição desta aba: o 1 req/s entre donos
+    // não depende do localStorage (que pode estar bloqueado).
+    function geoResfriar() {
+        var resto = GEO_INTERVALO_MS - (Date.now() - (geo.ultimoInicio || 0));
+        return new Promise(function (res) { setTimeout(res, Math.max(0, resto)); });
+    }
+    function geoMarcarInicio() {
+        geo.ultimoInicio = Date.now();
+        try { localStorage.setItem('temprio_geo_ultimo', String(geo.ultimoInicio)); } catch (e) { /* idem */ }
+    }
+    // Espera o intervalo e, ANTES de liberar a consulta, revalida parada/sessão (cancelado = nenhuma requisição é feita).
+    function geoEsperar(sess) {
+        var espera = GEO_INTERVALO_MS - (Date.now() - geoUltimo());
+        return new Promise(function (res) { setTimeout(res, Math.max(0, espera)); }).then(function () {
+            if (gmap.run.parar || sess !== gmap.sessao || !usuario || papel !== 'admin') { var c = new Error('cancelado'); c.cancelado = true; throw c; }
+            geoMarcarInicio();
+        });
+    }
+    function gmapDentro(p, x) {
+        if (String(p.estado || '').toUpperCase() !== 'RJ') return true;
+        return x.lat >= -23.5 && x.lat <= -20.6 && x.lng >= -45 && x.lng <= -40.8;
+    }
+    // Resolve: {lat,lng} | null (nada achado) | undefined (falha de rede: não grava, fica pendente)
+    function gmapNominatim(params, exigeRua, sess) {
+        var R = gmap.run;
+        return geoEsperar(sess).then(function () {
+            return geoBuscar('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=br&addressdetails=1&' + params);
+        }).then(function (res) {
+            R.falhas = 0;
+            var x = res && res[0]; if (!x) return null;
+            var lat = Number(x.lat), lng = Number(x.lon);
+            if (!geoCoordValida(lat, lng)) return null;
+            if (exigeRua && !(x.address && x.address.road)) return null;
+            return { lat: lat, lng: lng };
+        }, function (e) {
+            if (e && e.cancelado) return undefined; // parado antes de consultar: não conta como falha
+            var m = String(e && e.message || '');
+            if (/HTTP (429|403)/.test(m)) { var er = new Error('O OpenStreetMap bloqueou as consultas (' + m + '). Pare por agora e tente mais tarde.'); er.parada = true; throw er; }
+            if (R.parar) return undefined;
+            R.falhas++;
+            if (R.falhas >= 3) { var e2 = new Error('Busca interrompida por falhas de rede.'); e2.parada = true; throw e2; }
+            return undefined;
+        });
+    }
+    function gmapEnc(s) { return encodeURIComponent(String(s == null ? '' : s).trim()); }
+
+    function gmapResolver(p, sess) {
+        var R = gmap.run, base = { documento: p.documento, fonte: 'nominatim', chave_endereco: p.chave_endereco };
+        function achou(x, prec) { return { documento: base.documento, lat: Math.round(x.lat * 1e6) / 1e6, lng: Math.round(x.lng * 1e6) / 1e6, precisao: prec, fonte: 'nominatim', chave_endereco: base.chave_endereco }; }
+        var cidade = '&city=' + gmapEnc(p.cidade) + '&state=' + gmapEnc(p.estado);
+        var cep = docDigitos(p.cep);
+        function etapa1() {
+            if (R.parar || !String(p.logradouro || '').trim()) return Promise.resolve(null);
+            var rua = (String(p.numero || '').trim() ? String(p.numero).trim() + ' ' : '') + String(p.logradouro).trim();
+            return gmapNominatim('street=' + gmapEnc(rua) + cidade + (cep.length === 8 ? '&postalcode=' + cep : ''), true, sess).then(function (x) {
+                return x === undefined ? undefined : (x && gmapDentro(p, x) ? achou(x, 'endereco') : null);
+            });
+        }
+        function etapa2() {
+            if (R.parar || cep.length !== 8) return Promise.resolve(null);
+            return gmapNominatim('postalcode=' + cep + cidade, false, sess).then(function (x) {
+                return x === undefined ? undefined : (x && gmapDentro(p, x) ? achou(x, 'cep') : null);
+            });
+        }
+        function etapa3() {
+            if (R.parar || !String(p.bairro || '').trim()) return Promise.resolve(null);
+            var chave = geoNorm(p.bairro) + '|' + geoNorm(p.cidade) + '|' + String(p.estado || '').toUpperCase(), c = geoLerCache()[chave];
+            if (c && geoCoordValida(c.lat, c.lng) && gmapDentro(p, c)) return Promise.resolve(achou(c, 'bairro')); // cache local de bairros: sem requisição
+            return gmapNominatim('q=' + gmapEnc([p.bairro, p.cidade, p.estado, 'Brasil'].filter(Boolean).join(', ')), false, sess).then(function (x) {
+                if (x === undefined) return undefined;
+                if (x && gmapDentro(p, x)) {
+                    var cc = geoLerCache(); cc[chave] = { lat: x.lat, lng: x.lng, ts: Date.now() }; geoGravarCache(cc);
+                    return achou(x, 'bairro');
+                }
+                return null;
+            });
+        }
+        return etapa1().then(function (r) {
+            if (r === undefined) return null;          // falha de rede: segue sem gravar
+            if (r) return r;
+            return etapa2().then(function (r2) {
+                if (r2 === undefined) return null;
+                if (r2) return r2;
+                return etapa3().then(function (r3) {
+                    if (r3 === undefined) return null;
+                    if (r3) return r3;
+                    if (R.parar) return null;
+                    return { documento: base.documento, lat: null, lng: null, precisao: 'nao_encontrado', fonte: 'nominatim', chave_endereco: base.chave_endereco };
+                });
+            });
+        });
+    }
+
+    function gmapGeocodificar() {
+        var R = gmap.run;
+        if (R.rodando || geo.rodando || papel !== 'admin') return;
+        if (!geoTravaOk()) { R.msg = 'Este navegador não permite a trava entre abas (navigator.locks); por segurança a localização não roda aqui.'; gmapUI(); return; }
+        var sess = gmap.sessao;
+        R.rodando = true; R.parar = false; R.feitos = 0; R.total = 0; R.gravados = 0; R.ignorados = 0; R.falhas = 0; R.msg = ''; R.descartar = false;
+        gmapUI();
+        navigator.locks.request(GEO_TRAVA, { ifAvailable: true }, function (trava) {
+            if (!trava) { R.rodando = false; R.msg = 'Outra aba (ou o mapa por bairro) já está localizando endereços.'; gmapUI(); return null; }
+            return gmapExecutar(sess).then(geoResfriar, geoResfriar);
+        });
+    }
+
+    function gmapExecutar(sess) {
+        var R = gmap.run, lote = [];
+        function viva() { return sess === gmap.sessao && !!usuario; }
+        function gravar() {
+            if (!lote.length || R.descartar || !viva()) { lote = []; return Promise.resolve(); }
+            var itens = lote; lote = [];
+            return sb.rpc('solidcon_gravar_geo_clientes', { p_itens: itens }).then(function (g) {
+                if (g.error) throw g.error;
+                R.gravados += (g.data && Number(g.data.gravados)) || 0;
+                R.ignorados += (g.data && g.data.ignorados && g.data.ignorados.length) || 0;
+            });
+        }
+        return sb.rpc('solidcon_geo_pendentes', { p_limite: GMAP_LOTE_CLIQUE }).then(function (r) {
+            if (r.error) throw r.error;
+            var fila = r.data || [];
+            R.total = fila.length; gmapUI();
+            function proximo(i) {
+                if (R.parar || !viva() || i >= fila.length) return gravar();
+                return gmapResolver(fila[i], sess).then(function (item) {
+                    if (item && !R.parar && viva()) lote.push(item);   // consulta que terminou depois de Parar não é gravada
+                    R.feitos = i + 1; gmapUI();
+                    return lote.length >= GMAP_LOTE_GRAVAR ? gravar() : null;
+                }).then(function () { return proximo(i + 1); });
+            }
+            return proximo(0);
+        }).catch(function (e) {
+            R.msg = e && e.parada ? e.message : 'Falha ao localizar: ' + String(e && e.message || e);
+            return gravar().catch(function () { /* o erro principal já está na tela */ });
+        }).then(function () {
+            R.rodando = false;
+            if (!viva()) { R.parar = false; return; }
+            if (!R.msg) R.msg = NUM.format(R.gravados) + ' endereço(s) gravado(s)' + (R.ignorados ? ', ' + NUM.format(R.ignorados) + ' ignorado(s) pelo banco' : '') + (R.parar ? ' (parado)' : '') + '.';
+            R.parar = false;
+            carregarMapaClientes();
+        });
+    }
+
+    // Sair do painel / deixar Regiões: encerra play, fila de geocodificação, esperas e fetch em andamento; invalida callbacks antigos.
+    function gmapEncerrar(descartar) {
+        gmapParar();
+        gmap.sessao++;
+        var R = gmap.run;
+        if (R.rodando) { R.parar = true; if (descartar) R.descartar = true; if (geo.abortar) { try { geo.abortar(); } catch (e) { /* já encerrada */ } } }
+        if (geo.rodando) geoParar();
+    }
 
     function desenharTudo() {
         ABAS.forEach(function (a) { abasParaRedesenhar[a] = true; });
