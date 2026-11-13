@@ -30,7 +30,7 @@ separação eh_equipe/eh_admin por papel. Consulte MERGE_DECISOES.md.
 | 032_antispam.sql | Anti-spam: limite por origem (IP hasheado) + disjuntor global + honeypot nos INSERTs anônimos | APLICADA (2026-11-12) |
 | 033_solidcon_clientes_geo.sql | Coordenadas por cliente CNPJ + leitura do mapa de expansão (linha do tempo) | APLICADA (2026-11-12) |
 | 034_pedidos_erp_vinculo.sql | Kanban pelo ERP, fase 2: vínculo pedido↔venda SOLIDCON e confirmação automática | NÃO APLICADA (aguarda o dono) |
-| 035_solidcon_pedidos_erp.sql | Pedidos de venda do ERP com a etapa do WMS (módulo pedidos do sync-banco) | NÃO APLICADA |
+| 035_solidcon_pedidos_erp.sql | Pedidos de venda do ERP com a etapa do WMS (módulo pedidos do sync-banco) | JÁ APLICADA (2026-11-13) |
 
 019/020 são nomes de organização do repositório. Os objetos SQL, RPCs e a
 assinatura chamada pelo script continuam iguais. 017/018 não são reutilizados
@@ -1198,7 +1198,7 @@ commit;
 
 Status e `confirmado_em` já gravados permanecem; o histórico fica em `auditoria`.
 
-## 035_solidcon_pedidos_erp.sql — Pedidos de venda do ERP por etapa do WMS (NÃO APLICADA)
+## 035_solidcon_pedidos_erp.sql — Pedidos de venda do ERP por etapa do WMS (APLICADA em 2026-11-13)
 
 Objetivo: o Kanban mostrar os pedidos de venda do ERP (filial 4) na etapa real do depósito. Os dados vêm do módulo `pedidos` do `integracao/solidcon/sync-banco.ps1`.
 
