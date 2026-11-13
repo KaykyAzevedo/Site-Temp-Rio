@@ -15,9 +15,10 @@
 #   -Forcar roda todos os modulos agora, ignorando o intervalo proprio de cada um.
 #   Backfill da margem: sync-banco.ps1 -BackfillMargemDesde 2026-05-29 (so vendas da margem,
 #   blocos de 31 dias ate hoje; nao mexe na agenda nem nos outros modulos).
-# 'pedidos' (pedidos de venda da filial 4 com a etapa do WMS, toda execucao; 30 dias, concluidos
-#   so nos ultimos 3 dias). Conferencia sem gravar nada: sync-banco.ps1 -Testar [-Simular]
-#   (so o modulo pedidos; imprime contagens por etapa; sem Supabase, sem agenda, sem arquivo).
+# 'pedidos' (pedidos de venda da filial 4 com a etapa do WMS e o valor Soma(qt*vl) dos itens, toda
+#   execucao; 30 dias, concluidos so nos ultimos 3 dias; no log so contagens, nunca valores). Conferencia sem gravar nada: sync-banco.ps1 -Testar [-Simular]
+#   (so o modulo pedidos; imprime contagens por etapa e a AMOSTRA de valor dos 5 pedidos mais
+#   recentes: codigo, data e totais candidatos, sem cliente; sem Supabase, sem agenda, sem arquivo).
 # PROTECOES de toda sessao: ApplicationIntent=ReadOnly, READ UNCOMMITTED e toda leitura dentro de
 #   uma transacao explicita que SEMPRE termina em Rollback (conferidas no servidor; senao nada le).
 # Trava de permissoes: bloqueia se o login pode gravar/executar. Chave do dono no config-banco.json
@@ -49,7 +50,9 @@ $SidAdmins = New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')
 # Unicas views que qualquer modulo pode ler (nome exato, schema dbo), combinadas com a SOLIDCON.
 $ViewsPermitidas = @('dbo.VW_RDUPHOLD_CONTASRECEBER_ABERTO', 'dbo.VW_MGN_PARCEIRO', 'dbo.VW_RDUPHOLD_VENDA_ITENS', 'dbo.VW_MGN_ESTOQUE')
 # Tabelas que SO as consultas 'pedidos.*' podem ler (nome exato, schema dbo). Nenhum outro modulo.
-$TabelasPedidos = @('dbo.tbPedido', 'dbo.tbPedidoVenda', 'dbo.tbWmsCarga', 'dbo.tbWmsCargaUmaSaida')
+# dbo.tbPedidoItem: so para o valor do pedido ('pedidos.valores' na coleta, formula Soma(qt*vl) confirmada
+# pelo dono em 2026-11-13; 'pedidos.amostra_valor' so no -Testar, para conferir com o comercial).
+$TabelasPedidos = @('dbo.tbPedido', 'dbo.tbPedidoVenda', 'dbo.tbWmsCarga', 'dbo.tbWmsCargaUmaSaida', 'dbo.tbPedidoItem')
 # Consultas aprovadas na revisao, LITERAIS, por 'modulo.consulta': uma consulta so roda se o
 # texto for identico ao daqui. E a garantia principal; o validador estrutural e defesa auxiliar.
 # Toda consulta de dados filtra a FILIAL 4 (Temp Rio); as outras filiais nunca saem do banco.
@@ -61,6 +64,8 @@ $ConsultasAprovadas = @{
     'receber.parceiros' = "SELECT p.CodigoParceiro AS codigo_parceiro, p.CNPJ AS documento FROM dbo.VW_MGN_PARCEIRO AS p WHERE p.CodigoParceiro IN (SELECT r.Codigo_Fornecedor FROM dbo.VW_RDUPHOLD_CONTASRECEBER_ABERTO AS r WHERE r.Codigo_Filial = 4)"
     'pedidos.lista' = "SELECT p.cdPedido AS cd_pedido, p.dtPedido AS dt_pedido, p.dtAtendido AS dt_atendido, v.cdPessoaComercial AS cd_cliente, v.cdWmsCarga AS cd_carga, c.dtCarga AS dt_carga, c.dtLiberadaPartida AS dt_partida, c.dtEmissaoNota AS dt_nota, c.dtCancelada AS dt_cancelada, s.sep_ini AS dt_sep_inicio, s.sep_fim AS dt_sep_fim, s.conf AS dt_conferencia, s.carregou AS dt_carregou, s.saidas_abertas AS saidas_abertas FROM dbo.tbPedido AS p JOIN dbo.tbPedidoVenda AS v ON v.cdPedidoVenda = p.cdPedido AND v.cdPessoaFilial = p.cdPessoaFilial LEFT JOIN dbo.tbWmsCarga AS c ON c.cdWmsCarga = v.cdWmsCarga AND c.cdPessoaFilial = p.cdPessoaFilial LEFT JOIN (SELECT u.cdPessoaFilial, u.cdPedido, MIN(u.dtInicio) AS sep_ini, MAX(u.dtFim) AS sep_fim, MAX(u.dtConferencia) AS conf, MAX(u.dtCarregou) AS carregou, SUM(CASE WHEN u.dtFim IS NULL THEN 1 ELSE 0 END) AS saidas_abertas FROM dbo.tbWmsCargaUmaSaida AS u WHERE u.cdPessoaFilial = 4 AND u.cdPedido IN (SELECT q.cdPedido FROM dbo.tbPedido AS q WHERE q.cdPessoaFilial = 4 AND q.dtPedido >= @desde) GROUP BY u.cdPessoaFilial, u.cdPedido) AS s ON s.cdPedido = p.cdPedido AND s.cdPessoaFilial = p.cdPessoaFilial WHERE p.cdPessoaFilial = 4 AND p.dtPedido >= @desde"
     'pedidos.clientes' = "SELECT pa.CodigoParceiro AS codigo_parceiro, pa.CNPJ AS documento FROM dbo.VW_MGN_PARCEIRO AS pa WHERE pa.CodigoParceiro IN (SELECT v.cdPessoaComercial FROM dbo.tbPedidoVenda AS v JOIN dbo.tbPedido AS p ON p.cdPedido = v.cdPedidoVenda AND p.cdPessoaFilial = v.cdPessoaFilial WHERE p.cdPessoaFilial = 4 AND p.dtPedido >= @desde)"
+    'pedidos.valores' = "SELECT p.cdPedido AS cd_pedido, COUNT(*) AS itens, SUM(i.qtPedidoItem * i.vlPedidoItem) AS valor, SUM(CASE WHEN i.qtPedidoItem IS NULL OR i.vlPedidoItem IS NULL THEN 1 ELSE 0 END) AS nulos, SUM(CASE WHEN ISNULL(i.prDesconto, 0) > 0 OR ISNULL(i.prIPI, 0) > 0 OR ISNULL(i.prSubstTributaria, 0) > 0 THEN 1 ELSE 0 END) AS itens_desc_ipi_st FROM dbo.tbPedido AS p JOIN dbo.tbPedidoItem AS i ON i.cdPedido = p.cdPedido AND i.cdPessoaFilial = p.cdPessoaFilial WHERE p.cdPessoaFilial = 4 AND p.dtPedido >= @desde GROUP BY p.cdPedido"
+    'pedidos.amostra_valor' ="SELECT TOP 5 p.cdPedido AS cd_pedido, p.dtPedido AS dt_pedido, COUNT(*) AS itens, SUM(i.qtPedidoItem * i.vlPedidoItem) AS qt_x_vl, SUM(i.qtPedidoItem * i.vlPedidoItem * (1 - ISNULL(i.prDesconto, 0) / 100)) AS qt_x_vl_desc, SUM(i.qtAtendida * i.vlPedidoItem) AS atend_x_vl, SUM(i.qtPedidoItem * i.vlVendaOriginal) AS qt_x_original, SUM(i.qtPedidoItemOriginal * i.vlPedidoItem) AS qtorig_x_vl, SUM(i.vlPedidoItem) AS soma_vl, SUM(i.qtPedidoItem * i.vlPedidoItem * ISNULL(i.prIPI, 0) / 100) AS ipi, SUM(i.qtPedidoItem * i.vlPedidoItem * ISNULL(i.prSubstTributaria, 0) / 100) AS st, SUM(i.qtPedidoItem * i.vlPedidoItem * ISNULL(i.prSTaRecolher, 0) / 100) AS st_recolher, SUM(i.vlItemFreteFOB) AS frete_fob, MAX(i.prDesconto) AS desc_max, MAX(i.prIPI) AS ipi_max, MAX(i.prSubstTributaria) AS st_max, SUM(CASE WHEN i.cdBloqueio IS NULL THEN 0 ELSE 1 END) AS itens_bloqueio, SUM(CASE WHEN i.qtPedidoItem IS NULL OR i.vlPedidoItem IS NULL THEN 1 ELSE 0 END) AS nulos FROM dbo.tbPedido AS p JOIN dbo.tbPedidoItem AS i ON i.cdPedido = p.cdPedido AND i.cdPessoaFilial = p.cdPessoaFilial WHERE p.cdPessoaFilial = 4 AND p.dtPedido >= @desde GROUP BY p.cdPedido, p.dtPedido ORDER BY p.dtPedido DESC, p.cdPedido DESC"
 }
 $RpcsPermitidas = @('solidcon_receber_banco_saude', 'solidcon_receber_contas_receber', 'solidcon_receber_margem_vendas', 'solidcon_receber_custos', 'solidcon_receber_pedidos_erp')
 # Semantica de VW_RDUPHOLD_VENDA_ITENS CONFIRMADA pelo probe real da filial 4 (2026-11-12):
@@ -455,6 +460,8 @@ function Descrever-Erro($Registro) {
                 { $_ -in @(-2, 121, 258) } { 'tempo esgotado' }
                 1222 { 'tempo de bloqueio esgotado' }
                 229 { 'sem permissao de leitura' }
+                207 { 'coluna inexistente' }
+                208 { 'tabela ou view inexistente' }
                 default { if ($n -in @(-1, 2, 26, 40, 53, 10054, 10060, 10061, 11001, 11004)) { 'servidor inacessivel' } else { 'erro SQL' } }
             }
             return ('{0} (sql {1})' -f $texto, $n)
@@ -1012,8 +1019,9 @@ $EtapasPedido = @('aberto', 'na_carga', 'separando', 'separado', 'conferido', 's
 $PedidosDiasJanela = 30
 $PedidosDiasConcluidos = 3
 # So METADADOS (nomes/tipos de colunas) para o -Testar real: candidatas a valor do pedido em
-# tbPedidoItem e a documento em tbCliente. Texto interno fixo; nunca le dados; so roda no -Testar.
-$SqlMetadadosPedidos = "SELECT OBJECT_NAME(c.object_id) AS tabela, c.name AS coluna, ty.name AS tipo FROM sys.columns AS c JOIN sys.types AS ty ON ty.user_type_id = c.user_type_id WHERE (c.object_id = OBJECT_ID('dbo.tbPedidoItem') AND ty.name IN ('money','smallmoney','decimal','numeric','float','real','int','bigint','smallint')) OR (c.object_id = OBJECT_ID('dbo.tbCliente') AND (c.name LIKE '%Cnpj%' OR c.name LIKE '%Cpf%' OR c.name LIKE '%Doc%' OR c.name LIKE 'cdPessoa%')) ORDER BY 1, c.column_id"
+# tbPedidoItem, colunas de valor do cabecalho (tbPedido/tbPedidoVenda: so money/decimal/float) e a
+# documento em tbCliente. Texto interno fixo; nunca le dados; so roda no -Testar.
+$SqlMetadadosPedidos = "SELECT OBJECT_NAME(c.object_id) AS tabela, c.name AS coluna, ty.name AS tipo FROM sys.columns AS c JOIN sys.types AS ty ON ty.user_type_id = c.user_type_id WHERE (c.object_id = OBJECT_ID('dbo.tbPedidoItem') AND ty.name IN ('money','smallmoney','decimal','numeric','float','real','int','bigint','smallint')) OR (c.object_id IN (OBJECT_ID('dbo.tbPedido'), OBJECT_ID('dbo.tbPedidoVenda')) AND ty.name IN ('money','smallmoney','decimal','numeric','float','real')) OR (c.object_id = OBJECT_ID('dbo.tbCliente') AND (c.name LIKE '%Cnpj%' OR c.name LIKE '%Cpf%' OR c.name LIKE '%Doc%' OR c.name LIKE 'cdPessoa%')) ORDER BY 1, c.column_id"
 
 function Data-Erp($Valor) {
     # datetime do ERP (hora de Sao Paulo, sem fuso) -> ISO com offset; sentinela antiga = sem data.
@@ -1048,7 +1056,54 @@ function Etapa-Pedido($L) {
     return 'aberto'
 }
 
-function Normalizar-Pedidos($Linhas, $Clientes, [datetime]$Recente) {
+# Formatacao da amostra do -Testar: numero invariante (ponto decimal) ou '-' para nulo.
+function Valor-Amostra($Valor, [int]$Casas) {
+    if ($null -eq $Valor -or $Valor -is [DBNull]) { return '-' }
+    try { return ([decimal]$Valor).ToString('F' + $Casas, $Invariant) } catch { return '?' }
+}
+function Soma-Amostra($Valores) {
+    $t = [decimal]0
+    foreach ($v in $Valores) { if ($null -ne $v -and $v -isnot [DBNull]) { try { $t += [decimal]$v } catch { return '?' } } }
+    return $t.ToString('F2', $Invariant)
+}
+
+# Valor do pedido em centavos (fase B): Soma(qt*vl) * 100, metade para longe do zero (igual a Centavos-Banco).
+# Nunca chuta: sem itens, item com qt/vl nulo, negativo, tipo estranho ou acima do limite da 035 => null.
+# Devolve @{ centavos = <long|null>; motivo = 'ok'|'sem_itens'|'nulo'|'negativo'|'invalido' }.
+function Valor-Pedido($Linha) {
+    if ($null -eq $Linha) { return @{ centavos = $null; motivo = 'sem_itens' } }
+    if ($Linha.ContainsKey('ambiguo')) { return @{ centavos = $null; motivo = 'invalido' } }
+    # Nada aqui pode derrubar o modulo: qualquer conversao/estouro vira 'fora_limite' (null + contagem).
+    try {
+        $nulos = $Linha.nulos
+        if ($null -eq $nulos -or $nulos -is [DBNull] -or [decimal]$nulos -ne 0) { return @{ centavos = $null; motivo = 'nulo' } }
+        $v = $Linha.valor
+        if ($null -eq $v -or $v -is [DBNull]) { return @{ centavos = $null; motivo = 'nulo' } }
+        if ($v -isnot [decimal] -and $v -isnot [int] -and $v -isnot [long] -and $v -isnot [double]) { return @{ centavos = $null; motivo = 'invalido' } }
+        # double NaN/Infinito/acima de ~7,9e28 nao cabe em decimal: a conversao lanca e cai no catch.
+        $d = [decimal]$v
+        # Negativo pelo valor BRUTO (antes de arredondar: -0,004 nao vira 0).
+        if ($d -lt 0) { return @{ centavos = $null; motivo = 'negativo' } }
+        # Teto ANTES de multiplicar: 1e13 reais = 1e15 centavos (limite da 035); assim *100 nunca estoura.
+        if ($d -ge [decimal]10000000000000) { return @{ centavos = $null; motivo = 'fora_limite' } }
+        $c = [decimal]::Round($d * 100, 0, [MidpointRounding]::AwayFromZero)
+        if ($c -gt 999999999999999) { return @{ centavos = $null; motivo = 'fora_limite' } }
+        return @{ centavos = [long]$c; motivo = 'ok' }
+    } catch { return @{ centavos = $null; motivo = 'fora_limite' } }
+}
+
+# cd_pedido -> linha de valores. Codigo repetido (nao deveria, ha GROUP BY) = ambiguo => sem valor.
+function Mapa-Valores($Linhas) {
+    $m = @{}
+    foreach ($l in $Linhas) {
+        $cd = Inteiro-Banco $l.cd_pedido
+        if ($null -eq $cd) { continue }
+        if ($m.ContainsKey($cd)) { $m[$cd] = @{ ambiguo = $true } } else { $m[$cd] = $l }
+    }
+    return $m
+}
+
+function Normalizar-Pedidos($Linhas, $Clientes, [datetime]$Recente, $Valores) {
     # Codigo do cliente -> documento so digitos. Codigo repetido com documentos diferentes = indefinido.
     $docs = @{}
     foreach ($p in $Clientes) {
@@ -1059,7 +1114,7 @@ function Normalizar-Pedidos($Linhas, $Clientes, [datetime]$Recente) {
     }
     $itens = New-Object Collections.ArrayList
     $vistos = @{}
-    $cont = [ordered]@{ canceladas = 0; fora_da_janela = 0; cnpj = 0; cpf = 0; indefinido = 0 }
+    $cont = [ordered]@{ canceladas = 0; fora_da_janela = 0; cnpj = 0; cpf = 0; indefinido = 0; com_valor = 0; sem_valor = 0; valor_negativo = 0; valor_fora_limite = 0; itens_desc_ipi_st = 0 }
     $porEtapa = [ordered]@{}
     foreach ($e in $EtapasPedido) { $porEtapa[$e] = 0 }
     foreach ($l in $Linhas) {
@@ -1082,6 +1137,15 @@ function Normalizar-Pedidos($Linhas, $Clientes, [datetime]$Recente) {
         $porEtapa[$etapa]++
         $carga = Inteiro-Banco $l.cd_carga
         if ($null -ne $carga -and $carga -gt 999999999999) { throw 'pedido-invalido' }
+        # Valor: $Valores = $null quando a consulta de valores falhou (todos sem valor, pedidos seguem).
+        $lv = if ($null -ne $Valores -and $Valores.ContainsKey([long]$cd)) { $Valores[[long]$cd] } else { $null }
+        $val = Valor-Pedido $lv
+        if ($val.motivo -ceq 'ok') { $cont.com_valor++ } else { $cont.sem_valor++ }
+        if ($val.motivo -ceq 'negativo') { $cont.valor_negativo++ }
+        if ($val.motivo -ceq 'fora_limite') { $cont.valor_fora_limite++ }
+        if ($null -ne $lv -and -not $lv.ContainsKey('ambiguo') -and $null -ne $lv.itens_desc_ipi_st -and $lv.itens_desc_ipi_st -isnot [DBNull]) {
+            try { $cont.itens_desc_ipi_st += [int]$lv.itens_desc_ipi_st } catch { }
+        }
         [void]$itens.Add([ordered]@{
             cd_pedido = [long]$cd; dt_pedido = $dtPedido; etapa = $etapa
             dt_carga = Data-Erp $l.dt_carga
@@ -1093,8 +1157,8 @@ function Normalizar-Pedidos($Linhas, $Clientes, [datetime]$Recente) {
             dt_atendido = Data-Erp $l.dt_atendido
             cliente_tipo = $tipo
             documento = $(if ($tipo -ceq 'cnpj') { $doc } else { $null })
-            # Valor: colunas de tbPedidoItem ainda nao confirmadas (ver -Testar). Sempre null por ora.
-            valor_centavos = $null
+            # Valor (fase B): Soma(qtPedidoItem * vlPedidoItem) em centavos; null quando nao da para afirmar.
+            valor_centavos = $val.centavos
             nr_carga = $(if ($null -ne $carga) { [long]$carga } else { $null })
         })
     }
@@ -1136,6 +1200,44 @@ $ModuloPedidos = @{
             # FICTICIO: CNPJ de exemplo valido, um CPF de exemplo e um documento quebrado.
             simulacao = { param($v) ,@(@{ codigo_parceiro = 1; documento = '11.222.333/0001-81' }, @{ codigo_parceiro = 2; documento = '000.000.001-91' }, @{ codigo_parceiro = 3; documento = '123' }) }
         }
+        # Valor do pedido (fase B, formula confirmada pelo dono em 2026-11-13): Soma(qtPedidoItem * vlPedidoItem)
+        # por pedido. Desconto/IPI/ST NAO entram (escala ainda nao conhecida): so contados.
+        valores = @{
+            maxLinhas = 5000; parametros = @('desde')
+            colunas = @('cd_pedido', 'itens', 'valor', 'nulos', 'itens_desc_ipi_st')
+            sql = "SELECT p.cdPedido AS cd_pedido, COUNT(*) AS itens, SUM(i.qtPedidoItem * i.vlPedidoItem) AS valor, SUM(CASE WHEN i.qtPedidoItem IS NULL OR i.vlPedidoItem IS NULL THEN 1 ELSE 0 END) AS nulos, SUM(CASE WHEN ISNULL(i.prDesconto, 0) > 0 OR ISNULL(i.prIPI, 0) > 0 OR ISNULL(i.prSubstTributaria, 0) > 0 THEN 1 ELSE 0 END) AS itens_desc_ipi_st FROM dbo.tbPedido AS p JOIN dbo.tbPedidoItem AS i ON i.cdPedido = p.cdPedido AND i.cdPessoaFilial = p.cdPessoaFilial WHERE p.cdPessoaFilial = 4 AND p.dtPedido >= @desde GROUP BY p.cdPedido"
+            # FICTICIO: arredondamento (x,xx5), item nulo, negativo, desconto contado, pedido sem itens (9006 ausente).
+            simulacao = {
+                param($v)
+                ,@(
+                    @{ cd_pedido = 9001; itens = 3; valor = [decimal]1234.505; nulos = 0; itens_desc_ipi_st = 0 },
+                    @{ cd_pedido = 9002; itens = 1; valor = [decimal]200; nulos = 0; itens_desc_ipi_st = 1 },
+                    @{ cd_pedido = 9003; itens = 2; valor = [decimal]50; nulos = 1; itens_desc_ipi_st = 0 },
+                    @{ cd_pedido = 9004; itens = 1; valor = [decimal]-5; nulos = 0; itens_desc_ipi_st = 0 },
+                    @{ cd_pedido = 9005; itens = 2; valor = [decimal]0.004; nulos = 0; itens_desc_ipi_st = 0 },
+                    @{ cd_pedido = 9007; itens = 4; valor = [decimal]-0.004; nulos = 0; itens_desc_ipi_st = 0 },
+                    @{ cd_pedido = 9008; itens = 1; valor = [decimal]99.995; nulos = 0; itens_desc_ipi_st = 0 },
+                    @{ cd_pedido = 9010; itens = 1; valor = [decimal]10; nulos = 0; itens_desc_ipi_st = 0 }
+                )
+            }
+        }
+        # SO no -Testar (fase A do valor do pedido): 5 pedidos mais recentes, totais candidatos lado a lado
+        # para o dono comparar com o comercial/nota. Sem cliente/documento. Nunca enviado ao Supabase.
+        amostra_valor = @{
+            maxLinhas = 5; parametros = @('desde'); somenteTestar = $true
+            colunas = @('cd_pedido', 'dt_pedido', 'itens', 'qt_x_vl', 'qt_x_vl_desc', 'atend_x_vl', 'qt_x_original', 'qtorig_x_vl', 'soma_vl',
+                        'ipi', 'st', 'st_recolher', 'frete_fob', 'desc_max', 'ipi_max', 'st_max', 'itens_bloqueio', 'nulos')
+            sql = "SELECT TOP 5 p.cdPedido AS cd_pedido, p.dtPedido AS dt_pedido, COUNT(*) AS itens, SUM(i.qtPedidoItem * i.vlPedidoItem) AS qt_x_vl, SUM(i.qtPedidoItem * i.vlPedidoItem * (1 - ISNULL(i.prDesconto, 0) / 100)) AS qt_x_vl_desc, SUM(i.qtAtendida * i.vlPedidoItem) AS atend_x_vl, SUM(i.qtPedidoItem * i.vlVendaOriginal) AS qt_x_original, SUM(i.qtPedidoItemOriginal * i.vlPedidoItem) AS qtorig_x_vl, SUM(i.vlPedidoItem) AS soma_vl, SUM(i.qtPedidoItem * i.vlPedidoItem * ISNULL(i.prIPI, 0) / 100) AS ipi, SUM(i.qtPedidoItem * i.vlPedidoItem * ISNULL(i.prSubstTributaria, 0) / 100) AS st, SUM(i.qtPedidoItem * i.vlPedidoItem * ISNULL(i.prSTaRecolher, 0) / 100) AS st_recolher, SUM(i.vlItemFreteFOB) AS frete_fob, MAX(i.prDesconto) AS desc_max, MAX(i.prIPI) AS ipi_max, MAX(i.prSubstTributaria) AS st_max, SUM(CASE WHEN i.cdBloqueio IS NULL THEN 0 ELSE 1 END) AS itens_bloqueio, SUM(CASE WHEN i.qtPedidoItem IS NULL OR i.vlPedidoItem IS NULL THEN 1 ELSE 0 END) AS nulos FROM dbo.tbPedido AS p JOIN dbo.tbPedidoItem AS i ON i.cdPedido = p.cdPedido AND i.cdPessoaFilial = p.cdPessoaFilial WHERE p.cdPessoaFilial = 4 AND p.dtPedido >= @desde GROUP BY p.cdPedido, p.dtPedido ORDER BY p.dtPedido DESC, p.cdPedido DESC"
+            # FICTICIO: 2 pedidos com numeros redondos para conferir a impressao.
+            simulacao = {
+                param($v)
+                $h = [datetime]::Now
+                ,@(
+                    @{ cd_pedido = 9001; dt_pedido = $h.AddHours(-2); itens = 3; qt_x_vl = [decimal]1234.5; qt_x_vl_desc = [decimal]1172.775; atend_x_vl = [decimal]0; qt_x_original = [decimal]1300; qtorig_x_vl = [decimal]1234.5; soma_vl = [decimal]98.7; ipi = [decimal]0; st = [decimal]0; st_recolher = [decimal]0; frete_fob = $null; desc_max = [decimal]5; ipi_max = [decimal]0; st_max = [decimal]0; itens_bloqueio = 0; nulos = 0 },
+                    @{ cd_pedido = 9002; dt_pedido = $h.AddHours(-20); itens = 1; qt_x_vl = [decimal]200; qt_x_vl_desc = [decimal]200; atend_x_vl = [decimal]200; qt_x_original = [decimal]200; qtorig_x_vl = [decimal]200; soma_vl = [decimal]20; ipi = [decimal]10; st = [decimal]0; st_recolher = [decimal]0; frete_fob = [decimal]0; desc_max = $null; ipi_max = [decimal]5; st_max = $null; itens_bloqueio = 1; nulos = 0 }
+                )
+            }
+        }
     }
 }
 
@@ -1143,6 +1245,10 @@ function Modulo-Pedidos($Modulo) {
     $relogio = [Diagnostics.Stopwatch]::StartNew()
     $sessao = $null
     $metadados = $null
+    $amostra = $null
+    $amostraErro = $null
+    $valoresLinhas = $null
+    $valoresErro = $null
     $agoraSp = [TimeZoneInfo]::ConvertTimeFromUtc([DateTime]::UtcNow, [TimeZoneInfo]::FindSystemTimeZoneById('E. South America Standard Time'))
     $desde = $agoraSp.Date.AddDays(-$PedidosDiasJanela)
     $recente = $agoraSp.AddDays(-$PedidosDiasConcluidos)
@@ -1150,10 +1256,18 @@ function Modulo-Pedidos($Modulo) {
         $sessao = Abrir-Sessao
         $linhas = Executar-Consulta $sessao $Modulo 'lista' @{ desde = $desde }
         $clientes = Executar-Consulta $sessao $Modulo 'clientes' @{ desde = $desde }
+        # Valor (fase B): falha so desta consulta nao derruba o Kanban; os pedidos seguem sem valor.
+        try { $valoresLinhas = Executar-Consulta $sessao $Modulo 'valores' @{ desde = $desde } }
+        catch { $valoresErro = Descrever-Erro $_ }
         $coleta = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", $Invariant)
         if ($Testar -and -not $sessao.simulada) {
             $cmd = $sessao.con.CreateCommand(); $cmd.CommandTimeout = 30; $cmd.Transaction = $sessao.tx; $cmd.CommandText = $SqlMetadadosPedidos
             $metadados = Ler-Linhas $cmd @('tabela', 'coluna', 'tipo') 200
+        }
+        if ($Testar) {
+            # Amostra do valor (fase A): falha aqui nao derruba o resto do -Testar (metadados ja lidos).
+            try { $amostra = Executar-Consulta $sessao $Modulo 'amostra_valor' @{ desde = $desde } }
+            catch { $amostraErro = Descrever-Erro $_ }
         }
     } catch {
         $motivo = Descrever-Erro $_
@@ -1166,7 +1280,10 @@ function Modulo-Pedidos($Modulo) {
         else { Log ('ERRO pedidos modo={0} fase=consulta motivo={1} execucao={2}' -f $Cfg.modo, $motivo, $ExecucaoId) }
         throw 'modulo-com-erro'
     } finally { Fechar-Sessao $sessao }
-    try { $normal = Normalizar-Pedidos $linhas $clientes $recente }
+    try {
+        $mapaValores = if ($null -ne $valoresLinhas) { Mapa-Valores $valoresLinhas } else { $null }
+        $normal = Normalizar-Pedidos $linhas $clientes $recente $mapaValores
+    }
     catch {
         # Inteiro-Banco usa o codigo do modulo receber; aqui o texto certo e o de pedido.
         $motivo = if ([string]$_.Exception.Message -ceq 'parcela-invalida') { Descrever-Erro ([pscustomobject]@{ Exception = [Exception]::new('pedido-invalido') }) } else { Descrever-Erro $_ }
@@ -1177,7 +1294,8 @@ function Modulo-Pedidos($Modulo) {
     $c = $normal.contagens
     $etapasTxt = (@($normal.etapas.Keys | ForEach-Object { $_ + '=' + $normal.etapas[$_] }) -join ' ')
     if ($Testar) {
-        # So contagens e nomes de colunas: nada de codigo de pedido, cliente, documento ou valor.
+        # So contagens e nomes de colunas; unica excecao: a AMOSTRA de valor no fim (codigo do pedido, data e
+        # totais, sem cliente/documento/nome) para o dono conferir no comercial. Nada vai para log ou Supabase.
         Write-Output ('CHAVE aceitar_permissoes_extras: ' + $(if ($AceitarPermissoesExtras) { 'true' } else { 'false' }))
         if ($Simular) { Write-Output 'TRAVA nao conferida (simulacao, sem banco)'; Write-Output 'transacao com rollback: nao conferida (simulacao)' }
         else {
@@ -1188,11 +1306,32 @@ function Modulo-Pedidos($Modulo) {
             $(if ($Simular) { ' SIMULADO' } else { '' }), $linhas.Count, $normal.itens.Count, $c.canceladas, $c.fora_da_janela)
         Write-Output ('  por etapa: ' + $etapasTxt)
         Write-Output ('  cliente: cnpj={0} cpf={1} indefinido={2} (codigos de cliente distintos lidos no parceiro: {3})' -f $c.cnpj, $c.cpf, $c.indefinido, $clientes.Count)
-        Write-Output '  valor do pedido: nao coletado (valor_centavos = null) ate confirmar as colunas abaixo.'
+        # So contagens (nunca valores): Soma(qt*vl) em centavos; desconto/IPI/ST so contados.
+        Write-Output ('  valor do pedido: com_valor={0} sem_valor={1} valor_negativo={2} valor_fora_limite={3} itens_desc_ipi_st={4} (Soma qt*vl; desconto/IPI/ST nao aplicados)' -f
+            $c.com_valor, $c.sem_valor, $c.valor_negativo, $c.valor_fora_limite, $c.itens_desc_ipi_st)
+        if ($valoresErro) { Write-Output ('  ERRO valores: ' + $valoresErro + ' (pedidos iriam sem valor)') }
         if ($null -ne $metadados) {
             Write-Output '  colunas candidatas (so metadados):'
             foreach ($m in $metadados) { Write-Output ('    {0}.{1} ({2})' -f $m.tabela, $m.coluna, $m.tipo) }
             if ($metadados.Count -eq 0) { Write-Output '    nenhuma visivel para o login' }
+        }
+        # Fase A do valor: codigo do pedido + data + totais candidatos (sem cliente, documento ou nome),
+        # para o dono achar o pedido no comercial e dizer qual coluna bate com o total/nota.
+        Write-Output '  AMOSTRA valor (5 pedidos mais recentes da filial 4; R$; sem cliente):'
+        if ($amostraErro) { Write-Output ('    ERRO amostra: ' + $amostraErro) }
+        elseif ($null -eq $amostra -or $amostra.Count -eq 0) { Write-Output '    nenhum pedido na janela' }
+        else {
+            Write-Output '    legenda: A=Soma(qt*vl) B=Soma(qt*vl*(1-desc%)) C=Soma(qtAtendida*vl) D=Soma(qt*vlVendaOriginal) E=Soma(qtOriginal*vl) F=Soma(vl)'
+            Write-Output '             IPI/ST/STrec = Soma(qt*vl*%/100); FOB=Soma(vlItemFreteFOB); A+IPI+ST e B+IPI+ST somados; maximos de desc%/IPI%/ST% (escala)'
+            foreach ($a in $amostra) {
+                $dt = if ($a.dt_pedido -is [datetime]) { $a.dt_pedido.ToString('yyyy-MM-dd HH:mm', $Invariant) } else { '?' }
+                Write-Output ('    pedido {0} {1} itens={2} bloqueados={3} nulos={4}' -f (Valor-Amostra $a.cd_pedido 0), $dt, (Valor-Amostra $a.itens 0), (Valor-Amostra $a.itens_bloqueio 0), (Valor-Amostra $a.nulos 0))
+                Write-Output ('      A={0} B={1} C={2} D={3} E={4} F={5}' -f (Valor-Amostra $a.qt_x_vl 2), (Valor-Amostra $a.qt_x_vl_desc 2), (Valor-Amostra $a.atend_x_vl 2),
+                    (Valor-Amostra $a.qt_x_original 2), (Valor-Amostra $a.qtorig_x_vl 2), (Valor-Amostra $a.soma_vl 2))
+                Write-Output ('      IPI={0} ST={1} STrec={2} FOB={3} A+IPI+ST={4} B+IPI+ST={5} | max desc%={6} IPI%={7} ST%={8}' -f (Valor-Amostra $a.ipi 2), (Valor-Amostra $a.st 2),
+                    (Valor-Amostra $a.st_recolher 2), (Valor-Amostra $a.frete_fob 2), (Soma-Amostra @($a.qt_x_vl, $a.ipi, $a.st)), (Soma-Amostra @($a.qt_x_vl_desc, $a.ipi, $a.st)),
+                    (Valor-Amostra $a.desc_max 4), (Valor-Amostra $a.ipi_max 4), (Valor-Amostra $a.st_max 4))
+            }
         }
         return
     }
@@ -1212,9 +1351,10 @@ function Modulo-Pedidos($Modulo) {
         Salvar-Json ([ordered]@{ coletado_em = $coleta; execucao_id = $ExecucaoId; simulado = [bool]$Simular; itens = $normal.itens }) (Join-Path $Pasta 'banco-pedidos-teste.json')
     }
     $relogio.Stop()
-    Log ('OK pedidos modo={0}{1} linhas={2} {3} cnpj={4} cpf={5} indefinido={6} canceladas={7} antigos={8} duracao_ms={9} enviado={10} execucao={11}' -f
+    if ($valoresErro) { Log ('AVISO pedidos modo={0} fase=valores motivo={1}; pedidos enviados sem valor. execucao={2}' -f $Cfg.modo, $valoresErro, $ExecucaoId) }
+    Log ('OK pedidos modo={0}{1} linhas={2} {3} cnpj={4} cpf={5} indefinido={6} canceladas={7} antigos={8} pedidos_com_valor={9} sem_valor={10} valor_negativo={11} valor_fora_limite={12} itens_desc_ipi_st={13} duracao_ms={14} enviado={15} execucao={16}' -f
         $Cfg.modo, $(if ($Simular) { ' SIMULADO' } else { '' }), $normal.itens.Count, $etapasTxt, $c.cnpj, $c.cpf, $c.indefinido,
-        $c.canceladas, $c.fora_da_janela, $relogio.ElapsedMilliseconds, $enviado, $ExecucaoId)
+        $c.canceladas, $c.fora_da_janela, $c.com_valor, $c.sem_valor, $c.valor_negativo, $c.valor_fora_limite, $c.itens_desc_ipi_st, $relogio.ElapsedMilliseconds, $enviado, $ExecucaoId)
 }
 
 $Modulos = @(

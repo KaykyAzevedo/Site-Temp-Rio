@@ -874,3 +874,44 @@ Código de saída do módulo: **4** (precedência 2 saúde > 3 receber > 4 marge
 
 Pendente sem prioridade: indicador "costuma pagar atrasado" por mês
 (`VW_MLP_CONTAS_A_RECEBER`, coluna `Codigo_Filial` confirmada) — fica para depois.
+
+## Valor do pedido do ERP — fase A: amostra no `-Testar` (só conferência)
+
+`solidcon_pedidos_erp.valor_centavos` (035) continua `null` até o dono confirmar a fórmula. Para isso, o `-Testar` real passou a imprimir:
+
+- **Metadados (não lê dado nenhum):** as colunas numéricas de `tbPedidoItem` e agora também as colunas de valor (money/decimal/float) de `tbPedido` e `tbPedidoVenda`, para achar um eventual total do cabeçalho.
+- **AMOSTRA valor:** os 5 pedidos mais recentes da filial 4, com código do pedido, data e totais candidatos lado a lado. Sem cliente, documento ou nome:
+  - A = Σ qt×vl; B = Σ qt×vl×(1−desc%); C = Σ qtAtendida×vl; D = Σ qt×vlVendaOriginal; E = Σ qtOriginal×vl; F = Σ vl;
+  - IPI/ST/ST a recolher = Σ qt×vl×%/100; FOB = Σ vlItemFreteFOB; A+IPI+ST e B+IPI+ST somados;
+  - também os máximos de desc%/IPI%/ST%, que mostram a escala (5 = 5%), e as contagens de itens bloqueados e nulos.
+  - Falha só da amostra (ex.: `coluna inexistente (sql 207)`) não derruba o resto do `-Testar`.
+
+**Como funciona:** `dbo.tbPedidoItem` entrou na lista de tabelas do módulo `pedidos` (`$TabelasPedidos`), usada só pela consulta fixa aprovada `pedidos.amostra_valor`, que roda só no `-Testar`. As proteções são as mesmas de sempre: ReadOnly, READ UNCOMMITTED, transação com rollback, trava de permissões e validador. Nada vai para log, arquivo ou Supabase.
+
+**Rodar no servidor** (PowerShell como administrador, onde a tarefa roda):
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File C:\TempRio\solidcon\sync-banco.ps1 -Testar
+```
+
+Comparar 2–3 pedidos da AMOSTRA com o total do pedido na tela do comercial (ou na nota) e dizer qual letra bate. **Resultado (2026-11-13): o dono confirmou a letra A.** A amostra continua no `-Testar` para conferências futuras.
+
+## Valor do pedido do ERP — fase B: `valor_centavos` na coleta
+
+Fórmula confirmada pelo dono: **valor do pedido = Σ `qtPedidoItem` × `vlPedidoItem`** (letra A da amostra). O preço é montado pelo vendedor por cliente; `vlVendaOriginal` não é o valor.
+
+- **Consulta:** fixa e aprovada, `pedidos.valores`: por pedido da filial 4 na mesma janela de 30 dias, `tbPedidoItem` ligada a `tbPedido` por `cdPedido` + `cdPessoaFilial`. Roda na coleta normal, na mesma sessão protegida (ReadOnly, READ UNCOMMITTED, transação com rollback).
+- **Centavos:** `valor_centavos` = Σ×100 arredondado com metade para longe do zero, a mesma regra de `Centavos-Banco`. Exemplo fictício: 1234,505 vira 123451.
+- **Nunca chuta (vai `null`):**
+  - pedido sem itens;
+  - algum item com quantidade ou preço nulo;
+  - total negativo, avaliado antes de arredondar (contado em `valor_negativo`);
+  - tipo inesperado ou código repetido;
+  - valor fora do limite da 035, NaN/infinito ou grande demais para converter: o teto é checado ANTES de multiplicar, e qualquer falha de conversão vira `null` (contado em `valor_fora_limite`). O módulo nunca cai por causa de um valor.
+- **Desconto, IPI e ST não entram:** a escala dos percentuais ainda não é conhecida. Itens com `prDesconto`, `prIPI` ou `prSubstTributaria` > 0 só são contados (`itens_desc_ipi_st`), para revisitar.
+- **Se só a consulta de valores falhar:** os pedidos (Kanban) seguem sem valor, e o log ganha `AVISO pedidos ... fase=valores motivo=...`.
+- **Log:** só contagens (`pedidos_com_valor`, `sem_valor`, `valor_negativo`, `valor_fora_limite`, `itens_desc_ipi_st`), nunca valores. O `-Testar` mostra as mesmas contagens.
+- **Banco:** sem migração nova. A coluna `solidcon_pedidos_erp.valor_centavos` (bigint, de 0 a 999999999999999) e a validação da RPC já existem desde a 035.
+- **Painel:** o card do Kanban "Pedidos do ERP" lê `solidcon_pedidos_erp.valor_centavos`; `null` = sem valor.
+
+**Instalar:** copiar o `sync-banco.ps1` novo para `C:\TempRio\solidcon\`, rodar `-Testar` uma vez (deve mostrar `valor do pedido: com_valor=N ...`) e deixar a tarefa de 5 min seguir.
