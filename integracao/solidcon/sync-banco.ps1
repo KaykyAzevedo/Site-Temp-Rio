@@ -18,6 +18,11 @@
 # 'pedidos' (pedidos de venda da filial 4 com a etapa do WMS, toda execucao; 30 dias, concluidos
 #   so nos ultimos 3 dias). Conferencia sem gravar nada: sync-banco.ps1 -Testar [-Simular]
 #   (so o modulo pedidos; imprime contagens por etapa; sem Supabase, sem agenda, sem arquivo).
+# PROTECOES de toda sessao: ApplicationIntent=ReadOnly, READ UNCOMMITTED e toda leitura dentro de
+#   uma transacao explicita que SEMPRE termina em Rollback (conferidas no servidor; senao nada le).
+# Trava de permissoes: bloqueia se o login pode gravar/executar. Chave do dono no config-banco.json
+#   'aceitar_permissoes_extras': true (padrao false) = segue com 'AVISO trava liberada pelo dono'
+#   no log a cada execucao, so com as protecoes confirmadas. Inconclusivo bloqueia sempre.
 [CmdletBinding()]
 param(
     [string]$Config = 'C:\TempRio\solidcon\config-banco.json',
@@ -75,6 +80,9 @@ $DataMinimaMargem = [datetime]'2026-05-29'
 
 # Preparacao fixa de toda sessao (texto interno; nao passa pelo validador de modulos).
 $SqlSessao = 'SET NOCOUNT ON; SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED; SET LOCK_TIMEOUT 5000; SET DEADLOCK_PRIORITY LOW;'
+# Conferencia das protecoes na propria sessao (texto interno): 1 transacao aberta e isolamento
+# 1 = READ UNCOMMITTED. A DMV mostra a propria sessao sem VIEW SERVER STATE; NULL = bloqueia.
+$SqlProtecoes = 'SELECT @@TRANCOUNT AS transacoes, CAST((SELECT s.transaction_isolation_level FROM sys.dm_exec_sessions AS s WHERE s.session_id = @@SPID) AS int) AS isolamento'
 # Permissoes EFETIVAS do login (base, schema, objeto, coluna, papeis). Qualquer 1 = pode gravar
 # ou executar; NULL = nao deu para conferir. Os dois casos falham fechado. O login so enxerga
 # objetos em que tem algum privilegio (visibilidade de metadados), justamente os que poderiam
@@ -337,28 +345,47 @@ function Ler-Linhas($Comando, [string[]]$Colunas, [int]$MaxLinhas) {
 
 function Abrir-Sessao {
     # Uma sessao por modulo: falha de conexao/consulta de um nao contamina o outro.
+    # PROTECOES (sempre, com ou sem a chave): ApplicationIntent=ReadOnly, READ UNCOMMITTED e TODA
+    # leitura dentro de uma transacao explicita que sempre termina em Rollback (Fechar-Sessao).
     if ($Simular) {
         if ($SimularFalha) { throw 'simulada' }
-        return @{ simulada = $true; con = $null }
+        return @{ simulada = $true; con = $null; tx = $null }
     }
     $senha = Ler-SenhaBanco
     $con = Nova-ConexaoBanco $senha
+    $tx = $null
     try {
         $con.Open()
         $cmd = $con.CreateCommand(); $cmd.CommandTimeout = 15; $cmd.CommandText = $SqlSessao
         [void]$cmd.ExecuteNonQuery()
-        $cmd = $con.CreateCommand(); $cmd.CommandTimeout = 30; $cmd.CommandText = $SqlPermissoes
+        $tx = $con.BeginTransaction([Data.IsolationLevel]::ReadUncommitted)
+        # Confere no proprio servidor que as protecoes estao valendo nesta sessao; senao, nada le.
+        $cmd = $con.CreateCommand(); $cmd.CommandTimeout = 15; $cmd.Transaction = $tx; $cmd.CommandText = $SqlProtecoes
+        $pr = Ler-Linhas $cmd @('transacoes', 'isolamento') 1
+        $intencao = (New-Object System.Data.SqlClient.SqlConnectionStringBuilder($con.ConnectionString)).ApplicationIntent
+        if ($pr.Count -ne 1 -or $null -eq $pr[0].transacoes -or [int]$pr[0].transacoes -ne 1 -or
+            $null -eq $pr[0].isolamento -or [int]$pr[0].isolamento -ne 1 -or
+            [string]$intencao -cne 'ReadOnly') { $script:LinhaTrava = 'TRAVA bloqueada: protecoes nao confirmadas'; throw 'protecao-inativa' }
+        $script:ProtecoesConfirmadas = $true
+        $cmd = $con.CreateCommand(); $cmd.CommandTimeout = 30; $cmd.Transaction = $tx; $cmd.CommandText = $SqlPermissoes
         $p = Ler-Linhas $cmd ($ColunasPermissoes) 1
-        # Login de consulta nunca pode gravar: se puder, ou se nao der para conferir, ninguem coleta.
+        # Inconclusivo bloqueia SEMPRE (a chave do dono nao cobre o que nao deu para conferir).
         if ($p.Count -ne 1 -or $null -eq $p[0].escrita -or $null -eq $p[0].inconclusivo -or
             $null -eq $p[0].verificados -or [int]$p[0].verificados -lt 17) { $script:LinhaTrava = 'TRAVA bloqueada: permissoes inconclusivas'; throw 'permissao-inconclusiva' }
         $script:DetalhePermissoes = Resumo-Permissoes $p[0]
-        if ([int]$p[0].escrita -ne 0) { $script:LinhaTrava = 'TRAVA bloqueada: login pode gravar ou executar (' + $script:DetalhePermissoes + ')'; throw 'login-com-escrita' }
         if ([int]$p[0].inconclusivo -ne 0) { $script:LinhaTrava = 'TRAVA bloqueada: permissoes inconclusivas'; throw 'permissao-inconclusiva' }
-        $script:LinhaTrava = 'TRAVA liberada: nenhuma gravacao/execucao (' + $script:DetalhePermissoes + ')'
-        return @{ simulada = $false; con = $con }
+        if ([int]$p[0].escrita -ne 0) {
+            if (-not $script:AceitarPermissoesExtras) { $script:LinhaTrava = 'TRAVA bloqueada: login pode gravar ou executar (' + $script:DetalhePermissoes + ')'; throw 'login-com-escrita' }
+            # Chave do dono (aceitar_permissoes_extras=true) + protecoes confirmadas acima: segue com AVISO.
+            $script:LinhaTrava = 'AVISO trava liberada pelo dono: ' + $script:DetalhePermissoes
+        } else {
+            $script:LinhaTrava = 'TRAVA liberada: nenhuma gravacao/execucao (' + $script:DetalhePermissoes + ')'
+        }
+        # Uma linha por execucao no log (nao por modulo). No -Testar so imprime (nada grava).
+        if (-not $script:TravaLogada -and -not $Testar) { Log $script:LinhaTrava | Out-Host; $script:TravaLogada = $true }
+        return @{ simulada = $false; con = $con; tx = $tx }
     } catch {
-        $con.Dispose()
+        Fechar-Sessao @{ con = $con; tx = $tx }
         throw
     } finally { $senha.Dispose() }
 }
@@ -367,6 +394,9 @@ $ColunasPermissoes = @('escrita', 'inconclusivo', 'verificados', 'datareader_gra
     'schema_gravacao', 'objeto_execucao', 'objeto_gravacao', 'coluna_gravacao', 'papel_gravacao')
 $DetalhePermissoes = ''
 $LinhaTrava = ''
+$TravaLogada = $false
+$ProtecoesConfirmadas = $false
+$AceitarPermissoesExtras = $false
 
 function Resumo-Permissoes($L) {
     # So contagens (nunca nomes de schema/objeto): onde e de que tipo.
@@ -382,7 +412,16 @@ function Resumo-Permissoes($L) {
 }
 
 function Fechar-Sessao($Sessao) {
-    if ($Sessao -and $Sessao.con) { $Sessao.con.Dispose() }
+    # Rollback SEMPRE (sucesso ou erro): nada feito nesta sessao pode deixar efeito no ERP.
+    if (-not $Sessao) { return }
+    try {
+        if ($Sessao.tx) {
+            try { if ($Sessao.tx.Connection) { $Sessao.tx.Rollback() } } finally { $Sessao.tx.Dispose() }
+        }
+    } finally {
+        # Fechar a conexao (Pooling=false) tambem desfaz no servidor qualquer transacao que sobrar.
+        if ($Sessao.con) { $Sessao.con.Dispose() }
+    }
 }
 
 function Executar-Consulta($Sessao, $Modulo, [string]$Nome, [hashtable]$Valores = @{}) {
@@ -394,6 +433,7 @@ function Executar-Consulta($Sessao, $Modulo, [string]$Nome, [hashtable]$Valores 
     foreach ($k in $declarados) { if (-not $Valores.ContainsKey($k) -or $Valores[$k] -isnot [datetime]) { throw 'parametro-invalido' } }
     if ($Sessao.simulada) { return ,(& $c.simulacao $Valores) }
     $cmd = $Sessao.con.CreateCommand()
+    $cmd.Transaction = $Sessao.tx
     $cmd.CommandTimeout = 30
     $cmd.CommandText = $c.sql
     foreach ($k in $declarados) {
@@ -445,6 +485,7 @@ function Descrever-Erro($Registro) {
         'custos-duplicados' = 'mesmo produto/unidade com custos diferentes'
         'custo-invalido' = 'linha de custo com produto invalido'
         'pedido-invalido' = 'pedido com codigo, data ou carga invalidos'
+        'protecao-inativa' = 'transacao com rollback, READ UNCOMMITTED ou ReadOnly nao confirmados; nada lido'
         'pedidos-duplicados' = 'mesmo pedido repetido na consulta'
     }
     if ($m -ceq 'login-com-escrita' -and $script:DetalhePermissoes) { return ($fixas[$m] + ' (' + $script:DetalhePermissoes + ')') }
@@ -1111,12 +1152,16 @@ function Modulo-Pedidos($Modulo) {
         $clientes = Executar-Consulta $sessao $Modulo 'clientes' @{ desde = $desde }
         $coleta = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", $Invariant)
         if ($Testar -and -not $sessao.simulada) {
-            $cmd = $sessao.con.CreateCommand(); $cmd.CommandTimeout = 30; $cmd.CommandText = $SqlMetadadosPedidos
+            $cmd = $sessao.con.CreateCommand(); $cmd.CommandTimeout = 30; $cmd.Transaction = $sessao.tx; $cmd.CommandText = $SqlMetadadosPedidos
             $metadados = Ler-Linhas $cmd @('tabela', 'coluna', 'tipo') 200
         }
     } catch {
         $motivo = Descrever-Erro $_
-        if ($Testar -and $script:LinhaTrava) { Write-Output $script:LinhaTrava }
+        if ($Testar) {
+            Write-Output ('CHAVE aceitar_permissoes_extras: ' + $(if ($AceitarPermissoesExtras) { 'true' } else { 'false' }))
+            if ($script:LinhaTrava) { Write-Output $script:LinhaTrava }
+            Write-Output ('transacao com rollback: ' + $(if ($script:ProtecoesConfirmadas) { 'sim' } elseif ($Simular) { 'nao conferida (simulacao)' } else { 'NAO confirmada' }))
+        }
         if ($Testar) { Write-Output ('ERRO pedidos fase=consulta motivo=' + $motivo) }
         else { Log ('ERRO pedidos modo={0} fase=consulta motivo={1} execucao={2}' -f $Cfg.modo, $motivo, $ExecucaoId) }
         throw 'modulo-com-erro'
@@ -1133,7 +1178,12 @@ function Modulo-Pedidos($Modulo) {
     $etapasTxt = (@($normal.etapas.Keys | ForEach-Object { $_ + '=' + $normal.etapas[$_] }) -join ' ')
     if ($Testar) {
         # So contagens e nomes de colunas: nada de codigo de pedido, cliente, documento ou valor.
-        if ($Simular) { Write-Output 'TRAVA nao conferida (simulacao, sem banco)' } elseif ($script:LinhaTrava) { Write-Output $script:LinhaTrava }
+        Write-Output ('CHAVE aceitar_permissoes_extras: ' + $(if ($AceitarPermissoesExtras) { 'true' } else { 'false' }))
+        if ($Simular) { Write-Output 'TRAVA nao conferida (simulacao, sem banco)'; Write-Output 'transacao com rollback: nao conferida (simulacao)' }
+        else {
+            if ($script:LinhaTrava) { Write-Output $script:LinhaTrava }
+            Write-Output ('transacao com rollback: ' + $(if ($script:ProtecoesConfirmadas) { 'sim (ReadOnly, READ UNCOMMITTED, 1 transacao aberta; rollback ao fechar)' } else { 'NAO confirmada' }))
+        }
         Write-Output ('TESTE pedidos{0} (nada gravado): lidos={1} enviaria={2} canceladas_fora={3} concluidos_antigos_fora={4}' -f
             $(if ($Simular) { ' SIMULADO' } else { '' }), $linhas.Count, $normal.itens.Count, $c.canceladas, $c.fora_da_janela)
         Write-Output ('  por etapa: ' + $etapasTxt)
@@ -1181,6 +1231,10 @@ try {
     $Cfg = Get-Content -LiteralPath $Config -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($Cfg.modo -cnotin @('teste', 'real')) { throw 'modo invalido' }
     $Real = $Cfg.modo -ceq 'real'
+    # Chave do dono (2026-11-13: 'pode liberar a trava com as protecoes'). So o booleano JSON true liga.
+    $chave = Campo $Cfg 'aceitar_permissoes_extras'
+    if ($null -ne $chave -and $chave -isnot [bool]) { throw 'aceitar_permissoes_extras deve ser true ou false' }
+    $AceitarPermissoesExtras = ($chave -eq $true)
     if ($SimularFalha -and -not $Simular) { throw '-SimularFalha exige -Simular' }
     if ($Testar -and ($BackfillMargemDesde -or $Forcar)) { throw '-Testar nao combina com -BackfillMargemDesde/-Forcar' }
     if ([string]::IsNullOrWhiteSpace([string](Campo $Cfg 'pastaSaida')) -or -not [IO.Path]::IsPathRooted($Cfg.pastaSaida)) {

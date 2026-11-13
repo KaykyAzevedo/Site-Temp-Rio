@@ -563,6 +563,54 @@ Tem que aparecer:
   tirar o login de `db_datareader` e dar SELECT só nas views combinadas.
 - `ATENCAO: nao foi possivel confirmar`: **pare** e mande a mensagem ao DBA da SOLIDCON.
 
+Este `-Testar` do `configurar-senha-banco.ps1` **não** conhece a chave abaixo: com permissões
+extras ele continua mostrando `ATENCAO ... PODE gravar` (código 3). Ele não grava nem bloqueia
+nada, só informa. Quem decide se a coleta roda é o `sync-banco.ps1`; confira com o `-Testar` dele.
+
+### Chave do dono: `aceitar_permissoes_extras` (padrão `false`)
+
+Autorizada pelo dono em 2026-11-13 ("pode liberar a trava com as proteções"). Use só enquanto a
+SOLIDCON não tira as permissões extras do login de consulta: o `GRANT EXECUTE ON SCHEMA::dbo` e o
+CONTROL herdado no schema `db_datareader`.
+
+**Proteções que valem SEMPRE, com ou sem a chave.** Elas são conferidas no servidor a cada sessão;
+se alguma não confirmar, nada é lido (`motivo=transacao com rollback ... nao confirmados`):
+- conexão com `ApplicationIntent=ReadOnly`;
+- isolamento `READ UNCOMMITTED`;
+- toda leitura dentro de uma transação explícita que **sempre** termina em `Rollback`, inclusive no
+  sucesso. Fechar a conexão também desfaz qualquer resto;
+- só consultas com texto aprovado (`Validar-ConsultaFixa`, sem `;`, DML, DDL ou EXEC).
+
+**Comportamento:**
+
+| Situação | Resultado |
+|---|---|
+| Permissões limpas | Coleta normal; log `TRAVA liberada` (a chave é ignorada) |
+| Permissões extras e chave `false` (ou ausente) | Coleta parada; `login de consulta pode gravar ou executar` |
+| Permissões extras, chave `true` e proteções confirmadas | Coleta segue; log `AVISO trava liberada pelo dono: <resumo>` a cada execução |
+| Permissões inconclusivas | Coleta parada, mesmo com a chave |
+| Proteções não confirmadas | Coleta parada, mesmo com a chave |
+
+Só o booleano JSON `true` liga a chave; `"true"` ou `1` são recusados como configuração inválida.
+Para ligar, edite o `config-banco.json` (não há segredo nessa chave):
+
+```json
+  "aceitar_permissoes_extras": true,
+```
+
+Depois rode:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\TempRio\solidcon\sync-banco.ps1 -Testar
+```
+
+Ele imprime:
+- `CHAVE aceitar_permissoes_extras: true/false`;
+- a linha da trava (`TRAVA liberada`, `AVISO trava liberada pelo dono` ou `TRAVA bloqueada`);
+- `transacao com rollback: sim`.
+
+Quando a SOLIDCON tirar as permissões, volte a chave para `false`.
+
 ### Passo 6 — Rodar o coletor uma vez, na mão
 
 ```powershell
@@ -642,7 +690,9 @@ para `"modo": "teste"` no mesmo arquivo.
 | sem acesso ao arquivo de senha | A tarefa precisa rodar como SYSTEM (Passo 7) |
 | login recusado (sql 18456) | Senha trocada pela SOLIDCON: faça o Passo 4 de novo |
 | servidor inacessivel / tempo esgotado | Rede ou servidor SQL fora do ar; se continuar, avise a SOLIDCON |
-| login de consulta tem permissao de escrita | Peça à SOLIDCON para tirar a permissão; a coleta fica parada até lá |
+| login de consulta tem permissao de escrita | Peça à SOLIDCON para tirar a permissão; a coleta fica parada até lá (ou o dono liga `aceitar_permissoes_extras`) |
+| `AVISO trava liberada pelo dono` (linha própria) | Esperado com a chave ligada; some quando a SOLIDCON limpar as permissões |
+| transacao com rollback, READ UNCOMMITTED ou ReadOnly nao confirmados | Nada foi lido; rode o `-Testar` e mande o resultado |
 | nao foi possivel confirmar que o login nao grava | Rode o Passo 5 e mande o resultado ao DBA da SOLIDCON |
 | Configuracao Supabase invalida (no `ERRO fase=`) | Confira `configSupabase` no config-banco.json |
 
