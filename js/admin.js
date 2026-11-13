@@ -5620,9 +5620,9 @@
             sub = kvCnpjMascarado(v.documento);
         }
         return '<div class="adm-kanban-erpcartao">' +
-            '<p class="text-sm font-bold truncate">' + esc(nome) + '</p>' +
+            '<p class="text-sm font-bold adm-nome-2l" title="' + esc(nome) + '">' + esc(nome) + '</p>' +
             (sub ? '<p class="text-xs mt-0.5 truncate" style="color:var(--adm-tinta-3)">' + esc(sub) + '</p>' : '') +
-            '<div class="flex items-center justify-between mt-2"><span class="text-sm font-bold">' + esc(brl(v.valor_centavos)) + '</span>' + SELO_ERP + '</div>' +
+            '<div class="adm-kanban-valor mt-2"><span class="text-sm font-bold">' + esc(brl(v.valor_centavos)) + '</span>' + SELO_ERP + '</div>' +
             '<p class="text-xs mt-1" style="color:var(--adm-tinta-3)">' + esc(dataHora(v.dt)) + ' · PDV ' + esc(String(v.cd_pdv == null ? '' : v.cd_pdv)) +
                 ' · cupom ' + esc(String(v.nr_cupom == null ? '' : v.nr_cupom)) + '</p>' +
         '</div>';
@@ -5691,6 +5691,8 @@
     function peHora(iso) {
         var d = new Date(iso);
         if (isNaN(d.getTime())) return '';
+        var dia = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+        if (!d.getHours() && !d.getMinutes()) return dia;   // data sem hora (meia-noite): só o dia
         var hoje = new Date().toDateString() === d.toDateString();
         return (hoje ? '' : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ' ') + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     }
@@ -5698,7 +5700,7 @@
         var nome = String(x.cliente_tipo) === 'cnpj' && x.cliente_nome ? x.cliente_nome : 'Consumidor final';
         var dEtapa = x[PE_DATA_ETAPA[x.etapa]];
         return '<div class="adm-kanban-erpcartao">' +
-            '<div class="flex items-start justify-between gap-2"><p class="text-sm font-bold truncate">' + esc(nome) + '</p>' + SELO_ERP + '</div>' +
+            '<p class="text-sm font-bold adm-nome-2l" title="' + esc(nome) + '">' + esc(nome) + '</p>' +
             '<p class="text-xs mt-0.5" style="color:var(--adm-tinta-3)">Pedido ' + esc(String(x.cd_pedido)) +
                 (x.nr_carga ? ' · carga ' + esc(String(x.nr_carga)) : '') + '</p>' +
             '<p class="text-xs mt-1" style="color:var(--adm-tinta-3)">Feito ' + esc(peHora(x.dt_pedido)) + ' · <strong>' + esc(peHa(x.dt_pedido)) + '</strong></p>' +
@@ -5770,7 +5772,7 @@
             '<button type="button" class="adm-chip' + (origem === 'site' ? ' is-ativo' : '') + '" data-origem-pedidos="site" aria-pressed="' + (origem === 'site') + '">Pedidos do site</button>' +
             '<button type="button" class="adm-chip' + (origem === 'erp' ? ' is-ativo' : '') + '" data-origem-pedidos="erp" aria-pressed="' + (origem === 'erp') + '">Pedidos do ERP</button></div>';
         if (origem === 'erp') {
-            alvo.innerHTML = '<div class="flex items-center justify-between flex-wrap gap-3 mb-5">' + seletor + '</div>' + peHtml();
+            alvo.innerHTML = '<div class="flex items-center justify-between flex-wrap gap-3 mb-5">' + seletor + SELO_ERP + '</div>' + peHtml();
             ligarOrigemPedidos(alvo);
             return;
         }

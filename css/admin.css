@@ -883,10 +883,37 @@ body.admin {
 .adm-progresso.hidden { display: none; }
 
 /* Raia "Vendas do ERP": só leitura (sem arrastar), cartão com borda azul de dado; rola dentro da coluna */
-.adm-kanban-corpo-erp { padding: 0.6rem; display: flex; flex-direction: column; gap: 0.6rem; flex: 1; min-height: 80px; max-height: 70vh; overflow-y: auto; }
-.adm-kanban-erpcartao { background: var(--adm-superficie); border: 1px solid var(--adm-borda); border-radius: 0.6rem; padding: 0.75rem; box-shadow: inset 3px 0 0 var(--adm-dados); cursor: default; }
+.adm-kanban-corpo-erp { padding: 0.5rem; display: flex; flex-direction: column; gap: 0.5rem; flex: 1; min-height: 80px; }  /* a página rola; a coluna cresce */
+.adm-kanban-erpcartao { background: var(--adm-superficie); border: 1px solid var(--adm-borda); border-radius: 0.6rem; padding: 0.55rem 0.65rem; box-shadow: inset 3px 0 0 var(--adm-dados); cursor: default; }
 .adm-kanban-coluna-erp .adm-vazio-linha { margin: 0; }
 
-/* Pedidos do ERP por etapa: 6 colunas só leitura (celular: segmentos como no Kanban do site) */
-.adm-kanban.adm-kanban-pe { grid-template-columns: repeat(6, minmax(220px, 1fr)); }
+/* Nome em até 2 linhas, na largura toda do cartão */
+.adm-nome-2l { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; line-height: 1.25; }
+
+/* Kanban inteiro numa tela (>= 901px): colunas fluidas, sem rolagem horizontal; abaixo disso valem os segmentos do celular (P4) */
+@media (min-width: 901px) {
+    .adm-kanban { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.6rem; overflow: visible; }
+    .adm-kanban.adm-kanban-pe { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    .adm-kanban-cabecalho { padding: 0.65rem 0.7rem; gap: 0.4rem; }
+    .adm-kanban-titulo { font-size: 0.7rem; letter-spacing: 0.02em; overflow-wrap: anywhere; }
+    .adm-kanban-corpo { padding: 0.5rem; gap: 0.5rem; }
+    .adm-kanban-cartao { padding: 0.6rem 0.65rem; }
+    /* Em Pedidos o conteúdo pode usar mais largura que as outras abas */
+    .adm-principal:has(#painel-pedidos:not(.hidden)) { max-width: 108rem; }
+}
 @media (max-width: 900px) { .adm-kanban.adm-kanban-pe { display: block; } }
+
+/* Barras de rolagem finas e escuras no tema (nada de barra branca nativa) */
+:root { color-scheme: dark; }
+* { scrollbar-width: thin; scrollbar-color: var(--adm-borda-forte) transparent; }
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--adm-borda-forte); border-radius: 999px; }
+*::-webkit-scrollbar-thumb:hover { background: var(--adm-tinta-3); }
+*::-webkit-scrollbar-corner { background: transparent; }
+
+/* Cartões do Kanban nunca alargam a coluna: filhos do grid com min-width:0; valor + selo quebram de linha em coluna estreita */
+.adm-kanban > *, .adm-kanban-coluna, .adm-kanban-corpo, .adm-kanban-corpo-erp, .adm-kanban-cartao, .adm-kanban-erpcartao { min-width: 0; }
+.adm-kanban-erpcartao { overflow-wrap: anywhere; }
+.adm-kanban-valor { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.25rem 0.5rem; }
+.adm-kanban-valor .adm-selo { white-space: normal; max-width: 100%; }
