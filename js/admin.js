@@ -857,6 +857,7 @@
             dados.resumo = rs[0].data || [];
             dados.visitas = rs[1].data || [];
             dados.pedidos = rs[2].data || [];
+            atualizarCartaoFiltros();
             dados.espera = rs[3].data || [];
             dados.regioes = rs[4].data || [];
             dados.faixas = rs[5].data || [];
@@ -906,8 +907,19 @@
                 b.classList.toggle('is-ativo', b.getAttribute('data-vista-pedidos') === vistaPedidos);
             });
         }
-        var filtrosCartao = document.getElementById('cartao-filtros');
-        if (filtrosCartao) filtrosCartao.classList.toggle('hidden', abaAtual !== 'pedidos' && abaAtual !== 'clientes');
+        atualizarCartaoFiltros();
+    }
+
+    // Barra de filtros: só nas abas que a usam E quando há o que filtrar (pedidos do site no período). Sem pedidos some inteira.
+    // Fica visível se algum filtro já estiver ativo ou o período rápido não for o padrão (12): senão a pessoa não teria como desfazer.
+    function atualizarCartaoFiltros() {
+        var c = document.getElementById('cartao-filtros');
+        if (!c) return;
+        var per = document.getElementById('filtro-periodo');
+        var ativo = !!(filtros.de || filtros.ate || filtros.busca || filtros.regioes.length || filtros.status.length ||
+            filtros.tipoCliente !== 'todos' || (per && String(per.value) !== '12'));
+        var util = dados.pedidos.length > 0 || ativo;
+        c.classList.toggle('hidden', (abaAtual !== 'pedidos' && abaAtual !== 'clientes') || !util);
     }
 
     // forcarAndamento: atalhos para AGIR (sino, itens do Hoje) abrem Pedidos em andamento, não na vista "Encerrados" lembrada.
@@ -5650,7 +5662,8 @@
             alvo.innerHTML = cabecalho + cartaoVazio('Nenhum pedido com esses filtros',
                 dados.pedidos.length
                     ? 'Há ' + NUM.format(dados.pedidos.length) + ' pedidos no período — tente limpar os filtros acima.'
-                    : 'Pedidos aparecem aqui assim que alguém enviar um pelo site.');
+                    : 'Pedidos aparecem aqui assim que alguém enviar um pelo site.') +
+                (pedidosVista === 'kanban' && (kv.erro || kv.ausente) ? kvCorpo() : ''); // estado do ERP não se perde no vazio
             ligarBotoesExportar(alvo, { pedidos: function () { exportarPedidosCSV(filtrados); } });
             ligarTrocaDeVista(alvo);
             return;
@@ -8086,6 +8099,7 @@
                 function (payload) {
                     var novo = payload.new;
                     dados.pedidos.unshift(novo);
+                    atualizarCartaoFiltros();
                     erpvCalcular();
                     pedidosNaoVistos++;
                     atualizarSino();
