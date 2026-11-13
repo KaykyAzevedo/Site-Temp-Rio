@@ -2515,6 +2515,7 @@
         if ((qual === 'solidcon' || qual === 'pedidos' || qual === 'vendas') && precisa(vend)) carregarVendas();
         if ((qual === 'clientes' || qual === 'pedidos') && precisa(scli)) carregarSolidClientes();
         if (qual === 'pedidos' && precisa(kv)) carregarKanbanErp();
+        if (qual === 'pedidos' && precisa(pe)) carregarPedidosErp();
         if ((qual === 'clientes' || qual === 'regioes' || qual === 'vendas') && precisa(cmp)) carregarCompras();
         if (qual === 'regioes' && precisa(geo)) carregarGeoClientes();
         if (qual === 'regioes' && papel === 'admin' && precisa(gmap)) carregarMapaClientes();
@@ -5635,6 +5636,123 @@
         return l.map(kvCartao).join('');
     }
     function kvTemCartoes() { return kv.carregado && !kv.erro && kvLista().length > 0; }
+
+    /* Pedidos do ERP por etapa do WMS (035) — SOMENTE LEITURA. Lê solidcon_pedidos_erp (sem a coluna documento: nada de CPF/CNPJ
+       chega ao navegador) e o frescor em solidcon_pedidos_erp_sync. Sem arrastar, sem botões de ação. */
+    var PE_COLUNAS = [
+        { id: 'aberto', titulo: 'Aberto', etapas: ['aberto'], data: 'dt_pedido' },
+        { id: 'na_carga', titulo: 'Na carga', etapas: ['na_carga'], data: 'dt_carga' },
+        { id: 'separando', titulo: 'Separando', etapas: ['separando'], data: 'dt_sep_inicio' },
+        { id: 'separado', titulo: 'Separado', etapas: ['separado'], data: 'dt_sep_fim' },
+        { id: 'conferido', titulo: 'Conferido', etapas: ['conferido'], data: 'dt_conferencia' },
+        { id: 'saiu', titulo: 'Saiu / atendido', etapas: ['saiu', 'atendido'], data: null }
+    ];
+    var PE_DATA_ETAPA = { aberto: 'dt_pedido', na_carga: 'dt_carga', separando: 'dt_sep_inicio', separado: 'dt_sep_fim', conferido: 'dt_conferencia', saiu: 'dt_saida', atendido: 'dt_atendido' };
+    var PE_ROTULO_ETAPA = { aberto: 'Aberto', na_carga: 'Na carga', separando: 'Separando', separado: 'Separado', conferido: 'Conferido', saiu: 'Saiu', atendido: 'Atendido' };
+    var PE_COLS = 'cd_pedido,dt_pedido,etapa,dt_carga,dt_sep_inicio,dt_sep_fim,dt_conferencia,dt_saida,dt_atendido,cliente_tipo,cliente_nome,nr_carga';
+    var PE_VELHO_MIN = 30;
+    var pe = { carregado: false, carregando: false, erro: null, ausente: false, itens: [], coletado: null, seq: 0 };
+    var peOrigem = null, peSegmento = 'aberto';   // peOrigem: null = automático (ERP quando não há pedidos do site)
+
+    function peEfetivo() { return peOrigem || (dados.pedidos.length ? 'site' : 'erp'); }
+
+    function carregarPedidosErp() {
+        var seq = ++pe.seq;
+        pe.carregando = true;
+        return Promise.all([
+            vendPaginar(function () { return sb.from('solidcon_pedidos_erp').select(PE_COLS).order('etapa', { ascending: true }).order('dt_pedido', { ascending: true }); }, 5000),
+            sb.from('solidcon_pedidos_erp_sync').select('coletado_em').eq('status', 'ok').order('coletado_em', { ascending: false }).limit(1)
+        ]).then(function (rs) {
+            if (seq !== pe.seq) return;
+            pe.carregando = false;
+            if (rs[0].error) {
+                pe.ausente = solidTabelaAusente(rs[0].error);
+                pe.erro = pe.ausente ? null : String(rs[0].error.message || rs[0].error);
+                pe.carregado = false; pe.itens = []; pe.coletado = null;
+            } else {
+                pe.ausente = false; pe.erro = null; pe.carregado = true; pe.itens = rs[0].data || [];
+                var sy = rs[1] && !rs[1].error && rs[1].data && rs[1].data[0];
+                pe.coletado = sy && sy.coletado_em ? sy.coletado_em : null;
+            }
+            peRedesenhar();
+        }, function (e) {
+            if (seq !== pe.seq) return;
+            pe.carregando = false; pe.carregado = false; pe.erro = String(e && e.message || e); pe.itens = []; peRedesenhar();
+        });
+    }
+    function peRedesenhar() { if (secaoVisivel('pedidos')) desenharPedidos(); else abasParaRedesenhar.pedidos = true; }
+
+    function peHa(iso) {
+        var t = Date.parse(iso);
+        if (!isFinite(t)) return '';
+        var m = Math.max(0, Math.round((Date.now() - t) / 60000));
+        return m < 60 ? 'há ' + m + ' min' : m < 2880 ? 'há ' + Math.round(m / 60) + ' h' : 'há ' + Math.round(m / 1440) + ' d';
+    }
+    function peHora(iso) {
+        var d = new Date(iso);
+        if (isNaN(d.getTime())) return '';
+        var hoje = new Date().toDateString() === d.toDateString();
+        return (hoje ? '' : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ' ') + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    }
+    function peCartao(x) {
+        var nome = String(x.cliente_tipo) === 'cnpj' && x.cliente_nome ? x.cliente_nome : 'Consumidor final';
+        var dEtapa = x[PE_DATA_ETAPA[x.etapa]];
+        return '<div class="adm-kanban-erpcartao">' +
+            '<div class="flex items-start justify-between gap-2"><p class="text-sm font-bold truncate">' + esc(nome) + '</p>' + SELO_ERP + '</div>' +
+            '<p class="text-xs mt-0.5" style="color:var(--adm-tinta-3)">Pedido ' + esc(String(x.cd_pedido)) +
+                (x.nr_carga ? ' · carga ' + esc(String(x.nr_carga)) : '') + '</p>' +
+            '<p class="text-xs mt-1" style="color:var(--adm-tinta-3)">Feito ' + esc(peHora(x.dt_pedido)) + ' · <strong>' + esc(peHa(x.dt_pedido)) + '</strong></p>' +
+            (dEtapa && x.etapa !== 'aberto' ? '<p class="text-xs mt-0.5" style="color:var(--adm-tinta-3)">' + esc(PE_ROTULO_ETAPA[x.etapa] || x.etapa) + ' ' + esc(peHora(dEtapa)) + '</p>' : '') +
+        '</div>';
+    }
+    function peItensDa(col) {
+        var l = pe.itens.filter(function (x) { return col.etapas.indexOf(x.etapa) >= 0; });
+        var desc = col.id === 'saiu';  // concluídos: mais recentes primeiro; fila: mais antigos primeiro
+        l.sort(function (a, b) { return desc ? (a.dt_pedido < b.dt_pedido ? 1 : -1) : (a.dt_pedido < b.dt_pedido ? -1 : 1); });
+        return l;
+    }
+    function peFrescor() {
+        if (!pe.carregado) return '';
+        if (!pe.coletado) return '<p class="text-xs mb-3" style="color:var(--adm-atencao)"><i class="fa-solid fa-triangle-exclamation mr-1"></i>Sem coleta registrada do ERP: os dados abaixo podem estar velhos.</p>';
+        var min = Math.max(0, Math.round((Date.now() - Date.parse(pe.coletado)) / 60000));
+        var velho = min > PE_VELHO_MIN;
+        return '<p class="text-xs mb-3" style="color:' + (velho ? 'var(--adm-atencao)' : 'var(--adm-tinta-3)') + '">' +
+            '<i class="fa-solid ' + (velho ? 'fa-triangle-exclamation' : 'fa-rotate') + ' mr-1"></i>Atualizado ' + esc(peHa(pe.coletado)) +
+            (velho ? ' — a coleta do ERP parece parada; confira o servidor.' : '') + '</p>';
+    }
+    function peHtml() {
+        if (pe.carregando && !pe.carregado) return cartaoVazio('Carregando pedidos do ERP…', '', 'erp');
+        if (pe.ausente) return cartaoVazio('Pedidos do ERP ainda não instalados', 'A tabela solidcon_pedidos_erp (migração 035) não existe neste banco.', 'erp');
+        if (pe.erro) return cartaoVazio('Pedidos do ERP indisponíveis agora', 'Tente Atualizar em instantes.', 'erp');
+        if (!pe.carregado) return '';
+        var cols = PE_COLUNAS.map(function (c) { return { c: c, l: peItensDa(c) }; });
+        return peFrescor() +
+            '<div class="adm-kanban-segmentos" role="tablist" aria-label="Etapas dos pedidos do ERP">' +
+                cols.map(function (x) {
+                    return '<button type="button" role="tab" class="adm-chip' + (peSegmento === x.c.id ? ' is-ativo' : '') + '" data-pe-seg="' + x.c.id +
+                        '" aria-selected="' + (peSegmento === x.c.id) + '">' + esc(x.c.titulo) + ' <span class="adm-kanban-contagem">' + x.l.length + '</span></button>';
+                }).join('') + '</div>' +
+            '<div class="adm-kanban adm-kanban-pe">' +
+                cols.map(function (x) {
+                    return '<div class="adm-kanban-coluna' + (peSegmento === x.c.id ? ' is-seg-ativa' : '') + '" data-pe-col="' + x.c.id + '">' +
+                        '<div class="adm-kanban-cabecalho"><span class="adm-kanban-titulo">' + esc(x.c.titulo) + '</span><span class="adm-kanban-contagem">' + x.l.length + '</span></div>' +
+                        '<div class="adm-kanban-corpo-erp">' + (x.l.length ? x.l.map(peCartao).join('') : cartaoVazio('Nenhum pedido', '', 'erp')) + '</div>' +
+                    '</div>';
+                }).join('') +
+            '</div>';
+    }
+    function ligarOrigemPedidos(raiz) {
+        raiz.querySelectorAll('[data-origem-pedidos]').forEach(function (b) {
+            b.addEventListener('click', function () { peOrigem = b.getAttribute('data-origem-pedidos'); desenharPedidos(); });
+        });
+        raiz.querySelectorAll('[data-pe-seg]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                peSegmento = b.getAttribute('data-pe-seg');
+                raiz.querySelectorAll('[data-pe-seg]').forEach(function (o) { var a = o === b; o.classList.toggle('is-ativo', a); o.setAttribute('aria-selected', String(a)); });
+                raiz.querySelectorAll('[data-pe-col]').forEach(function (c) { c.classList.toggle('is-seg-ativa', c.getAttribute('data-pe-col') === peSegmento); });
+            });
+        });
+    }
     var kanbanSegmento = 'aguardando'; // celular: uma coluna por vez
     var COLUNAS_KANBAN = [
         { status: 'aguardando', titulo: 'Aguardando' },
@@ -5647,8 +5765,17 @@
         var alvo = $('#painel-pedidos');
         var filtrados = dados.pedidos.filter(pedidoPassaNoFiltro);
 
+        var origem = peEfetivo();
+        var seletor = '<div class="flex gap-1" role="group" aria-label="Origem dos pedidos">' +
+            '<button type="button" class="adm-chip' + (origem === 'site' ? ' is-ativo' : '') + '" data-origem-pedidos="site" aria-pressed="' + (origem === 'site') + '">Pedidos do site</button>' +
+            '<button type="button" class="adm-chip' + (origem === 'erp' ? ' is-ativo' : '') + '" data-origem-pedidos="erp" aria-pressed="' + (origem === 'erp') + '">Pedidos do ERP</button></div>';
+        if (origem === 'erp') {
+            alvo.innerHTML = '<div class="flex items-center justify-between flex-wrap gap-3 mb-5">' + seletor + '</div>' + peHtml();
+            ligarOrigemPedidos(alvo);
+            return;
+        }
         var cabecalho =
-            '<div class="flex items-center justify-between flex-wrap gap-3 mb-5">' +
+            '<div class="flex items-center justify-between flex-wrap gap-3 mb-5">' + seletor +
                 '<div class="flex gap-1">' +
                     '<button type="button" class="adm-chip' + (pedidosVista === 'kanban' ? ' is-ativo' : '') +
                         '" data-vista-pedidos="kanban"><i class="fa-solid fa-table-columns mr-1"></i>Kanban</button>' +
@@ -5665,7 +5792,7 @@
                     : 'Pedidos aparecem aqui assim que alguém enviar um pelo site.') +
                 (pedidosVista === 'kanban' && (kv.erro || kv.ausente) ? kvCorpo() : ''); // estado do ERP não se perde no vazio
             ligarBotoesExportar(alvo, { pedidos: function () { exportarPedidosCSV(filtrados); } });
-            ligarTrocaDeVista(alvo);
+            ligarTrocaDeVista(alvo); ligarOrigemPedidos(alvo);
             return;
         }
 
@@ -5693,7 +5820,7 @@
         }
         else { ligarAcoesDeStatus(alvo); }
 
-        ligarTrocaDeVista(alvo);
+        ligarTrocaDeVista(alvo); ligarOrigemPedidos(alvo);
         ligarBotoesExportar(alvo, { pedidos: function () { exportarPedidosCSV(filtrados); } });
     }
 
