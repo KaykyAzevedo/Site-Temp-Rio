@@ -2502,6 +2502,7 @@
         if ((qual === 'solidcon' || qual === 'vitrine') && precisa(solid)) carregarSolidcon();
         if ((qual === 'solidcon' || qual === 'pedidos' || qual === 'vendas') && precisa(vend)) carregarVendas();
         if ((qual === 'clientes' || qual === 'pedidos') && precisa(scli)) carregarSolidClientes();
+        if (qual === 'pedidos' && precisa(kv)) carregarKanbanErp();
         if ((qual === 'clientes' || qual === 'regioes' || qual === 'vendas') && precisa(cmp)) carregarCompras();
         if (qual === 'regioes' && precisa(geo)) carregarGeoClientes();
         if (qual === 'regioes' && papel === 'admin' && precisa(gmap)) carregarMapaClientes();
@@ -5557,6 +5558,71 @@
      * Pedidos — a fila que precisa de decisão
      * =================================================================== */
     var pedidosVista = 'kanban';
+
+    // Raia "Vendas do ERP" (SOMENTE LEITURA): cupons recentes de solidcon_vendas_clientes (026), últimos 3 dias, mais novos primeiro.
+    // Não arrasta, não grava, não entra nos filtros. CPF = "Consumidor final" (documento e nome nunca chegam à tela).
+    var KV_DIAS = 3, KV_LIMITE = 60;
+    var kv = { carregado: false, carregando: false, erro: null, ausente: false, itens: [], seq: 0 };
+
+    function carregarKanbanErp() {
+        var seq = ++kv.seq;
+        kv.carregando = true;
+        var desde = new Date(Date.now() - KV_DIAS * 86400000).toISOString();
+        return sb.from('solidcon_vendas_clientes').select('dia,dt,documento,tipo,valor_centavos,cd_pdv,nr_cupom')
+            .gte('dt', desde).order('dt', { ascending: false }).limit(KV_LIMITE).then(function (r) {
+                if (seq !== kv.seq) return;
+                kv.carregando = false;
+                if (r.error) {
+                    kv.ausente = solidTabelaAusente(r.error);
+                    kv.erro = kv.ausente ? null : String(r.error.message || r.error);
+                    kv.carregado = false; kv.itens = [];
+                } else { kv.ausente = false; kv.erro = null; kv.carregado = true; kv.itens = r.data || []; }
+                kvRedesenhar();
+            }, function (e) {
+                if (seq !== kv.seq) return;
+                kv.carregando = false; kv.carregado = false; kv.erro = String(e && e.message || e); kv.itens = []; kvRedesenhar();
+            });
+    }
+    function kvRedesenhar() { if (secaoVisivel('pedidos')) desenharPedidos(); else abasParaRedesenhar.pedidos = true; }
+
+    // Cupons já casados com um pedido do site não repetem na raia (o selo "Faturado no ERP" já está no cartão do site).
+    function kvLista() {
+        var usados = {};
+        if (erpv.res && erpv.res.porPedido) Object.keys(erpv.res.porPedido).forEach(function (id) {
+            var r = erpv.res.porPedido[id];
+            if (r && r.estado === 'casado' && r.venda) usados[r.venda.dia + '|' + r.venda.cd_pdv + '|' + r.venda.nr_cupom] = true;
+        });
+        return kv.itens.filter(function (v) { return !usados[v.dia + '|' + v.cd_pdv + '|' + v.nr_cupom]; });
+    }
+    function kvCnpjMascarado(doc) {
+        var d = docNorm(doc, 'cnpj');
+        return d ? '**.***.' + d.slice(5, 8) + '/' + d.slice(8, 12) + '-**' : '';
+    }
+    function kvCartao(v) {
+        var cnpj = String(v.tipo || '').toLowerCase() === 'cnpj' && docNorm(v.documento, 'cnpj');
+        var nome = 'Consumidor final', sub = '';
+        if (cnpj) {
+            var idx = cmpCadastros(), c = idx && idx[cnpj];
+            nome = (c && c.nome) || 'Cliente CNPJ';
+            sub = kvCnpjMascarado(v.documento);
+        }
+        return '<div class="adm-kanban-erpcartao">' +
+            '<p class="text-sm font-bold truncate">' + esc(nome) + '</p>' +
+            (sub ? '<p class="text-xs mt-0.5 truncate" style="color:var(--adm-tinta-3)">' + esc(sub) + '</p>' : '') +
+            '<div class="flex items-center justify-between mt-2"><span class="text-sm font-bold">' + esc(brl(v.valor_centavos)) + '</span>' + SELO_ERP + '</div>' +
+            '<p class="text-xs mt-1" style="color:var(--adm-tinta-3)">' + esc(dataHora(v.dt)) + ' · PDV ' + esc(String(v.cd_pdv == null ? '' : v.cd_pdv)) +
+                ' · cupom ' + esc(String(v.nr_cupom == null ? '' : v.nr_cupom)) + '</p>' +
+        '</div>';
+    }
+    function kvCorpo() {
+        if (kv.carregando && !kv.carregado) return cartaoVazio('Carregando vendas do ERP…', '', 'erp');
+        if (kv.ausente) return cartaoVazio('Vendas do ERP ainda não instaladas', 'A tabela solidcon_vendas_clientes (migração 026) não existe neste banco.', 'erp');
+        if (kv.erro) return cartaoVazio('Vendas do ERP indisponíveis agora', 'Os pedidos do site seguem normais.', 'erp');
+        var l = kvLista();
+        if (!l.length) return cartaoVazio('Nenhuma venda do ERP nos últimos ' + KV_DIAS + ' dias', '', 'erp');
+        return l.map(kvCartao).join('');
+    }
+    function kvTemCartoes() { return kv.carregado && !kv.erro && kvLista().length > 0; }
     var kanbanSegmento = 'aguardando'; // celular: uma coluna por vez
     var COLUNAS_KANBAN = [
         { status: 'aguardando', titulo: 'Aguardando' },
@@ -5580,7 +5646,7 @@
                 botoesExportar('pedidos') +
             '</div>';
 
-        if (!filtrados.length) {
+        if (!filtrados.length && !(pedidosVista === 'kanban' && kvTemCartoes())) {
             alvo.innerHTML = cabecalho + cartaoVazio('Nenhum pedido com esses filtros',
                 dados.pedidos.length
                     ? 'Há ' + NUM.format(dados.pedidos.length) + ' pedidos no período — tente limpar os filtros acima.'
@@ -5668,7 +5734,10 @@
                 var n = lista.filter(function (p) { return p.status === col.status; }).length;
                 return '<button type="button" role="tab" class="adm-chip' + (kanbanSegmento === col.status ? ' is-ativo' : '') + '" data-kanban-seg="' + col.status +
                     '" aria-selected="' + (kanbanSegmento === col.status) + '">' + esc(col.titulo) + ' <span class="adm-kanban-contagem">' + n + '</span></button>';
-            }).join('') + '</div>' +
+            }).join('') +
+            '<button type="button" role="tab" class="adm-chip' + (kanbanSegmento === 'erp' ? ' is-ativo' : '') + '" data-kanban-seg="erp" aria-selected="' + (kanbanSegmento === 'erp') +
+                '">Vendas do ERP <span class="adm-kanban-contagem">' + (kv.carregado ? kvLista().length : '–') + '</span></button>' +
+            '</div>' +
         '<div class="adm-kanban">' +
             COLUNAS_KANBAN.map(function (col) {
                 var itens = lista.filter(function (p) { return p.status === col.status; });
@@ -5684,6 +5753,11 @@
                     '</div>' +
                 '</div>';
             }).join('') +
+            '<div class="adm-kanban-coluna adm-kanban-coluna-erp' + (kanbanSegmento === 'erp' ? ' is-seg-ativa' : '') + '" data-kanban-col="erp">' +
+                '<div class="adm-kanban-cabecalho"><span class="adm-kanban-titulo">Vendas do ERP</span>' +
+                    '<span class="adm-kanban-contagem">' + (kv.carregado ? kvLista().length : '–') + '</span></div>' +
+                '<div class="adm-kanban-corpo-erp">' + kvCorpo() + '</div>' +
+            '</div>' +
         '</div>';
     }
 
