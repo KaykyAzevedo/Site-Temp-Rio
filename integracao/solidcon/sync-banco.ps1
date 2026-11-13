@@ -81,15 +81,22 @@ $SqlSessao = 'SET NOCOUNT ON; SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED; 
 # ser gravados. Unica excecao: INSERT/UPDATE/DELETE/EXECUTE de nivel SCHEMA em schema cujo dono
 # e um papel fixo do banco (principal_id 16384-16393, ex.: 'db_datareader') e que NAO tem nenhum
 # objeto (sem objeto, esses direitos nao alcancam nada; um objeto faz voltar a contar).
-# ALTER/CONTROL/TAKE OWNERSHIP/CREATE SEQUENCE de schema contam SEMPRE, inclusive nesses schemas:
+# ALTER/CONTROL/TAKE OWNERSHIP/CREATE SEQUENCE de schema contam, inclusive nesses schemas:
 # CREATE SEQUENCE so exige ALTER/CONTROL no schema (sem CREATE na base) = DDL real.
+# SEM isencao. Caso conhecido (2026-11-13): membro do role db_datareader herda CONTROL no schema
+# 'db_datareader' (dono = o role), mesmo vazio; CONTROL/ALTER no schema bastam para CREATE SEQUENCE
+# = DDL real, entao CONTINUA bloqueando. Essas linhas so recebem nivel proprio ('datareader')
+# quando o catalogo confirma dono = role db_datareader, 0 objetos e nenhuma concessao explicita,
+# para o log/-Testar explicar a causa e o conserto (lado SOLIDCON). Contam em 'escrita' igual.
 # Devolve contagens por nivel/tipo.
-# Mesmo texto no configurar-senha-banco.ps1. NAO substitui a confirmacao do DBA da SOLIDCON.
+# O configurar-senha-banco.ps1 usa o texto anterior (mesmo bloqueio, sem o diagnostico).
+# NAO substitui a confirmacao do DBA da SOLIDCON.
 $SqlPermissoes = @'
 SELECT
   SUM(CASE WHEN t.v = 1 THEN 1 ELSE 0 END) AS escrita,
   SUM(CASE WHEN t.v IS NULL THEN 1 ELSE 0 END) AS inconclusivo,
   COUNT(*) AS verificados,
+  SUM(CASE WHEN t.v = 1 AND t.nivel = 'datareader' THEN 1 ELSE 0 END) AS datareader_gravacao,
   SUM(CASE WHEN t.v = 1 AND t.nivel = 'base' AND t.tipo = 'e' THEN 1 ELSE 0 END) AS base_execucao,
   SUM(CASE WHEN t.v = 1 AND t.nivel = 'base' AND t.tipo = 'g' THEN 1 ELSE 0 END) AS base_gravacao,
   SUM(CASE WHEN t.v = 1 AND t.nivel = 'schema' AND t.tipo = 'e' THEN 1 ELSE 0 END) AS schema_execucao,
@@ -105,7 +112,12 @@ FROM (
                  ('CREATE TABLE'),('CREATE VIEW'),('CREATE PROCEDURE'),('CREATE FUNCTION'),('CREATE SCHEMA'),
                  ('ALTER ANY SCHEMA'),('ALTER ANY USER'),('ALTER ANY ROLE')) AS p(n)
   UNION ALL
-  SELECT 'schema', 'g', HAS_PERMS_BY_NAME(QUOTENAME(s.name), 'SCHEMA', p.n)
+  SELECT CASE WHEN s.name = N'db_datareader'
+               AND s.principal_id = DATABASE_PRINCIPAL_ID(N'db_datareader')
+               AND NOT EXISTS (SELECT 1 FROM sys.objects AS so WHERE so.schema_id = s.schema_id)
+               AND NOT EXISTS (SELECT 1 FROM sys.database_permissions AS dp WHERE dp.class = 3 AND dp.major_id = s.schema_id)
+              THEN 'datareader' ELSE 'schema' END,
+         'g', HAS_PERMS_BY_NAME(QUOTENAME(s.name), 'SCHEMA', p.n)
     FROM sys.schemas AS s
    CROSS JOIN (VALUES ('ALTER'),('CONTROL'),('TAKE OWNERSHIP'),('CREATE SEQUENCE')) AS p(n)
   UNION ALL
@@ -339,9 +351,11 @@ function Abrir-Sessao {
         $p = Ler-Linhas $cmd ($ColunasPermissoes) 1
         # Login de consulta nunca pode gravar: se puder, ou se nao der para conferir, ninguem coleta.
         if ($p.Count -ne 1 -or $null -eq $p[0].escrita -or $null -eq $p[0].inconclusivo -or
-            $null -eq $p[0].verificados -or [int]$p[0].verificados -lt 17) { throw 'permissao-inconclusiva' }
-        if ([int]$p[0].escrita -ne 0) { $script:DetalhePermissoes = Resumo-Permissoes $p[0]; throw 'login-com-escrita' }
-        if ([int]$p[0].inconclusivo -ne 0) { throw 'permissao-inconclusiva' }
+            $null -eq $p[0].verificados -or [int]$p[0].verificados -lt 17) { $script:LinhaTrava = 'TRAVA bloqueada: permissoes inconclusivas'; throw 'permissao-inconclusiva' }
+        $script:DetalhePermissoes = Resumo-Permissoes $p[0]
+        if ([int]$p[0].escrita -ne 0) { $script:LinhaTrava = 'TRAVA bloqueada: login pode gravar ou executar (' + $script:DetalhePermissoes + ')'; throw 'login-com-escrita' }
+        if ([int]$p[0].inconclusivo -ne 0) { $script:LinhaTrava = 'TRAVA bloqueada: permissoes inconclusivas'; throw 'permissao-inconclusiva' }
+        $script:LinhaTrava = 'TRAVA liberada: nenhuma gravacao/execucao (' + $script:DetalhePermissoes + ')'
         return @{ simulada = $false; con = $con }
     } catch {
         $con.Dispose()
@@ -349,16 +363,22 @@ function Abrir-Sessao {
     } finally { $senha.Dispose() }
 }
 
-$ColunasPermissoes = @('escrita', 'inconclusivo', 'verificados', 'base_execucao', 'base_gravacao', 'schema_execucao',
+$ColunasPermissoes = @('escrita', 'inconclusivo', 'verificados', 'datareader_gravacao', 'base_execucao', 'base_gravacao', 'schema_execucao',
     'schema_gravacao', 'objeto_execucao', 'objeto_gravacao', 'coluna_gravacao', 'papel_gravacao')
 $DetalhePermissoes = ''
+$LinhaTrava = ''
 
 function Resumo-Permissoes($L) {
     # So contagens (nunca nomes de schema/objeto): onde e de que tipo.
     function N($v) { if ($null -eq $v -or $v -is [DBNull]) { '?' } else { [string][int]$v } }
-    return ('execucao: base {0}, schema {1}, objeto {2}; gravacao: base {3}, schema {4}, objeto {5}, coluna {6}, papel {7}' -f
+    $t = 'execucao: base {0}, schema {1}, objeto {2}; gravacao: base {3}, schema {4}, objeto {5}, coluna {6}, papel {7}' -f
         (N $L['base_execucao']), (N $L['schema_execucao']), (N $L['objeto_execucao']),
-        (N $L['base_gravacao']), (N $L['schema_gravacao']), (N $L['objeto_gravacao']), (N $L['coluna_gravacao']), (N $L['papel_gravacao']))
+        (N $L['base_gravacao']), (N $L['schema_gravacao']), (N $L['objeto_gravacao']), (N $L['coluna_gravacao']), (N $L['papel_gravacao'])
+    # Diagnostico (NAO isenta): CONTROL herdado no schema vazio db_datareader ainda permite CREATE SEQUENCE.
+    if ($null -ne $L['datareader_gravacao'] -and $L['datareader_gravacao'] -isnot [DBNull] -and [int]$L['datareader_gravacao'] -gt 0) {
+        $t += '; schema_db_datareader {0} (dono = role db_datareader, vazio: CONTROL permite CREATE SEQUENCE; SOLIDCON: tirar o login do db_datareader e dar GRANT SELECT ON SCHEMA::dbo, ou ALTER AUTHORIZATION ON SCHEMA::db_datareader TO dbo)' -f (N $L['datareader_gravacao'])
+    }
+    return $t
 }
 
 function Fechar-Sessao($Sessao) {
@@ -1096,6 +1116,7 @@ function Modulo-Pedidos($Modulo) {
         }
     } catch {
         $motivo = Descrever-Erro $_
+        if ($Testar -and $script:LinhaTrava) { Write-Output $script:LinhaTrava }
         if ($Testar) { Write-Output ('ERRO pedidos fase=consulta motivo=' + $motivo) }
         else { Log ('ERRO pedidos modo={0} fase=consulta motivo={1} execucao={2}' -f $Cfg.modo, $motivo, $ExecucaoId) }
         throw 'modulo-com-erro'
@@ -1112,6 +1133,7 @@ function Modulo-Pedidos($Modulo) {
     $etapasTxt = (@($normal.etapas.Keys | ForEach-Object { $_ + '=' + $normal.etapas[$_] }) -join ' ')
     if ($Testar) {
         # So contagens e nomes de colunas: nada de codigo de pedido, cliente, documento ou valor.
+        if ($Simular) { Write-Output 'TRAVA nao conferida (simulacao, sem banco)' } elseif ($script:LinhaTrava) { Write-Output $script:LinhaTrava }
         Write-Output ('TESTE pedidos{0} (nada gravado): lidos={1} enviaria={2} canceladas_fora={3} concluidos_antigos_fora={4}' -f
             $(if ($Simular) { ' SIMULADO' } else { '' }), $linhas.Count, $normal.itens.Count, $c.canceladas, $c.fora_da_janela)
         Write-Output ('  por etapa: ' + $etapasTxt)
