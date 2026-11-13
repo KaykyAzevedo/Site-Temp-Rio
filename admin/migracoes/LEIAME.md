@@ -857,6 +857,7 @@ checam `eh_admin()` por conta própria.
   telefone para um CPF conhecido é cara, mas possível. Toda tentativa já vai para
   `auditoria`. Recomendação: limite por documento/hora na própria função (exige reescrever
   o corpo da 015 — fica para revisão própria).
+  **Resolvido na 036:** a função não devolve mais dado nenhum; só registra o pedido.
 - **`marcar_enviado_whatsapp(p_id)`:** `anon` marca qualquer pedido como enviado se souber
   o UUID (não adivinhável). Baixo.
 
@@ -1302,3 +1303,45 @@ commit;
 ```
 
 No servidor, voltar o `sync-banco.ps1` anterior. Sem a 035, o módulo `pedidos` falha só ele (código de saída 5); os outros módulos seguem.
+
+## 036_reforco_lgpd_grants.sql — LGPD sem self-service, EXECUTE de anon e search_path (APLICADA em 2026-11-13)
+
+Achados 1, 2 e 8 da auditoria de 2026-11-13. Não apaga nem altera dados (sem UPDATE/DELETE). Não toca no ERP. Idempotente.
+
+Roda com `lock_timeout = 5s` e `statement_timeout = 60s` (`set local`): o ALTER do CHECK pega ACCESS EXCLUSIVE em `solicitacoes_lgpd`, e é melhor abortar do que travar o site. Se der `canceling statement due to lock timeout`, nada foi aplicado; basta rodar de novo.
+
+### O que muda
+
+- **`lgpd_meus_dados(text,text)`** (mesma assinatura e mesmo grant `anon, authenticated`):
+  - não lê mais `usuarios`/`clientes`/`pedidos`/`leads`;
+  - grava um pedido `tipo='acesso'` em `solicitacoes_lgpd` e uma linha `lgpd_acesso_solicitado` em `auditoria` (com `solicitacao_id`);
+  - devolve sempre `{status:'recebido', protocolo, prazo_dias:15}`, exista ou não o documento. O protocolo são os 8 primeiros caracteres do id;
+  - documento sem 11/14 dígitos ou telefone sem 10/11 dígitos: erro `22023`, sem consultar nada;
+  - passa pelo antispam da 032 (limites de `solicitacoes_lgpd`), porque o papel da sessão continua `anon` dentro da DEFINER.
+- **`solicitacoes_lgpd.tipo`** passa a aceitar `'acesso'` (o CHECK só fica mais amplo; as linhas antigas continuam valendo). A equipe atende na aba LGPD e responde por e-mail/WhatsApp em até 15 dias (LGPD art. 19, II).
+- **EXECUTE:** `anon` e `PUBLIC` perdem EXECUTE em toda função SECURITY DEFINER de `public`, menos em `criar_pedido`, `marcar_enviado_whatsapp`, `completar_visita`, `lgpd_meus_dados`, `historico_do_cliente`, `solidcon_catalogo_publico` e `solidcon_ficha_publica`. Em produção (consulta de 2026-11-13), saem de `anon`: `_lgpd_anonimizar`, `lgpd_marcar_inativos`, `pedido_explodir_itens` e `pedido_resolver_cliente`. O `limpar_dados_geo` da 009 opcional também sai, se existir. `authenticated`/`service_role` recebem grant explícito antes do revoke onde já executavam (inclusive via PUBLIC), então o painel e o coletor ficam iguais.
+- **Default privileges:** `for role postgres in schema public revoke execute on functions from anon`. O EXECUTE para PUBLIC é padrão **global** do Postgres e não sai por schema, então toda função nova continua precisando de `revoke all on function ... from public, anon`.
+- **search_path:** as 23 DEFINER com `pg_catalog` (019–035) passam a `pg_catalog, pg_temp`. Conferido no catálogo: todo nome sem prefixo nessas funções é CTE (ex.: `catalogo`, `familias_erp`); tabela sempre aparece como `public.x`.
+
+### Site
+
+`js/privacidade.js`: a aba "Ver meus dados" agora mostra "Recebemos seu pedido; a equipe responderá em até 15 dias…" com o protocolo, e não exibe mais dados. O botão virou "Pedir meus dados" (`privacidade.html`). `js/db.js`: só comentários.
+
+### Validação (PG 18 local isolado, stubs de anon/authenticated/auth.jwt)
+
+Base + 004–035 + 036 aplicada 2x. Antes da 036, `lgpd_meus_dados` devolvia o cadastro de um CNPJ fictício (vazamento reproduzido). Depois da 036:
+- `anon` executa exatamente as 7 públicas;
+- `authenticated`/`service_role`: 0 privilégios perdidos (comparação com a foto de antes);
+- `anon` recebe `42501` em `limpar_dados_geo`, `_lgpd_anonimizar`, `lgpd_marcar_inativos` e `solidcon_receber_produtos`;
+- LGPD: documento existente e inexistente dão a mesma resposta, sem dado pessoal; formato inválido dá `22023`; a 6ª chamada na mesma origem em 1 h dá `TR429`;
+- funcionando como `anon`: `criar_pedido` (com os gatilhos DEFINER sem EXECUTE), `completar_visita`, `historico_do_cliente`, `solidcon_catalogo_publico`, `solidcon_ficha_publica`, `marcar_enviado_whatsapp` e os INSERTs diretos em `pedidos`, `visitas`, `leads` e `solicitacoes_lgpd`;
+- lock_timeout: com outra sessão segurando lock em `solicitacoes_lgpd`, a 036 aborta em 5 s e faz rollback total (CHECK e grants intactos);
+- equipe: `lgpd_marcar_inativos` ok; a RPC do coletor chega ao corpo (sem negação de EXECUTE); a equipe lê `solicitacoes_lgpd`.
+
+### Pendência fora da 036
+
+`js/admin.js:8061` (`LGPD_TIPO_ROTULO`) não tem `acesso`, então a aba LGPD do painel mostra o texto cru `acesso`. Isso não quebra nada. Falta acrescentar `acesso: 'Acesso'` quando o `admin.js` estiver livre.
+
+### Desfazer
+
+Reaplicar o bloco `lgpd_meus_dados` da 015 e a seção (5) da 028 devolve o comportamento antigo (com o vazamento). Para devolver EXECUTE a `anon` em uma função específica: `grant execute on function public.<f>(...) to anon;`. O CHECK ampliado pode ficar.

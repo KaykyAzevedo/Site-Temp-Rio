@@ -478,9 +478,9 @@
         });
     }
 
-    /* Direito de acesso: é o único self-service, porque só lê (ver
-     * migração 015). Confirma identidade com documento + telefone juntos —
-     * mais forte que só um dos dois. */
+    /* Direito de acesso: desde a migração 036 só REGISTRA o pedido (tipo
+     * 'acesso' em solicitacoes_lgpd) e devolve {status, protocolo, prazo_dias},
+     * igual exista ou não o cadastro. Nunca devolve dado pessoal. */
     function consultarMeusDados(documento, telefone) {
         var c = cfg();
         if (!c) return Promise.reject(new Error('supabase nao configurado'));
@@ -497,9 +497,15 @@
             })
         }).then(function (resposta) {
             if (!resposta.ok) {
-                return resposta.text().then(function (t) { throw new Error('HTTP ' + resposta.status + ' ' + t.slice(0, 200)); });
+                return resposta.text().then(function (t) {
+                    var erro = new Error('HTTP ' + resposta.status + ' ' + t.slice(0, 200));
+                    // Limite do antispam (032) também vale nesta RPC desde a 036.
+                    if (corpoEhLimite(t)) { erro.limite = true; erro.code = 'TR429'; }
+                    erro.status = resposta.status;
+                    throw erro;
+                });
             }
-            return resposta.json(); // null quando documento+telefone não batem com ninguém
+            return resposta.json(); // {status:'recebido', protocolo, prazo_dias}
         });
     }
 

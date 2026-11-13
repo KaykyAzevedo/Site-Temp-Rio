@@ -598,3 +598,10 @@ RLS/ordem/vazio/substituição/rollback, sem acessar produção.
 Rollback e ordem de implantação futura: seção 022 de admin/migracoes/LEIAME.md.
 Remover views, RPC e as duas tabelas (sem CASCADE) perde só vendas/logs; restaurar
 o script pré-022. Objetos 019/020 e dados de estoque/eventos permanecem intactos.
+
+## 036 — LGPD sem self-service, EXECUTE de anon e search_path
+
+- `lgpd_meus_dados(documento, telefone)` não devolve mais dado pessoal: grava `solicitacoes_lgpd` com `tipo='acesso'` (o CHECK agora aceita `acesso`, `exclusao` e `correcao`) e uma linha em `auditoria`, e devolve sempre `{status:'recebido', protocolo, prazo_dias:15}`. A equipe responde em até 15 dias.
+- Funções SECURITY DEFINER que `anon` executa (lista fechada): `criar_pedido`, `marcar_enviado_whatsapp`, `completar_visita`, `lgpd_meus_dados`, `historico_do_cliente`, `solidcon_catalogo_publico` e `solidcon_ficha_publica`. Todas as outras perderam EXECUTE de `anon`/PUBLIC; `authenticated`/`service_role` ficaram como estavam. Os gatilhos não dependem desse EXECUTE.
+- Função nova em `public`: sempre `revoke all on function ... from public, anon` e depois `grant` explícito (o PUBLIC é padrão global do Postgres).
+- DEFINER com `search_path = pg_catalog, pg_temp` (019–035) e `public, pg_temp` (004–016, 028); tabelas sempre qualificadas como `public.x`.

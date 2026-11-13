@@ -3,8 +3,9 @@
  * Três tipos, comportamento bem diferente entre eles (ver a nota grande na
  * migração 015 sobre por que):
  *
- *   - "acesso": só lê. Chama lgpd_meus_dados() na hora e mostra o resultado
- *     na própria página — nenhum humano precisa mediar.
+ *   - "acesso": desde a migração 036 também é PEDIDO. lgpd_meus_dados() só
+ *     registra a solicitação e devolve um protocolo genérico (nunca dado
+ *     pessoal, nem se o documento existe); a equipe responde em até 15 dias.
  *   - "correcao" e "exclusao": entram como PEDIDO em solicitacoes_lgpd. O
  *     admin atende depois de confirmar quem é a pessoa — não tem como
  *     validar identidade o bastante, sem login, para uma ação irreversível
@@ -25,9 +26,6 @@
             .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    var BRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
-    var STATUS_ROTULO = { aguardando: 'Aguardando', confirmado: 'Confirmado', entregue: 'Entregue', cancelado: 'Cancelado' };
-
     /* ===================================================================
      * Alternar entre os três tipos
      * =================================================================== */
@@ -43,7 +41,7 @@
         $('#lgpd-mensagem-label').textContent = 'O que precisa corrigir?';
         $('#lgpd-resultado').innerHTML = '';
 
-        var rotuloBotao = { acesso: 'Consultar meus dados', correcao: 'Enviar pedido de correção', exclusao: 'Pedir exclusão dos meus dados' };
+        var rotuloBotao = { acesso: 'Pedir meus dados', correcao: 'Enviar pedido de correção', exclusao: 'Pedir exclusão dos meus dados' };
         $('#lgpd-enviar').textContent = rotuloBotao[tipo];
     }
 
@@ -113,45 +111,15 @@
                        mensagem: $('#lgpd-mensagem').value.trim() } : null;
     }
 
-    function renderizarMeusDados(dados) {
-        if (!dados) {
-            return '<div class="cart-aviso p-4 text-sm">' +
-                'Não encontramos um cadastro com esse CPF/CNPJ e telefone juntos. ' +
-                'Confira se são exatamente os dados que você usou ao pedir ou se pré-cadastrar — ' +
-                'ou fale com a gente pelo WhatsApp.</div>';
-        }
-
-        var cad = dados.cadastro || {};
-        var html = '<div class="cart-line p-5 space-y-4">' +
-            '<div><p class="text-xs uppercase tracking-widest text-textSecondary mb-1">Cadastro</p>' +
-            '<p class="text-sm text-white">' + esc(cad.nome || '—') + '</p>' +
-            '<p class="text-sm text-textSecondary">' + esc(cad.email || 'sem e-mail') + ' · ' + esc(cad.telefone || '—') + '</p></div>';
-
-        if (dados.endereco && dados.endereco.length) {
-            html += '<div><p class="text-xs uppercase tracking-widest text-textSecondary mb-1">Endereço</p>' +
-                dados.endereco.map(function (e) {
-                    return '<p class="text-sm text-textSecondary">' +
-                        esc([e.logradouro, e.numero].filter(Boolean).join(', ')) + ' — ' +
-                        esc([e.bairro, e.cidade, e.uf].filter(Boolean).join('/')) + '</p>';
-                }).join('') + '</div>';
-        }
-
-        if (dados.pedidos && dados.pedidos.length) {
-            html += '<div><p class="text-xs uppercase tracking-widest text-textSecondary mb-2">Pedidos (' + dados.pedidos.length + ')</p>' +
-                '<div class="space-y-1.5 max-h-56 overflow-y-auto">' +
-                dados.pedidos.map(function (p) {
-                    return '<div class="flex items-center justify-between text-sm" style="border-bottom:1px solid rgba(255,255,255,.06);padding-bottom:.35rem">' +
-                        '<span class="text-textSecondary">' + esc(new Date(p.data).toLocaleDateString('pt-BR')) + '</span>' +
-                        '<span class="text-white">' + esc(BRL.format((p.valor_centavos || 0) / 100)) + '</span>' +
-                        '<span class="text-textSecondary">' + esc(STATUS_ROTULO[p.status] || p.status) + '</span>' +
-                        '</div>';
-                }).join('') + '</div></div>';
-        } else {
-            html += '<p class="text-sm text-textSecondary">Nenhum pedido fechado ainda.</p>';
-        }
-
-        html += '</div>';
-        return html;
+    /* Desde a 036 a resposta é sempre a mesma, exista ou não o cadastro:
+     * só o protocolo muda. Nunca mostra dado pessoal. */
+    function renderizarPedidoAcesso(resposta) {
+        var protocolo = resposta && resposta.protocolo ? ' Protocolo: <strong>' + esc(resposta.protocolo) + '</strong>.' : '';
+        var prazo = (resposta && resposta.prazo_dias) || 15;
+        return '<div class="cart-line p-4 text-sm text-white">' +
+            '<i class="fa-solid fa-circle-check text-green-400 mr-1"></i> ' +
+            'Recebemos seu pedido; a equipe responderá em até ' + esc(prazo) + ' dias, ' +
+            'pelo telefone ou e-mail do seu cadastro, depois de confirmar sua identidade.' + protocolo + '</div>';
     }
 
     function aoEnviar(ev) {
@@ -168,8 +136,9 @@
         var acao;
         if (tipoAtual === 'acesso') {
             acao = window.TempRioDB.consultarMeusDados(dados.documento, dados.telefone)
-                .then(function (resultado) {
-                    $('#lgpd-resultado').innerHTML = renderizarMeusDados(resultado);
+                .then(function (resposta) {
+                    $('#lgpd-resultado').innerHTML = renderizarPedidoAcesso(resposta);
+                    $('#form-lgpd').reset();
                 });
         } else {
             acao = window.TempRioDB.registrarSolicitacaoLgpd(
