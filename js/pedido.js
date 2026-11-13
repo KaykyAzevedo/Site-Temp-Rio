@@ -153,6 +153,32 @@
 
     var tocados = Object.create(null);
 
+    // Erro anunciado: a mensagem ganha id, vira role="alert" e o campo aponta para ela (aria-describedby + aria-invalid).
+    function mostrarErroCampo(nome, msg) {
+        var wrapper = campoDe(nome), input = inputDe(nome);
+        if (!wrapper) return;
+        var p = wrapper.querySelector('.campo-msg');
+        wrapper.classList.add('is-erro');
+        if (p) {
+            if (!p.id) p.id = 'f-' + nome + '-msg';
+            if (p.textContent !== msg) p.textContent = msg;
+            p.setAttribute('role', 'alert');
+        }
+        if (input) {
+            input.setAttribute('aria-invalid', 'true');
+            if (p) input.setAttribute('aria-describedby', p.id);
+        }
+    }
+    function limparErroCampo(nome) {
+        var wrapper = campoDe(nome), input = inputDe(nome);
+        if (wrapper) {
+            wrapper.classList.remove('is-erro');
+            var p = wrapper.querySelector('.campo-msg');
+            if (p) p.removeAttribute('role');
+        }
+        if (input) { input.removeAttribute('aria-invalid'); input.removeAttribute('aria-describedby'); }
+    }
+
     function validarCampo(nome, forcar) {
         var regra = REGRAS[nome];
         if (!regra) return true;
@@ -165,10 +191,9 @@
 
         // Só pinta de vermelho o que a pessoa já tocou ou o que falhou no envio.
         if (!ok && (forcar || tocados[nome])) {
-            wrapper.classList.add('is-erro');
-            wrapper.querySelector('.campo-msg').textContent = regra.msg;
+            mostrarErroCampo(nome, regra.msg);
         } else {
-            wrapper.classList.remove('is-erro');
+            limparErroCampo(nome);
         }
         return ok;
     }
@@ -264,9 +289,7 @@
                 if (dados && dados.erro) {
                     dicaCep('');
                     tocados.cep = true;
-                    campoDe('cep').classList.add('is-erro');
-                    campoDe('cep').querySelector('.campo-msg').textContent =
-                        'CEP não encontrado. Preencha o endereço manualmente.';
+                    mostrarErroCampo('cep', 'CEP não encontrado. Preencha o endereço manualmente.');
                     return;
                 }
                 cacheCep[digitos] = dados;

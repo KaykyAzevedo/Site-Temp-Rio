@@ -1345,3 +1345,122 @@ Base + 004–035 + 036 aplicada 2x. Antes da 036, `lgpd_meus_dados` devolvia o c
 ### Desfazer
 
 Reaplicar o bloco `lgpd_meus_dados` da 015 e a seção (5) da 028 devolve o comportamento antigo (com o vazamento). Para devolver EXECUTE a `anon` em uma função específica: `grant execute on function public.<f>(...) to anon;`. O CHECK ampliado pode ficar.
+
+## 037_qualidade_endereco_interessados.sql — Qualidade do endereço no mapa, "Corrigir no ERP" e interessados (APLICADA em 2026-11-13)
+
+Prevenção de pino em lugar errado + interessados que não compraram. Não grava nem altera dados (nenhum INSERT/UPDATE/DELETE), não toca no ERP. Idempotente, com `lock_timeout 5s`/`statement_timeout 60s`. Requer 033, 026, 013 e `eh_equipe()`. A 034 é opcional.
+
+### Qualidade (calculada na leitura, não gravada)
+
+`solidcon_037_avaliacao()` devolve, por cliente CNPJ, `qualidade` + `motivos`. É calculada a cada leitura porque CEP compartilhado e mudança de endereço mudam a cada sync do ERP; gravar exigiria gatilhos e ficaria velho.
+
+| qualidade | quando |
+|---|---|
+| `sem_localizacao` | sem pino atual (não localizado / endereço mudou), CNPJ com DV inválido ou dígitos repetidos, ou pino por CEP com CEP ausente/inválido/fora da UF |
+| `aproximado` | pino por bairro, ou pino por CEP com CEP genérico (`…000`) ou compartilhado por 5+ clientes |
+| `confiavel` | o resto (pino por endereço, ou por CEP específico) |
+
+Motivos: `cnpj_invalido`, `sem_cep`, `cep_invalido`, `cep_fora_da_uf` (faixas oficiais dos Correios por UF, sem tabela), `cep_generico`, `cep_compartilhado`, `sem_logradouro`, `nao_localizado`, `endereco_mudou`, `posicao_por_bairro`.
+
+Sem semente de municípios: quem garante que o ponto está no município é o navegador (abaixo). O servidor mantém a trava `fora_do_rj` da 033.
+
+### RPCs (todas SECURITY INVOKER: a RLS vale; `eh_equipe()`; EXECUTE só `authenticated`)
+
+- `solidcon_mapa_clientes()`: mesmo resultado da 033 + `qualidade text`, `motivos text[]` **no fim**. O tipo de retorno muda, por isso há DROP + CREATE e os grants são refeitos.
+- `solidcon_geo_corrigir_erp()`: `documento, nome, logradouro, numero, cep, bairro, cidade, estado, qualidade, motivos`. Traz quem está `sem_localizacao` ou tem erro de cadastro (CNPJ, sem CEP, CEP inválido/fora da UF, logradouro). CEP genérico/compartilhado sozinho não entra.
+- `solidcon_interessados()`: 1 linha por origem + CNPJ (contrato combinado com o painel):
+  - colunas: `origem` (`lista_espera`/`pedido_site`), `chave` (uuid do 1º registro, 32 hex), `nome` (razão social), `documento_mascarado` (`11.444.***/****-61`), `cep`, `bairro`, `cidade`, `uf`, `lat`, `lng`, `precisao` (`cep`/`bairro`/`cidade`/null), `primeiro_contato`, `ultimo_contato`, `contatos`, `ultimo_status`, `valor_centavos`;
+  - "não comprou" = o CNPJ não aparece em `solidcon_vendas_clientes` (janela de 400 dias) e nenhum pedido desse CNPJ tem vínculo ERP (034, se existir);
+  - posição **aproximada**: média dos clientes do ERP já localizados (precisão endereço/CEP, pino atual) no mesmo CEP, senão no mesmo bairro + cidade, senão na mesma cidade. Nunca chama serviço externo;
+  - LGPD: só CNPJ; sem telefone, e-mail, responsável ou documento inteiro. Vendedor não vê `lista_espera` (RLS da tabela).
+  - `valor_centavos` de pedido é o valor recalculado no servidor (021).
+
+### Navegador (`js/admin.js`, só a geocodificação do mapa 033)
+
+- **Município:** antes de qualquer busca, 1 consulta por cidade por rodada (`city` + nome do estado + `featureType=settlement`). A cidade só vale se o Nominatim devolver a mesma cidade (`address.city/town/village/municipality` normalizado) e o mesmo estado. Cidade não reconhecida vira `nao_encontrado` e aparece em "Corrigir no ERP".
+- **Buscas:** todas com `viewbox` da caixa do município + `bounded=1`. O resultado só é aceito dentro da caixa e com a mesma cidade (`gmapNoMunicipio`).
+- **Precisão:**
+  - `endereco`: a rua devolvida bate com o logradouro, sem o tipo da via;
+  - `cep`: só com CEP útil (8 dígitos, não repetido, não `…000`) e com o Nominatim devolvendo o mesmo CEP. A busca pela rua não manda mais o CEP;
+  - `bairro`: suburb/neighbourhood/quarter/city_district (ou nome) bate com o bairro do ERP.
+- **Cache:** a etapa de bairro não lê nem grava mais o localStorage `temprio_geo_v1` do mapa antigo, que alimentava o mapa novo com resultados não validados. Município e bairro só ficam em memória durante a rodada, e só se validados. O banco continua sendo o cache.
+- O estado vai por extenso (`Rio de Janeiro`, não `RJ`).
+
+### Validação local (PG 18 isolado + node)
+
+- **SQL:**
+  - base + 004–036 + fixtures fictícias, 037 aplicada 2x;
+  - anon sem EXECUTE (42501); fora da equipe, `somente equipe`;
+  - regras de qualidade para 13 clientes (confiável, CEP genérico, CNPJ inválido, sem pino, bairro, CEP fora da UF, endereço mudou, CEP compartilhado ×5, logradouro fictício);
+  - "Corrigir no ERP" traz só os 5 que têm o que corrigir;
+  - interessados: pedido com 2 contatos (posição pelo CEP), pedido com posição pelo bairro, lista de espera com posição pela cidade;
+  - ficam de fora: quem comprou no ERP, pedido com vínculo 034 e lista sem CNPJ;
+  - `chave` única; vendedor não vê a lista de espera; sem a 034, a função continua funcionando;
+  - nenhuma função da 037 é DEFINER.
+- **JS:** `node --check` + 10 casos do bloco de geocodificação recortado do próprio `admin.js`, com Nominatim simulado:
+  - rua certa vira `endereco`; homônimo em outra cidade é rejeitado e cai no CEP validado;
+  - ponto no mar é rejeitado; CEP devolvido diferente é rejeitado;
+  - CEP `…000` não consulta CEP; bairro com outro nome é rejeitado;
+  - cidade não reconhecida vira `nao_encontrado`; UF desconhecida não faz requisição; falha de rede não grava;
+  - a memória da rodada evita consultas repetidas.
+
+### Desfazer
+
+```sql
+begin;
+drop function if exists public.solidcon_interessados();
+drop function if exists public.solidcon_037_mascarar_cnpj(text);
+drop function if exists public.solidcon_geo_corrigir_erp();
+drop function if exists public.solidcon_mapa_clientes();
+-- depois reaplicar SÓ o bloco solidcon_mapa_clientes da 033 (create + revoke/grant)
+drop function if exists public.solidcon_037_avaliacao();
+drop function if exists public.solidcon_037_cep_da_uf(text, text);
+commit;
+```
+
+## base/vitrines.sql — referência de produção (não é migração)
+
+`public.vitrines` existia em produção sem CREATE versionado no repositório (achado 6). `admin/migracoes/base/vitrines.sql` é o export somente leitura de 2026-11-13: colunas, CHECKs, índices, as 3 políticas e o gatilho do antispam. Não precisa rodar em produção; serve para auditoria e para recriar o banco do zero (depois da 001, de `pedidos`, da 028 e da 032). É idempotente. Os grants de anon nessa tabela são endurecidos pela 038.
+
+## 038_rls_desempenho_grants.sql — RLS mais rápido, sem FOR ALL e anon só INSERT (NÃO APLICADA)
+
+Achados 3, 4 e 7 da auditoria + endurecimento de grants. Não altera linhas; não toca no ERP. Idempotente, `lock_timeout 5s`/`statement_timeout 60s`, `search_path = pg_catalog, pg_temp` dentro da transação. **Independente da 037**: testada nas duas ordens.
+
+Toda troca de política só acontece se ela estiver **exatamente** como no export de produção de 2026-11-13 (67 políticas). Se divergir, a 038 pula aquela troca e avisa com NOTICE.
+
+### O que muda
+
+1. **`(select public.eh_admin())` / `(select public.eh_equipe())`** em todas as políticas de `public` (loop com `ALTER POLICY`, que troca só a expressão): o Postgres passa a calcular uma vez por consulta (InitPlan, visível no EXPLAIN) em vez de uma vez por linha.
+2. **FOR ALL vira comandos explícitos**, sem mudar quem pode o quê:
+   - `usuarios` e `clientes`: "admin escreve X" vira só `admin insere X` + `admin apaga X`. SELECT e UPDATE já vinham de "equipe le/atualiza X", e equipe inclui todo admin. A troca só acontece se essas políticas existirem como esperado.
+   - `catalogo_produtos`, `pedido_items`, `regioes`, `regioes_faixas_cep`: "admin escreve X" vira `admin insere/atualiza/apaga X`. O SELECT já vem de "admin le ..." ou "todos leem ..." (`true`).
+3. **`pedidos.cnpj_digitos`**: coluna gerada STORED = `regexp_replace(cnpj, '[^0-9]', '', 'g')`, com índice `pedidos_cnpj_digitos_idx`. `historico_do_cliente` passa a usar a coluna (mesma expressão da 028; assinatura e grants iguais).
+   - Não trocadas: as funções da 015 (usam `'\D'`, que não é garantidamente igual a `'[^0-9]'` fora do ASCII), a 034 (trocar exigiria reescrever a função inteira) e a 037 (ainda não aplicada; não pode depender da 038).
+   - ADD COLUMN STORED reescreve `pedidos`, e CREATE INDEX sem CONCURRENTLY (que não roda em transação) bloqueia escrita durante a criação. A tabela é pequena; o `lock_timeout` aborta em vez de travar o site.
+4. **anon só INSERT** em `pedidos`, `leads`, `visitas`, `lista_espera`, `solicitacoes_lgpd`, `consentimentos` e `vitrines`: SELECT/UPDATE/DELETE revogados. O RLS já negava tudo isso a anon; isto é defesa em profundidade.
+   - Funciona porque o site sempre usa `Prefer: return=minimal` (INSERT sem RETURNING de colunas), não faz upsert, e os gatilhos INVOKER dessas tabelas não leem a própria tabela.
+   - `authenticated` não muda (o painel precisa ler e atualizar).
+
+### Validação (PG 18 local isolado)
+
+- **Base:** 004–036 + fixtures fictícias; as 67 políticas locais iguais ao export de produção.
+- **Matriz:** 4 papéis (anon, authenticated fora da equipe, vendedor, admin) × 48 tabelas com RLS × SELECT/INSERT/UPDATE/DELETE = 768 células, tudo desfeito por subtransação.
+  - **Antes = depois em 768/768** (resultado efetivo: linhas visíveis/afetadas; INSERT permite/nega).
+  - As únicas diferenças brutas são as esperadas: anon em SELECT/UPDATE/DELETE nas 7 tabelas de formulário passou de "0 linhas pelo RLS" para "permission denied".
+- **INSERT anônimo no formato do PostgREST** (`WITH pgrst_source AS (INSERT ... RETURNING 1)`) continua funcionando em `leads`, `vitrines` (cujo CHECK usa colunas) e `pedidos` (com gatilhos). `visitas`, `completar_visita` e as leituras públicas (`catalogo_produtos`, `regioes`, `vitrines_publicas`) também.
+- **Outros:**
+  - 0 políticas sem `(select ...)`, 0 FOR ALL;
+  - EXPLAIN com InitPlan;
+  - `historico_do_cliente` igual à conferência direta;
+  - 038 aplicada 2x; ordem 038→037→038 ok.
+
+### Risco e como desfazer
+
+Um INSERT anônimo com `return=representation` (ou `.insert().select()` no supabase-js) passa a falhar com `permission denied`; o site não faz isso hoje. Para voltar os grants:
+
+```sql
+grant select, update, delete on public.pedidos, public.leads, public.visitas, public.lista_espera,
+  public.solicitacoes_lgpd, public.consentimentos, public.vitrines to anon;
+```
+
+As políticas antigas podem ser recriadas com o texto da 004/005/006 e de `supabase-regioes.sql`; a coluna sai com `alter table public.pedidos drop column cnpj_digitos` (depois de reaplicar a `historico_do_cliente` da 028).

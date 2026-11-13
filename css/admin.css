@@ -9,6 +9,9 @@
  * a ponto de atrapalhar a comparação.
  */
 
+/* Foco visível global (teclado): 2px laranja, afastado 2px. Especificidade zero: regras próprias de foco continuam valendo. */
+:where(a, button, input, select, textarea, summary, [tabindex], [role="button"]):focus-visible { outline: 2px solid var(--adm-acao, #F0915A); outline-offset: 2px; }
+
 :root {
     /* Paleta C (escuro suave). REGRA: laranja = AÇÃO e aba ativa; azul = DADOS (gráficos, barras, séries);
        verde/amarelo/vermelho = SITUAÇÃO (ok/atenção/ruim). Nenhuma cor solta fora destes tokens. */
@@ -30,9 +33,12 @@
     --adm-acao-borda: rgba(240, 145, 90, 0.40);
     --adm-marca: var(--adm-acao);    /* nome antigo: só ação */
 
-    /* Dados */
-    --adm-dados: #6fa8e0;
-    --adm-dados-fundo: rgba(111, 168, 224, 0.14);
+    /* Dados: laranja Temp Rio (antes azul #6fa8e0). Contraste sobre --adm-superficie ~7:1. */
+    --adm-dados: #f5a474;
+    --adm-dados-fundo: rgba(245, 164, 116, 0.14);
+    /* Azul fica só onde é semântico: "entregue" e a faixa "base" do mapa de clientes. */
+    --adm-azul: #6fa8e0;
+    --adm-azul-fundo: rgba(111, 168, 224, 0.14);
     --adm-parcial: rgba(147, 161, 177, 0.45);   /* período parcial / série secundária */
 
     /* Situação */
@@ -46,7 +52,7 @@
     --adm-ruim-borda: rgba(240, 138, 128, 0.50);
     --adm-espera: var(--adm-atencao);   /* nomes antigos */
     --adm-bom: var(--adm-ok);
-    --adm-entregue: var(--adm-dados);
+    --adm-entregue: var(--adm-azul);
 
     --adm-neutro-fundo: rgba(233, 238, 244, 0.05);
     --adm-neutro-fundo-2: rgba(233, 238, 244, 0.09);
@@ -243,9 +249,9 @@ body.admin {
 
 .adm-selo-aguardando { background: var(--adm-atencao-fundo); color: var(--adm-atencao); }
 .adm-selo-confirmado { background: var(--adm-ok-fundo);       color: var(--adm-ok); }
-.adm-selo-entregue   { background: var(--adm-dados-fundo);    color: var(--adm-dados); }
+.adm-selo-entregue   { background: var(--adm-azul-fundo);     color: var(--adm-azul); }
 .adm-selo-cancelado  { background: var(--adm-ruim-fundo);     color: var(--adm-ruim); }
-/* Origem do dado: ERP em azul (dados), Site e demais etiquetas neutras. */
+/* Origem do dado: ERP em laranja de dados, Site e demais etiquetas neutras. */
 .adm-selo-erp    { background: var(--adm-dados-fundo);      color: var(--adm-dados); }
 .adm-selo-neutro { background: var(--adm-neutro-fundo-2);    color: var(--adm-tinta-2); }
 
@@ -280,10 +286,10 @@ body.admin {
     font-size: 0.8rem;
     appearance: none;
     -webkit-appearance: none;
-    outline: none;
 }
 
 .adm-filtro:focus { border-color: var(--adm-acao); }
+.adm-filtro:focus-visible { outline: 2px solid var(--adm-acao); outline-offset: 2px; }
 
 /* ===================== Entrada ===================== */
 .adm-input {
@@ -294,11 +300,11 @@ body.admin {
     border-radius: 0.6rem;
     padding: 0.75rem 0.9rem;
     font-size: 0.95rem;
-    outline: none;
     transition: border-color 0.2s ease;
 }
 
 .adm-input:focus { border-color: var(--adm-acao); }
+.adm-input:focus-visible { outline: 2px solid var(--adm-acao); outline-offset: 2px; }
 
 .adm-botao {
     background: var(--adm-acao);
@@ -917,3 +923,52 @@ body.admin {
 .adm-kanban-erpcartao { overflow-wrap: anywhere; }
 .adm-kanban-valor { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.25rem 0.5rem; }
 .adm-kanban-valor .adm-selo { white-space: normal; max-width: 100%; }
+
+/* ===================== Mapa de expansão: pinos em gota, legenda, tela cheia ===================== */
+.adm-gota { background: none; border: 0; }   /* divIcon do Leaflet: sem a caixa branca padrão */
+.adm-gota-svg { display: block; width: 30px; height: 36px; overflow: visible; transform-origin: 13px 34px; filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.55)); }
+.adm-gota-corpo { stroke: var(--adm-fundo); stroke-width: 1.5; }
+.adm-gota-alta .adm-gota-corpo { fill: var(--adm-acao); }      /* 20% que mais compraram em 12 meses */
+.adm-gota-media .adm-gota-corpo { fill: var(--adm-atencao); }  /* 50% do meio */
+.adm-gota-base .adm-gota-corpo { fill: var(--adm-azul); }      /* 30% de baixo + quem não comprou em 12 meses */
+.adm-gota-furo { fill: var(--adm-fundo); }
+.adm-gota-aprox .adm-gota-corpo { fill-opacity: 0.6; stroke: var(--adm-tinta-2); stroke-dasharray: 3 2; }   /* posição aproximada: tracejado + mais claro */
+.adm-gota-alerta { fill: var(--adm-ruim); stroke: var(--adm-fundo); stroke-width: 1.5; }                    /* "parou de comprar": selo com ! (não só cor) */
+.adm-gota-alerta-marca { fill: none; stroke: var(--adm-fundo); stroke-width: 2; stroke-linecap: round; }
+.leaflet-marker-icon.adm-gota:focus-visible { outline: none; }
+.leaflet-marker-icon.adm-gota:focus-visible .adm-gota-svg { outline: 2px solid var(--adm-tinta); outline-offset: 2px; border-radius: 6px; }
+@keyframes adm-gota-cai {
+    0%   { transform: translateY(-150px); opacity: 0; }
+    12%  { opacity: 1; }
+    58%  { transform: translateY(0); }
+    74%  { transform: translateY(-10px); }
+    88%  { transform: translateY(0); }
+    94%  { transform: translateY(-3px); }
+    100% { transform: translateY(0); }
+}
+.adm-gota-svg.is-cai { animation: adm-gota-cai 0.65s cubic-bezier(0.4, 0, 0.6, 1) both; }
+@media (prefers-reduced-motion: reduce) { .adm-gota-svg.is-cai { animation: none; } }
+
+.adm-leg { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; font-size: 0.8125rem; color: var(--adm-tinta-2); margin-top: 0.75rem; }
+.adm-leg > span { display: inline-flex; align-items: center; gap: 0.4rem; }
+.adm-leg .adm-gota-svg { width: 20px; height: 24px; filter: none; }
+/* Interessados (não compraram): anel OCO em cinza-claro neutro. Quanto menos preciso (CEP < bairro < cidade), maior, mais fraco e mais tracejado. */
+.adm-anel { display: block; overflow: visible; filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.6)); }
+.adm-anel circle { fill: rgba(233, 238, 244, 0.06); stroke: var(--adm-tinta); }
+.adm-anel text { fill: var(--adm-tinta); font: 700 11px/1 system-ui, sans-serif; }
+.adm-anel-cep circle { stroke-width: 2.5; }
+.adm-anel-bairro { opacity: 0.75; }
+.adm-anel-bairro circle { stroke-width: 2; stroke-dasharray: 4 2.5; }
+.adm-anel-cidade { opacity: 0.55; }
+.adm-anel-cidade circle { stroke-width: 2; stroke-dasharray: 2 3; }
+.leaflet-marker-icon.adm-anel-ic:focus-visible { outline: none; }
+.leaflet-marker-icon.adm-anel-ic:focus-visible .adm-anel { outline: 2px solid var(--adm-acao); outline-offset: 2px; border-radius: 50%; }
+.adm-leg .adm-anel { filter: none; }
+.adm-chip[disabled] { opacity: 0.55; cursor: not-allowed; }
+.adm-so-icone { min-width: 1.5rem; min-height: 1.5rem; }   /* botão só de ícone: alvo >= 24px (44px no celular, bloco abaixo) */
+.adm-chip:focus-visible, .adm-botao-fantasma:focus-visible, .adm-botao:focus-visible, .adm-range:focus-visible { outline: 2px solid var(--adm-acao); outline-offset: 2px; }
+
+/* Tela cheia: nativa (Fullscreen API) ou, sem suporte, sobreposição fixa. O mapa ocupa o que sobra. */
+.is-tela-cheia { background: var(--adm-fundo) !important; border-radius: 0 !important; margin: 0 !important; padding: 1rem !important; overflow: auto; display: flex; flex-direction: column; }
+.is-tela-cheia.is-sobreposto { position: fixed; inset: 0; z-index: 2000; }
+.is-tela-cheia #mapa-clientes { height: auto !important; flex: 1 1 60vh; min-height: 18rem; }

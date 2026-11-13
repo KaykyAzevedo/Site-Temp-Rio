@@ -417,6 +417,7 @@
     }
 
     function iniciar() {
+        a11yIniciar();
         if (!cfg.url || !cfg.anonKey) {
             mostrarTela('config');
             return;
@@ -929,7 +930,7 @@
         qual = ALIAS_ABA[qual] || qual;
         if (!NAV[qual]) qual = 'hoje';
         if (papel === 'vendedor' && NAV[qual].restrito) qual = 'pedidos';
-        if (abaAtual !== qual && secoesDe(abaAtual).indexOf('regioes') >= 0 && secoesDe(qual).indexOf('regioes') < 0) gmapEncerrar(false);
+        if (abaAtual !== qual && secoesDe(abaAtual).indexOf('regioes') >= 0 && secoesDe(qual).indexOf('regioes') < 0) { gmapEncerrar(false); gmapTelaCheiaFim(); }
         abaAtual = qual;
         document.querySelectorAll('.adm-aba').forEach(function (b) {
             b.classList.toggle('is-ativa', b.getAttribute('data-aba') === qual);
@@ -1696,7 +1697,7 @@
             alvo.querySelectorAll('tr[data-solid-id]').forEach(function (tr) {
                 var abrir = function () { abrirDetalheSolid(tr.getAttribute('data-solid-id')); };
                 tr.addEventListener('click', abrir);
-                tr.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') abrir(); });
+                tr.addEventListener('keydown', function (ev) { if (ev.target === tr && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); abrir(); } });
             });
         }
     }
@@ -4536,9 +4537,43 @@
         return reg.ativo ? corToken('--adm-dados', '#6fa8e0') : corToken('--adm-tinta-3', '#93a1b1');
     }
 
+    // Mapa de clientes: o Leaflet só alinha pinos e tiles se souber o tamanho REAL do container. Se o mapa nasce escondido
+    // (0x0) ou o container muda de largura (menu, barra de rolagem, tela cheia), os pinos vetoriais ficam projetados no
+    // tamanho antigo (deslocados/empilhados) e invalidateSize sozinho não os reprojeta. Aqui: observa o container,
+    // recalcula o tamanho e reaplica a vista (o que força a reprojeção); o 1º enquadramento espera haver tamanho.
+    var mapaRO = null, mapaPtsPendentes = null;
+    function mapaObservarFim() {
+        if (mapaRO) { try { mapaRO.disconnect(); } catch (e) { /* já solto */ } mapaRO = null; }
+        mapaPtsPendentes = null;
+    }
+    function mapaObservarTamanho(el) {
+        mapaObservarFim();
+        if (typeof ResizeObserver === 'undefined' || !el) return;
+        var agenda = 0;
+        mapaRO = new ResizeObserver(function () {
+            if (agenda) cancelAnimationFrame(agenda);
+            agenda = requestAnimationFrame(function () {
+                agenda = 0;
+                if (!mapaClientes || !el.clientWidth || !el.clientHeight) return;
+                mapaClientes.invalidateSize({ animate: false });
+                if (mapaPtsPendentes) { var p = mapaPtsPendentes; mapaPtsPendentes = null; mapaAjustarVista(p); }
+                else mapaClientes.setView(mapaClientes.getCenter(), mapaClientes.getZoom(), { animate: false });
+            });
+        });
+        mapaRO.observe(el);
+    }
+    function mapaAjustarVista(pts) {
+        if (!mapaClientes || !pts.length || geo.ajustou) return;
+        var t = mapaClientes.getSize();
+        if (!t.x || !t.y) { mapaPtsPendentes = pts; return; }   // escondido: enquadra quando aparecer
+        mapaClientes.fitBounds(pts, { padding: [30, 30], maxZoom: 12, animate: false });
+        geo.ajustou = true;
+    }
+
     function desenharRegioes() {
         var alvo = $('#painel-regioes');
-        if (mapaClientes) { mapaClientes.remove(); mapaClientes = null; mapaClientesCamada = null; gmap.camada = null; gmap.marcadores = {}; }
+        gmapTelaCheiaFim();
+        if (mapaClientes) { mapaObservarFim(); mapaClientes.remove(); mapaClientes = null; mapaClientesCamada = null; gmap.camada = null; gmap.marcadores = {}; }
         desenharRegioesBase();
         alvo.insertAdjacentHTML('afterbegin', '<section id="geo-clientes" class="mb-8"></section>');
         desenharGeoClientes();
@@ -4566,7 +4601,7 @@
             '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Contagem de cadastros do ERP por bairro — sem nome, documento ou contato. ' +
             'A região vem do <strong>nome do bairro/cidade</strong> cadastrado em cada região (não há polígono): é uma aproximação. ' +
             'As posições são buscadas no OpenStreetMap (Nominatim) enviando só “bairro, cidade, UF”, e ficam salvas neste navegador.</p>' +
-            '<div class="adm-card p-5 mb-5"><div id="geo-tl" class="mb-3">' + gmapControlesHtml() + '</div>' +
+            '<div class="adm-card p-5 mb-5" id="geo-cartao-mapa"><div id="geo-tl" class="mb-3">' + gmapControlesHtml() + '</div>' +
                 '<div class="flex items-center flex-wrap gap-3 mb-3' + (gmapAtivo() ? ' hidden' : '') + '" id="geo-barra-antiga">' +
                 '<button type="button" class="adm-botao" id="geo-localizar">Localizar bairros no mapa</button>' +
                 '<button type="button" class="adm-botao-fantasma hidden" id="geo-parar">Parar</button>' +
@@ -4577,23 +4612,21 @@
                 '<p class="text-xs mb-3 hidden" id="geo-modo-aviso" role="status" style="color:var(--adm-tinta-2)"></p>' +
                 '<div id="mapa-clientes" class="adm-mapa-escuro" style="height:420px;border-radius:.75rem;overflow:hidden"></div>' +
                 (gmapAtivo()
-                    ? '<div class="flex gap-4 flex-wrap text-xs mt-3" style="color:var(--adm-tinta-2)">' +
-                        '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--adm-dados)"></span> Cliente CNPJ (tamanho = vendido até a data)</span>' +
-                        '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;border:1px dashed var(--adm-dados)"></span> Posição aproximada (centro do bairro)</span>' +
-                      '</div>'
+                    ? gmapLegendaHtml()
                     : '<div class="flex gap-4 flex-wrap text-xs mt-3" style="color:var(--adm-tinta-2)">' +
                     '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--adm-dados)"></span> Dentro de região que entrega</span>' +
                     '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--adm-tinta-3)"></span> Região sem entrega</span>' +
                     '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--adm-atencao)"></span> Fora das regiões</span>' +
                     '<span><span style="display:inline-block;width:10px;height:10px;border-radius:50%;border:2px solid var(--adm-tinta)"></span> Ponto central aproximado da região</span>' +
                 '</div>') + '</div>' +
-            '<div id="geo-resumo-tempo"></div><div id="geo-resumo"></div><div id="geo-tabela"></div><div id="geo-naoloc"></div>';
+            '<div id="gmap-corrigir"></div><div id="geo-resumo-tempo"></div><div id="geo-resumo"></div><div id="geo-tabela"></div><div id="geo-naoloc"></div>';
 
         gmapLigar();
         alvo.querySelector('#geo-localizar').addEventListener('click', geoLocalizar);
         alvo.querySelector('#geo-parar').addEventListener('click', geoParar);
         alvo.querySelector('#geo-modo').addEventListener('change', function (ev) { geo.modo = ev.target.value === 'valor' ? 'valor' : 'n'; geoAtualizarMapa(); });
         geoAtualizarMapa();
+        gmapCorrigirUI();
     }
 
     // Atualiza mapa, resumo por região, tabela e lista de não localizados (sem refazer a aba).
@@ -4627,9 +4660,10 @@
             if (!mapaClientes) {
                 mapaClientes = L.map('mapa-clientes', { scrollWheelZoom: false }).setView([-22.92, -43.35], 10);
                 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 18 }).addTo(mapaClientes);
+                mapaObservarTamanho(alvoMapa);
             }
             if (mapaClientesCamada) { mapaClientes.removeLayer(mapaClientesCamada); mapaClientesCamada = null; }
-            if (gmapAtivo()) { gmapCriarPinos(); gmapPinosAtualizar(); } else {
+            if (gmapAtivo()) { gmapCriarPinos(); gmapPinosAtualizar(false); } else {
             mapaClientesCamada = L.layerGroup();
             var maior = Math.max.apply(null, geo.locais.map(medida).concat([1]));
             var pts = [];
@@ -4650,7 +4684,7 @@
                     .addTo(mapaClientesCamada);
             });
             mapaClientesCamada.addTo(mapaClientes);
-            if (pts.length && !geo.ajustou) { mapaClientes.fitBounds(pts, { padding: [30, 30], maxZoom: 12 }); geo.ajustou = true; }
+            mapaAjustarVista(pts);
             }
             setTimeout(function () { if (mapaClientes) mapaClientes.invalidateSize(); }, 50);
         } else if (alvoMapa) {
@@ -4731,6 +4765,9 @@
     var GMAP_LOTE_CLIQUE = 100, GMAP_LOTE_GRAVAR = 10, GMAP_PASSO_MS = 800;
     var gmap = { sessao: 0, carregado: false, carregando: false, ausente: false, erro: null, linhas: [], meses: [], idx: 0, fixouIdx: false,
                  tocando: false, timer: null, marcadores: {}, camada: null, max: 1,
+                 filtro: 'todos', cur: 0, ordem: [], cumMes: [], vel: 2, raf: 0, nParou: 0, tResumo: 0,
+                 int: { carregado: false, carregando: false, ausente: false, erro: null, linhas: [], semPos: 0, camada: null },
+                 cor: { carregado: false, ausente: false, erro: null, linhas: [] },
                  pend: null, pendErro: null, run: { rodando: false, parar: false, feitos: 0, total: 0, gravados: 0, ignorados: 0, falhas: 0, msg: '' } };
 
     function gmapRedesenhar() {
@@ -4753,6 +4790,7 @@
             } else { gmapPreparar(r.data || []); gmap.carregado = true; }
             gmapRedesenhar();
             gmapCarregarPendentes();
+            if (!gmap.ausente && !gmap.erro) { gmapCarregarInteressados(); gmapCarregarCorrigir(); }
         }).catch(function (e) { gmap.carregando = false; gmap.erro = String(e && e.message || e); gmap.carregado = false; gmapRedesenhar(); });
     }
 
@@ -4779,7 +4817,41 @@
             if (ac > max) max = ac;
         });
         gmap.linhas = linhas; gmap.meses = meses; gmap.max = max;
+        gmapClassificar(linhas, meses);
         if (!gmap.fixouIdx || gmap.idx >= meses.length) gmap.idx = meses.length - 1;
+        gmap.cur = gmap.cumMes[gmap.idx] || 0;
+    }
+
+    // Faixa por valor dos ÚLTIMOS 12 MESES (20% de cima = laranja, 50% do meio = amarelo, 30% de baixo = azul; sem compra em
+    // 12 meses = base), "parou de comprar" (sem comprar há mais de 2x o intervalo médio dele; mínimo 45 dias; 1 compra só = 45)
+    // e a ordem cronológica da 1ª compra (animação de crescimento). Calculado uma vez por carga.
+    function gmapClassificar(linhas, meses) {
+        var hojeMs = Date.parse(recHoje() + 'T12:00:00Z'), ult12 = meses.slice(-12), nParou = 0;
+        function dia(d) { return d ? Date.parse(String(d).slice(0, 10) + 'T12:00:00Z') : NaN; }
+        linhas.forEach(function (l) {
+            var m = l.meses && typeof l.meses === 'object' ? l.meses : {};
+            l._u12 = 0;
+            ult12.forEach(function (k) { if (m[k]) l._u12 += Number(m[k][0]) || 0; });
+            var pri = dia(l.primeira_compra), ult = dia(l.ultima_compra), qtd = l._cu.length ? l._cu[l._cu.length - 1] : 0;
+            l._parou = false; l._dias = null; l._ritmo = null; l._limite = 45;
+            if (!isNaN(ult)) {
+                l._dias = Math.max(0, Math.round((hojeMs - ult) / 86400000));
+                if (qtd > 1 && !isNaN(pri)) { l._ritmo = (ult - pri) / 86400000 / (qtd - 1); l._limite = Math.max(45, 2 * l._ritmo); }
+                l._parou = l._dias > l._limite;
+            }
+            if (l._parou) nParou++;
+        });
+        var porValor = linhas.slice().sort(function (a, b) { return b._u12 - a._u12; }), N = porValor.length;
+        var corteAlta = Math.ceil(N * 0.2), corteMedia = Math.ceil(N * 0.7);
+        porValor.forEach(function (l, r) { l._faixa = l._u12 <= 0 ? 'base' : r < corteAlta ? 'alta' : r < corteMedia ? 'media' : 'base'; });
+        var cron = linhas.filter(function (l) { return l._pm; }).sort(function (a, b) {
+            var x = String(a.primeira_compra), y = String(b.primeira_compra);
+            return x < y ? -1 : x > y ? 1 : (String(a.documento) < String(b.documento) ? -1 : 1);
+        });
+        cron.forEach(function (l, r) { l._rank = r; l._mi = meses.indexOf(l._pm); });
+        var cum = [], p = 0;
+        meses.forEach(function (k) { while (p < cron.length && cron[p]._pm <= k) p++; cum.push(p); });
+        gmap.ordem = cron; gmap.cumMes = cum; gmap.nParou = nParou;
     }
 
     function gmapCarregarPendentes() {
@@ -4795,40 +4867,220 @@
     function gmapPopup(l) {
         var i = gmap.idx, mes = gmap.meses[i];
         var local = [l.bairro, l.cidade].filter(Boolean).join(', ') + (l.estado ? '/' + l.estado : '');
-        return '<strong>' + esc(l.nome || '(sem nome)') + '</strong><br>' + esc(local || '—') + '<br>' +
+        var parou = l._parou
+            ? '<div style="margin-top:.5rem;padding:.4rem .5rem;border:1px solid var(--adm-ruim-borda);border-radius:.4rem;background:var(--adm-ruim-fundo)"><strong>Parou de comprar</strong><br>' +
+                'Sem comprar há ' + NUM.format(l._dias) + ' dias (ritmo normal: ~' + NUM.format(Math.round(l._ritmo == null ? 45 : l._ritmo)) + ' dias' + (l._ritmo == null ? ', só 1 compra' : '') +
+                ') — boa hora para oferta ou pedir feedback.</div>'
+            : '';
+        return '<strong>' + esc(l.nome || '(sem nome)') + '</strong><br>' + esc(local || '—') + '<br>' + gmapQualidadeHtml(l) +
+            'Faixa (12 meses): ' + esc(GMAP_FAIXA_ROT[l._faixa]) + ' · ' + esc(brl(l._u12)) + '<br>' +
             'Vendido até ' + esc(gmapMesRot(mes)) + ': ' + esc(brl(l._ac[i])) + '<br>' +
             'Compras: ' + NUM.format(l._cu[i]) + '<br>' +
             '1ª compra: ' + (l.primeira_compra ? esc(cmpData(String(l.primeira_compra).slice(0, 10))) : '—') + '<br>' +
             'Última (até a data): ' + (l._ult[i] ? esc(gmapMesRot(l._ult[i])) : '—') +
-            (l.precisao === 'bairro' ? '<br><em>Posição aproximada (centro do bairro)</em>' : l.precisao === 'cep' ? '<br><em>Posição pelo CEP</em>' : '');
+            (l.precisao === 'bairro' ? '<br><em>Posição aproximada (centro do bairro)</em>' : l.precisao === 'cep' ? '<br><em>Posição pelo CEP</em>' : '') + parou;
     }
 
-    function gmapPino(l, i) {
-        var visivel = l._pm && l._pm <= gmap.meses[i];
-        var raio = 4 + Math.sqrt((l._ac[i] || 0) / gmap.max) * 10;
-        var cor = corToken('--adm-dados', '#6fa8e0'), aprox = l.precisao === 'bairro';
-        return { visivel: !!visivel, raio: raio, estilo: { color: cor, weight: aprox ? 1.5 : 1, dashArray: aprox ? '3 3' : null, fillColor: cor, fillOpacity: aprox ? 0.18 : 0.55 } };
-    }
+    // ---- pinos em gota (divIcon SVG; cores/estilos em css/admin.css, .adm-gota-*) ----
+    var GMAP_FAIXA_ROT = { alta: 'Melhores clientes', media: 'Intermediários', base: 'Base' };
+    var GMAP_VEL = { 1: 8, 2: 25, 3: 70 };   // pinos por segundo: lenta / normal / rápida
+    // Ponto de ligação do filtro "Interessados": RPC solidcon_interessados (migração 037, AINDA não aplicada). Contrato combinado
+    // com o backend: sem parâmetros; 1 linha por origem+CNPJ ('lista_espera' | 'pedido_site'); chave (opaca), nome (razão social),
+    // documento_mascarado, cep, bairro, cidade, uf, lat/lng (null = sem posição), precisao ('cep'|'bairro'|'cidade'|null, sempre
+    // aproximada), primeiro_contato, ultimo_contato, contatos, ultimo_status, valor_centavos. Erro PGRST202/42883 = ausente (gmapAusente).
+    // Com a RPC: gmapCarregarInteressados() monta uma camada própria de anéis (só aparece no filtro "Interessados").
+    // 037 aplicada: gmap.int.carregado. Sem ela (PGRST202/42883/404) o chip fica desabilitado "em breve", sem erro de tela.
+    var GMAP_ORIGEM_ROT = { lista_espera: 'Lista de espera', pedido_site: 'Pedido do site' };
+    var GMAP_PREC_INT = { cep: 'Posição aproximada (pelo CEP)', bairro: 'Posição aproximada (centro do bairro)', cidade: 'Posição aproximada (centro da cidade)' };
+    var GMAP_INT_TEXTO = 'Interessou e ainda não comprou — oferta/contato.';
+    var GMAP_INT_MAX_LISTA = 8;
+    function gmapTemInteressados() { return gmap.int.carregado && gmap.int.linhas.length > 0; }
+    function gmapDataBr(ts) { var d = new Date(ts); return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('pt-BR'); }
 
-    // Reposiciona/ajusta os pinos para o mês escolhido (sem refazer o mapa).
-    function gmapPinosAtualizar() {
-        if (!gmapAtivo() || !mapaClientes || !gmap.camada) return;
-        var i = gmap.idx, n = 0, semPos = 0, total = 0;
-        gmap.linhas.forEach(function (l) {
-            var pino = gmapPino(l, i);
-            if (pino.visivel) { n++; total += l._ac[i]; if (!gmap.marcadores[l.documento]) semPos++; }
-            var mk = gmap.marcadores[l.documento];
-            if (!mk) return;
-            if (pino.visivel) {
-                mk.setRadius(pino.raio); mk.setStyle(pino.estilo);
-                if (!gmap.camada.hasLayer(mk)) gmap.camada.addLayer(mk);
-            } else if (gmap.camada.hasLayer(mk)) gmap.camada.removeLayer(mk);
+    function gmapCarregarInteressados() {
+        if (papel !== 'admin' || gmap.int.carregando) return;
+        gmap.int.carregando = true; gmap.int.erro = null;
+        gmapChipsUI();
+        vendPaginar(function () { return sb.rpc('solidcon_interessados'); }, 5000).then(function (r) {
+            gmap.int.carregando = false;
+            if (r.error) {
+                gmap.int.ausente = gmapAusente(r.error);
+                gmap.int.erro = gmap.int.ausente ? null : String(r.error.message || r.error);
+                gmap.int.carregado = false; gmap.int.linhas = [];
+            } else {
+                gmap.int.ausente = false; gmap.int.carregado = true; gmap.int.linhas = r.data || [];
+            }
+            gmapInteressadosPreparar(); gmapChipsUI();
+            if (mapaClientes && gmap.camada) { gmapIntCriar(); gmapIntMostrar(); }
+            if (gmap.filtro === 'interessados') gmapPinosAtualizar(false);
+        }, function (e) {
+            gmap.int.carregando = false; gmap.int.carregado = false; gmap.int.erro = String((e && e.message) || e); gmapChipsUI();
         });
-        var rot = $('#geo-tl-rotulo');
-        if (rot) rot.textContent = 'Até ' + gmapMesRot(gmap.meses[i]) + ': ' + NUM.format(n) + (n === 1 ? ' cliente' : ' clientes') + ' · ' + brl(total) +
-            (semPos ? ' (' + NUM.format(semPos) + ' sem posição no mapa)' : '');
+    }
+
+    // Itens do mapa: precisão cep/bairro = 1 anel por interessado; precisão cidade = 1 anel por cidade com a contagem (posição grosseira).
+    function gmapInteressadosPreparar() {
+        var itens = [], porCidade = {}, semPos = 0;
+        gmap.int.linhas.forEach(function (r) {
+            var lat = Number(r.lat), lng = Number(r.lng);
+            if (r.lat == null || r.lng == null || !geoCoordValida(lat, lng)) { semPos++; return; }
+            if (r.precisao === 'cidade') {
+                var k = String(r.cidade || '').toLowerCase() + '|' + String(r.uf || '');
+                var g = porCidade[k];
+                if (!g) { g = porCidade[k] = { prec: 'cidade', lat: lat, lng: lng, rs: [] }; itens.push(g); }
+                g.rs.push(r);
+            } else itens.push({ prec: r.precisao === 'bairro' ? 'bairro' : 'cep', lat: lat, lng: lng, rs: [r] });
+        });
+        gmap.int.itens = itens; gmap.int.semPos = semPos;
+    }
+
+    function gmapAnelSvg(prec, n) {
+        var d = prec === 'cidade' ? 38 : prec === 'bairro' ? 28 : 22, c = d / 2;
+        return '<svg class="adm-anel adm-anel-' + prec + '" width="' + d + '" height="' + d + '" viewBox="0 0 ' + d + ' ' + d + '" aria-hidden="true" focusable="false">' +
+            '<circle cx="' + c + '" cy="' + c + '" r="' + (c - 2.5) + '"/>' + (n > 1 ? '<text x="' + c + '" y="' + (c + 4) + '" text-anchor="middle">' + (n > 99 ? '99+' : n) + '</text>' : '') + '</svg>';
+    }
+    function gmapIntLinha(r) {
+        return esc(GMAP_ORIGEM_ROT[r.origem] || r.origem || '—') + ' · último contato ' + esc(gmapDataBr(r.ultimo_contato)) +
+            ' · ' + NUM.format(r.contatos || 1) + (Number(r.contatos) === 1 ? ' contato' : ' contatos') +
+            (r.origem === 'pedido_site' && Number(r.valor_centavos) > 0 ? ' · pedido ' + esc(brl(Number(r.valor_centavos))) : '');
+    }
+    function gmapPopupInteressado(it) {
+        var rodape = '<div style="margin-top:.5rem;padding:.4rem .5rem;border:1px dashed var(--adm-borda);border-radius:.4rem">' + esc(GMAP_INT_TEXTO) + '</div>';
+        if (it.rs.length === 1) {
+            var r = it.rs[0], local = [r.bairro, r.cidade].filter(Boolean).join(', ') + (r.uf ? '/' + r.uf : '');
+            return '<strong>' + esc(r.nome || '(sem nome)') + '</strong>' + (r.documento_mascarado ? ' <span class="text-xs">' + esc(r.documento_mascarado) + '</span>' : '') + '<br>' +
+                esc(local || '—') + '<br>Origem: ' + esc(GMAP_ORIGEM_ROT[r.origem] || r.origem || '—') + '<br>' +
+                'Último contato: ' + esc(gmapDataBr(r.ultimo_contato)) + '<br>Contatos: ' + NUM.format(r.contatos || 1) +
+                (r.ultimo_status ? '<br>Situação: ' + esc(String(r.ultimo_status).replace(/_/g, ' ')) : '') +
+                (r.origem === 'pedido_site' && Number(r.valor_centavos) > 0 ? '<br>Valor do pedido do site: ' + esc(brl(Number(r.valor_centavos))) : '') +
+                '<br><em>' + esc(GMAP_PREC_INT[it.prec]) + '</em>' + rodape;
+        }
+        var r0 = it.rs[0];
+        return '<strong>' + NUM.format(it.rs.length) + ' interessados em ' + esc((r0.cidade || '—') + (r0.uf ? '/' + r0.uf : '')) + '</strong><br><em>' + esc(GMAP_PREC_INT.cidade) + '</em>' +
+            '<ul style="margin:.4rem 0 0;padding-left:1rem;list-style:disc">' + it.rs.slice(0, GMAP_INT_MAX_LISTA).map(function (r) {
+                return '<li><strong>' + esc(r.nome || '(sem nome)') + '</strong><br>' + gmapIntLinha(r) + '</li>';
+            }).join('') + '</ul>' +
+            (it.rs.length > GMAP_INT_MAX_LISTA ? '<p class="text-xs mt-1">+ ' + NUM.format(it.rs.length - GMAP_INT_MAX_LISTA) + ' outros nesta cidade</p>' : '') + rodape;
+    }
+    function gmapIntCriar() {
+        if (!mapaClientes) return;
+        if (gmap.int.camada) { try { mapaClientes.removeLayer(gmap.int.camada); } catch (e) { /* mapa novo */ } }
+        gmap.int.camada = L.layerGroup();   // só entra no mapa com o filtro "Interessados" (gmapIntMostrar)
+        (gmap.int.itens || []).forEach(function (it) {
+            var d = it.prec === 'cidade' ? 38 : it.prec === 'bairro' ? 28 : 22;
+            var nome = it.rs.length === 1 ? (it.rs[0].nome || '(sem nome)') : NUM.format(it.rs.length) + ' interessados em ' + (it.rs[0].cidade || '—');
+            var mk = L.marker([it.lat, it.lng], { icon: L.divIcon({ className: 'adm-gota adm-anel-ic', html: gmapAnelSvg(it.prec, it.rs.length), iconSize: [d, d], iconAnchor: [d / 2, d / 2], popupAnchor: [0, -d / 2] }),
+                keyboard: true, riseOnHover: true, title: 'Interessado: ' + nome + ' — ' + GMAP_PREC_INT[it.prec].toLowerCase() });
+            mk.bindPopup(function () { return gmapPopupInteressado(it); }, { maxHeight: 260 });
+            mk.addTo(gmap.int.camada);
+        });
+    }
+    function gmapIntMostrar() {
+        if (!mapaClientes || !gmap.int.camada) return;
+        var quer = gmap.filtro === 'interessados', tem = mapaClientes.hasLayer(gmap.int.camada);
+        if (quer && !tem) gmap.int.camada.addTo(mapaClientes); else if (!quer && tem) mapaClientes.removeLayer(gmap.int.camada);
+    }
+    function gmapIntEnquadrar() {
+        var pts = (gmap.int.itens || []).map(function (it) { return [it.lat, it.lng]; });
+        if (mapaClientes && pts.length) { try { mapaClientes.fitBounds(pts, { padding: [40, 40], maxZoom: 12, animate: false }); } catch (e) { /* mapa escondido */ } }
+    }
+
+    // ---- qualidade do endereço (037): texto legível no popup + lista "Corrigir no ERP" ----
+    var GMAP_MOTIVOS = {
+        cnpj_invalido: 'CNPJ com dígito verificador inválido', sem_cep: 'Cadastro sem CEP', cep_invalido: 'CEP inválido',
+        cep_fora_da_uf: 'CEP não pertence ao estado do cadastro', cep_generico: 'CEP genérico (da cidade, não da rua)',
+        cep_compartilhado: 'CEP compartilhado por muitos clientes', sem_logradouro: 'Rua vazia ou fictícia no cadastro',
+        nao_localizado: 'Endereço não encontrado no mapa', endereco_mudou: 'Endereço mudou depois de o pino ser marcado',
+        posicao_por_bairro: 'Posição só pelo centro do bairro'
+    };
+    var GMAP_QUAL_ROT = { confiavel: 'Endereço confiável', aproximado: 'Endereço aproximado', sem_localizacao: 'Sem localização confiável' };
+    function gmapMotivosTxt(m) { return (Array.isArray(m) ? m : []).map(function (k) { return GMAP_MOTIVOS[k] || String(k).replace(/_/g, ' '); }); }
+    function gmapQualidadeHtml(l) {
+        var mot = gmapMotivosTxt(l.motivos);
+        if (!l.qualidade || (l.qualidade === 'confiavel' && !mot.length)) return '';
+        var cor = l.qualidade === 'sem_localizacao' ? 'var(--adm-ruim)' : 'var(--adm-atencao)';
+        return '<div style="margin:.35rem 0;padding:.35rem .5rem;border-left:3px solid ' + cor + ';background:var(--adm-neutro-fundo)"><strong>' +
+            esc(GMAP_QUAL_ROT[l.qualidade] || l.qualidade) + '</strong>' +
+            (mot.length ? '<ul style="margin:.2rem 0 0;padding-left:1rem;list-style:disc">' + mot.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul>' : '') + '</div>';
+    }
+    function gmapCarregarCorrigir() {
+        if (papel !== 'admin') return;
+        vendPaginar(function () { return sb.rpc('solidcon_geo_corrigir_erp'); }, 5000).then(function (r) {
+            if (r.error) { gmap.cor.ausente = gmapAusente(r.error); gmap.cor.erro = gmap.cor.ausente ? null : String(r.error.message || r.error); gmap.cor.carregado = false; gmap.cor.linhas = []; }
+            else { gmap.cor.ausente = false; gmap.cor.erro = null; gmap.cor.carregado = true; gmap.cor.linhas = r.data || []; }
+            gmapCorrigirUI();
+        }, function () { gmap.cor.carregado = false; gmapCorrigirUI(); });
+    }
+    function gmapCorrigirUI() {
+        var alvo = $('#gmap-corrigir');
+        if (!alvo) return;
+        var L_ = gmap.cor.linhas;
+        if (!gmap.cor.carregado || !L_.length) { alvo.innerHTML = ''; return; }
+        var lim = 200;
+        alvo.innerHTML = '<details class="adm-card p-5 mb-5"><summary class="font-bold" style="cursor:pointer">Corrigir no ERP (' + NUM.format(L_.length) + ')</summary>' +
+            '<p class="text-xs my-3" style="color:var(--adm-tinta-3)">Cadastros com endereço ou CNPJ que impedem uma posição confiável. A correção é feita no SOLIDCON; depois da próxima sincronização o pino melhora. Este painel só lê.</p>' +
+            '<div class="overflow-x-auto"><table class="adm-tabela" aria-label="Clientes para corrigir no ERP"><thead><tr><th>Cliente</th><th>Local</th><th>Endereço no cadastro</th><th>O que corrigir</th></tr></thead><tbody>' +
+            L_.slice(0, lim).map(function (c) {
+                var local = [c.bairro, c.cidade].filter(Boolean).join(', ') + (c.estado ? '/' + c.estado : '');
+                var end = [[c.logradouro, c.numero].filter(Boolean).join(', '), c.cep ? 'CEP ' + c.cep : ''].filter(Boolean).join(' · ');
+                var mot = gmapMotivosTxt(c.motivos);
+                return '<tr><td>' + esc(c.nome || '(sem nome)') + '</td><td>' + esc(local || '—') + '</td><td>' + esc(end || '—') + '</td><td>' +
+                    (mot.length ? mot.map(esc).join('; ') : esc(GMAP_QUAL_ROT[c.qualidade] || '—')) + '</td></tr>';
+            }).join('') + '</tbody></table></div>' +
+            (L_.length > lim ? '<p class="text-xs mt-2" style="color:var(--adm-tinta-3)">Mostrando os ' + lim + ' primeiros de ' + NUM.format(L_.length) + '.</p>' : '') + '</details>';
+    }
+
+    function gmapGotaSvg(faixa, parou, aprox) {
+        return '<svg class="adm-gota-svg adm-gota-' + faixa + (aprox ? ' adm-gota-aprox' : '') + '" viewBox="0 0 30 36" aria-hidden="true" focusable="false">' +
+            '<path class="adm-gota-corpo" d="M13 34C13 34 2 21.5 2 13a11 11 0 0 1 22 0c0 8.5-11 21-11 21z"/><circle class="adm-gota-furo" cx="13" cy="13" r="4"/>' +
+            (parou ? '<circle class="adm-gota-alerta" cx="23" cy="7" r="6.5"/><path class="adm-gota-alerta-marca" d="M23 4v3.4M23 9.6v.1"/>' : '') + '</svg>';
+    }
+    function gmapLegendaHtml() {
+        return '<div class="adm-leg" role="group" aria-label="Legenda do mapa">' +
+            '<span>' + gmapGotaSvg('alta', false, false) + 'Melhores: 20% que mais compraram nos últimos 12 meses</span>' +
+            '<span>' + gmapGotaSvg('media', false, false) + 'Intermediários: 50% do meio</span>' +
+            '<span>' + gmapGotaSvg('base', false, false) + 'Base: 30% de baixo e quem não comprou em 12 meses</span>' +
+            '<span>' + gmapGotaSvg('media', true, false) + 'Selo “!”: parou de comprar (sem comprar há mais de 2× o ritmo dele; mínimo 45 dias)</span>' +
+            '<span>' + gmapGotaSvg('base', false, true) + 'Tracejada: posição aproximada (centro do bairro) ou endereço a conferir no cadastro</span>' +
+            (gmapTemInteressados() ? '<span>' + gmapAnelSvg('cep', 1) + gmapAnelSvg('bairro', 1) + gmapAnelSvg('cidade', 3) + 'Anel: interessou e ainda não comprou (pelo CEP, bairro ou cidade; quanto maior e mais fraco, menos preciso)</span>' : '') + '</div>';
+    }
+    function gmapIcone(l) {
+        return L.divIcon({ className: 'adm-gota', html: gmapGotaSvg(l._faixa, l._parou, l.precisao === 'bairro' || l.qualidade === 'aproximado' || l.qualidade === 'sem_localizacao'), iconSize: [30, 36], iconAnchor: [13, 34], popupAnchor: [0, -32] });
+    }
+
+    // Visível na linha do tempo = já "entrou" (ordem cronológica da 1ª compra < cursor); filtro = chips Todos/Ativos/Pararam.
+    function gmapVisivel(l) { return l._rank !== undefined && l._rank < gmap.cur; }
+    function gmapPassaFiltro(l) { return gmap.filtro === 'pararam' ? l._parou : gmap.filtro === 'ativos' ? !l._parou : gmap.filtro === 'todos'; }
+
+    // Reposiciona os pinos para o cursor atual (sem refazer o mapa). animar = pinos que entram agora "caem" (até 40 por vez,
+    // sem movimento reduzido). Marcadores são criados uma vez e só entram/saem da camada.
+    function gmapPinosAtualizar(animar) {
+        if (!gmapAtivo() || !mapaClientes || !gmap.camada) return;
+        var i = gmap.idx, n = 0, semPos = 0, total = 0, exib = 0, entram = [];
+        gmap.linhas.forEach(function (l) {
+            var vis = gmapVisivel(l);
+            if (vis) { n++; total += l._ac[i]; }
+            var mk = gmap.marcadores[l.documento];
+            if (!mk) { if (vis) semPos++; return; }
+            var mostra = vis && gmapPassaFiltro(l), tem = gmap.camada.hasLayer(mk);
+            if (mostra) { exib++; if (!tem) { gmap.camada.addLayer(mk); entram.push(mk); } }
+            else if (tem) gmap.camada.removeLayer(mk);
+        });
+        if (animar && !gmapReduzMov() && entram.length && entram.length <= 40) {
+            entram.forEach(function (mk) { var el = mk.getElement(), s = el && el.firstChild; if (s && s.classList) s.classList.add('is-cai'); });
+        }
+        var rot = $('#geo-tl-rotulo'), u = gmap.cur > 0 ? gmap.ordem[gmap.cur - 1] : null;
+        gmapIntMostrar();
+        if (rot && gmap.filtro === 'interessados') {
+            var ni = gmap.int.linhas.length - gmap.int.semPos;
+            rot.textContent = 'Interessados que ainda não compraram: ' + NUM.format(gmap.int.linhas.length) +
+                (gmap.int.semPos ? ' (' + NUM.format(gmap.int.semPos) + ' sem posição no mapa)' : '') + (ni > 0 ? '' : ' — nenhum com posição');
+        } else if (rot) rot.textContent = (gmap.tocando && u ? 'Entrou em ' + cmpData(String(u.primeira_compra).slice(0, 10)) : 'Até ' + gmapMesRot(gmap.meses[i])) +
+            ': ' + NUM.format(n) + (n === 1 ? ' cliente' : ' clientes') + ' · ' + brl(total) +
+            (gmap.filtro !== 'todos' ? ' · mostrando ' + NUM.format(exib) : '') + (semPos ? ' (' + NUM.format(semPos) + ' sem posição no mapa)' : '');
         var barra = $('#geo-tl-barra'); if (barra && Number(barra.value) !== i) barra.value = String(i);
-        gmapResumoTempo();
+        var agora = Date.now();
+        if (!gmap.tocando || agora - gmap.tResumo > 500) { gmap.tResumo = agora; gmapResumoTempo(); }
     }
 
     function gmapCriarPinos() {
@@ -4840,11 +5092,17 @@
             if (l.lat == null || l.lng == null || l.pino_desatualizado) return;
             var lat = Number(l.lat), lng = Number(l.lng);
             if (!geoCoordValida(lat, lng)) return;
-            var mk = L.circleMarker([lat, lng], { radius: 5 });
+            var mk = L.marker([lat, lng], { icon: gmapIcone(l), keyboard: true, riseOnHover: true, zIndexOffset: l._faixa === 'alta' ? 200 : l._faixa === 'media' ? 100 : 0,
+                title: (l.nome || '(sem nome)') + ' — ' + GMAP_FAIXA_ROT[l._faixa] + (l._parou ? ' — parou de comprar' : '') });
             mk.bindPopup(function () { return gmapPopup(l); });
             gmap.marcadores[l.documento] = mk; pts.push([lat, lng]);
         });
-        if (pts.length && !geo.ajustou) { mapaClientes.fitBounds(pts, { padding: [30, 30], maxZoom: 12 }); geo.ajustou = true; }
+        if (gmap.int.carregado) { gmapIntCriar(); gmapIntMostrar(); }
+        // Enquadra a região principal: clientes muito longe (outros estados) não podem esmagar o resto; seguem no mapa, é só dar zoom out.
+        var med = function (i) { var v = pts.map(function (p) { return p[i]; }).sort(function (a, b) { return a - b; }); return v[Math.floor(v.length / 2)]; };
+        var m0 = pts.length > 4 ? med(0) : 0, m1 = pts.length > 4 ? med(1) : 0;
+        var perto = pts.length > 4 ? pts.filter(function (p) { return Math.abs(p[0] - m0) < 2.5 && Math.abs(p[1] - m1) < 2.5; }) : pts;
+        mapaAjustarVista(perto.length >= pts.length * 0.6 ? perto : pts);
     }
 
     // ---- totais por região para a data escolhida ----
@@ -4853,7 +5111,7 @@
         if (!alvo || !gmapAtivo()) { if (alvo) alvo.innerHTML = ''; return; }
         var i = gmap.idx, porReg = {}, fora = { n: 0, v: 0, c: 0 };
         gmap.linhas.forEach(function (l) {
-            if (!l._pm || l._pm > gmap.meses[i]) return;
+            if (!gmapVisivel(l)) return;
             if (l._reg === undefined) l._reg = geoClassificar({ bairro: l.bairro, cidade: l.cidade, uf: l.estado }) || null;
             var o = l._reg ? (porReg[l._reg.id] || (porReg[l._reg.id] = { n: 0, v: 0, c: 0 })) : fora;
             o.n++; o.v += l._ac[i]; o.c += l._cu[i];
@@ -4870,6 +5128,36 @@
     }
 
     // ---- controles: linha do tempo + localizar ----
+    function gmapChipsHtml() {
+        var int = gmap.int, nInt = int.linhas.length;
+        var estadoInt = int.carregado ? ' (' + NUM.format(nInt) + ')' : int.carregando ? ' (carregando…)' : int.erro ? ' (indisponível)' : ' (em breve)';
+        var desInt = !int.carregado;
+        return [['todos', 'Todos'], ['ativos', 'Ativos'], ['pararam', 'Pararam (' + NUM.format(gmap.nParou) + ')'], ['interessados', 'Interessados']].map(function (c) {
+            var ehInt = c[0] === 'interessados', des = ehInt && desInt, on = gmap.filtro === c[0];
+            return '<button type="button" class="adm-chip' + (on ? ' is-ativo' : '') + '" data-gmap-filtro="' + c[0] + '" aria-pressed="' + on + '"' +
+                (des ? ' disabled' + (int.erro ? ' title="' + esc(int.erro) + '"' : int.ausente || !int.carregando ? ' title="Em breve: depende da migração 037"' : '') : '') + '>' +
+                c[1] + (ehInt ? '<span style="font-weight:400;margin-left:.3rem">' + estadoInt + '</span>' : '') + '</button>';
+        }).join('');
+    }
+    // Atualiza só os chips e a legenda (sem refazer o mapa) quando os interessados terminam de carregar.
+    function gmapChipsUI() {
+        var g = $('#gmap-chips');
+        if (g) { g.innerHTML = gmapChipsHtml(); gmapLigarChips(); }
+        var leg = document.querySelector('#geo-cartao-mapa .adm-leg');
+        if (leg) leg.outerHTML = gmapLegendaHtml();
+    }
+    function gmapLigarChips() {
+        document.querySelectorAll('[data-gmap-filtro]').forEach(function (c) {
+            c.addEventListener('click', function () {
+                gmap.filtro = c.getAttribute('data-gmap-filtro');
+                document.querySelectorAll('[data-gmap-filtro]').forEach(function (o) {
+                    var on = o === c; o.classList.toggle('is-ativo', on); o.setAttribute('aria-pressed', String(on));
+                });
+                gmapPinosAtualizar(false);
+                if (gmap.filtro === 'interessados') gmapIntEnquadrar();
+            });
+        });
+    }
     function gmapControlesHtml() {
         if (papel !== 'admin') return '';
         var cab = '<div class="flex items-center gap-2 mb-2">' + SELO_ERP + '<p class="font-bold text-sm">Expansão: um pino por cliente CNPJ</p></div>';
@@ -4879,11 +5167,15 @@
             '<button type="button" class="adm-botao-fantasma" id="gmap-tentar">Tentar de novo</button></p>';
         if (!gmap.carregado) return '';
         if (!gmap.linhas.length || !gmap.meses.length) return cab + cartaoVazio('Nenhum cliente CNPJ com compras no mapa ainda', 'Quando houver compras ligadas a clientes CNPJ, os pinos aparecem aqui.', 'erp');
-        var red = gmapReduzMov();
+        var vel = [[1, 'Lenta'], [2, 'Normal'], [3, 'Rápida']].map(function (v) { return '<option value="' + v[0] + '"' + (gmap.vel === v[0] ? ' selected' : '') + '>' + v[1] + '</option>'; }).join('');
         return cab +
+            '<div class="flex items-center flex-wrap gap-2 mb-3" role="group" aria-label="Filtrar clientes no mapa" id="gmap-chips">' + gmapChipsHtml() + '</div>' +
             '<div class="flex items-center flex-wrap gap-3 mb-3">' +
-                '<button type="button" class="adm-botao-fantasma" id="geo-tl-play" aria-label="Reproduzir crescimento"' + (red ? ' disabled title="Reprodução desativada (movimento reduzido): use o controle deslizante"' : '') + '><i class="fa-solid fa-play"></i></button>' +
+                '<button type="button" class="adm-botao-fantasma" id="geo-tl-play" aria-label="Reproduzir crescimento"><i class="fa-solid fa-play" aria-hidden="true"></i></button>' +
                 '<input type="range" id="geo-tl-barra" class="adm-range" min="0" max="' + (gmap.meses.length - 1) + '" step="1" value="' + gmap.idx + '" aria-label="Mês da linha do tempo">' +
+                '<label for="geo-tl-vel" class="adm-tile-rotulo">Velocidade</label>' +
+                '<select id="geo-tl-vel" class="adm-input" style="width:auto;padding:.4rem .7rem">' + vel + '</select>' +
+                '<button type="button" class="adm-botao-fantasma ml-auto" id="geo-tela-cheia" aria-pressed="false"><i class="fa-solid fa-expand" aria-hidden="true"></i><span class="ml-2">Tela cheia</span></button>' +
             '</div>' +
             '<p class="text-sm font-bold mb-3" id="geo-tl-rotulo" role="status" aria-live="polite"></p>' +
             '<div class="flex items-center flex-wrap gap-3 mb-3">' +
@@ -4897,33 +5189,95 @@
     function gmapLigar() {
         var t = $('#gmap-tentar'); if (t) t.addEventListener('click', carregarMapaClientes);
         var barra = $('#geo-tl-barra');
-        if (barra) barra.addEventListener('input', function () { gmapParar(); gmap.idx = Number(barra.value) || 0; gmap.fixouIdx = true; gmapPinosAtualizar(); });
+        if (barra) barra.addEventListener('input', function () {
+            gmapParar(); gmap.idx = Number(barra.value) || 0; gmap.cur = gmap.cumMes[gmap.idx] || 0; gmap.fixouIdx = true; gmapPinosAtualizar(true);
+        });
         var play = $('#geo-tl-play');
         if (play) play.addEventListener('click', function () { if (gmap.tocando) gmapParar(); else gmapTocar(); });
+        var vel = $('#geo-tl-vel'); if (vel) vel.addEventListener('change', function () { gmap.vel = Number(vel.value) || 2; });
+        gmapLigarChips();
+        var tc = $('#geo-tela-cheia'); if (tc) tc.addEventListener('click', gmapTelaCheiaAlternar);
         var b = $('#geo-pend-btn'); if (b) b.addEventListener('click', gmapGeocodificar);
         var p = $('#geo-pend-parar'); if (p) p.addEventListener('click', function () { gmap.run.parar = true; if (geo.abortar) { try { geo.abortar(); } catch (e) { /* já encerrada */ } } gmapUI(); });
         gmapUI();
     }
 
+    // Crescimento: um pino por vez, na ordem da 1ª compra (rAF, sem timer). Velocidade em pinos/s (GMAP_VEL); com movimento
+    // reduzido os pinos aparecem sem cair (gmapPinosAtualizar), no mesmo ritmo.
     function gmapTocar() {
-        if (gmapReduzMov() || !gmapAtivo()) return;
-        if (gmap.idx >= gmap.meses.length - 1) gmap.idx = 0;
+        if (!gmapAtivo() || !gmap.ordem.length) return;
+        if (gmap.cur >= gmap.ordem.length) { gmap.cur = 0; gmap.idx = 0; }
         gmap.tocando = true; gmap.fixouIdx = true; gmapUIPlay();
-        gmap.timer = setInterval(function () {
+        var ultimo = performance.now(), acc = 0;
+        function passo(t) {
+            if (!gmap.tocando) return;
             if (!gmapAtivo() || !$('#geo-tl-barra') || !usuario || papel !== 'admin' || !secaoVisivel('regioes')) { gmapParar(); return; }
-            if (gmap.idx >= gmap.meses.length - 1) { gmapParar(); return; }
-            gmap.idx++; gmapPinosAtualizar();
-        }, GMAP_PASSO_MS);
-        gmapPinosAtualizar();
+            acc += (t - ultimo) * (GMAP_VEL[gmap.vel] || 25) / 1000; ultimo = t;
+            if (acc >= 1) {
+                var k = Math.floor(acc); acc -= k;
+                gmap.cur = Math.min(gmap.ordem.length, gmap.cur + k);
+                var u = gmap.ordem[gmap.cur - 1]; if (u) gmap.idx = u._mi;
+                gmapPinosAtualizar(true);
+                if (gmap.cur >= gmap.ordem.length) { gmap.idx = gmap.meses.length - 1; gmapParar(); return; }   // terminou: mostra o total de hoje
+            }
+            gmap.raf = requestAnimationFrame(passo);
+        }
+        gmapPinosAtualizar(false);
+        gmap.raf = requestAnimationFrame(passo);
     }
     function gmapParar() {
+        if (gmap.raf) { cancelAnimationFrame(gmap.raf); gmap.raf = 0; }
         if (gmap.timer) { clearInterval(gmap.timer); gmap.timer = null; }
-        if (gmap.tocando) { gmap.tocando = false; gmapUIPlay(); }
+        if (gmap.tocando) { gmap.tocando = false; gmapUIPlay(); gmapPinosAtualizar(false); }
     }
     function gmapUIPlay() {
-        var p = $('#geo-tl-play');
-        if (p) { p.innerHTML = '<i class="fa-solid ' + (gmap.tocando ? 'fa-pause' : 'fa-play') + '"></i>'; p.setAttribute('aria-label', gmap.tocando ? 'Pausar' : 'Reproduzir crescimento'); }
+        var p = $('#geo-tl-play'), r = $('#geo-tl-rotulo');
+        if (p) { p.innerHTML = '<i class="fa-solid ' + (gmap.tocando ? 'fa-pause' : 'fa-play') + '" aria-hidden="true"></i>'; p.setAttribute('aria-label', gmap.tocando ? 'Pausar' : 'Reproduzir crescimento'); }
+        if (r) r.setAttribute('aria-live', gmap.tocando ? 'off' : 'polite');   // não narra 25 pinos por segundo
     }
+
+    // ---- tela cheia: Fullscreen API; sem suporte (ou recusada) vira sobreposição fixa. Esc sai; foco volta ao botão. ----
+    function gmapTelaCheiaUI(ativa) {
+        var b = $('#geo-tela-cheia');
+        if (!b) return;
+        b.setAttribute('aria-pressed', String(ativa));
+        b.innerHTML = '<i class="fa-solid ' + (ativa ? 'fa-compress' : 'fa-expand') + '" aria-hidden="true"></i><span class="ml-2">' + (ativa ? 'Sair da tela cheia' : 'Tela cheia') + '</span>';
+    }
+    function gmapTelaCheiaEsc(ev) { if (ev.key === 'Escape') gmapTelaCheiaSair(); }
+    function gmapTelaCheiaFim() {
+        var el = $('#geo-cartao-mapa');
+        document.removeEventListener('keydown', gmapTelaCheiaEsc);
+        if (!el || !el.classList.contains('is-tela-cheia')) return;
+        if (el.classList.contains('is-sobreposto')) document.body.style.overflow = '';
+        el.classList.remove('is-tela-cheia', 'is-sobreposto');
+        gmapTelaCheiaUI(false);
+        if (mapaClientes) setTimeout(function () { if (mapaClientes) mapaClientes.invalidateSize({ animate: false }); }, 50);
+        var b = $('#geo-tela-cheia'); if (b) b.focus();
+    }
+    function gmapTelaCheiaSair() {
+        if (document.fullscreenElement && document.exitFullscreen) { document.exitFullscreen().then(null, gmapTelaCheiaFim); } else gmapTelaCheiaFim();
+    }
+    function gmapTelaCheiaAlternar() {
+        var el = $('#geo-cartao-mapa');
+        if (!el) return;
+        if (el.classList.contains('is-tela-cheia')) { gmapTelaCheiaSair(); return; }
+        function entrar(sobreposto) {
+            el.classList.add('is-tela-cheia');
+            if (sobreposto) { el.classList.add('is-sobreposto'); document.body.style.overflow = 'hidden'; document.addEventListener('keydown', gmapTelaCheiaEsc); }
+            gmapTelaCheiaUI(true);
+            if (mapaClientes) setTimeout(function () { if (mapaClientes) mapaClientes.invalidateSize({ animate: false }); }, 50);
+        }
+        var feito = false;   // a promessa da Fullscreen API pode nunca resolver (webviews): sem resposta em 600ms, usa a sobreposição
+        function uma(sobreposto) { if (feito) return; feito = true; entrar(sobreposto); }
+        if (el.requestFullscreen) {
+            el.requestFullscreen().then(function () { uma(false); }, function () { uma(true); });
+            setTimeout(function () { if (!feito && !document.fullscreenElement) uma(true); }, 600);
+        } else uma(true);
+    }
+    document.addEventListener('fullscreenchange', function () {
+        var el = $('#geo-cartao-mapa');
+        if (el && document.fullscreenElement !== el && el.classList.contains('is-tela-cheia') && !el.classList.contains('is-sobreposto')) gmapTelaCheiaFim();
+    });
 
     function gmapUI() {
         var R = gmap.run, b = $('#geo-pend-btn'), p = $('#geo-pend-parar'), pr = $('#geo-pend-prog'), st = $('#geo-pend-status');
@@ -4965,12 +5319,37 @@
             geoMarcarInicio();
         });
     }
-    function gmapDentro(p, x) {
-        if (String(p.estado || '').toUpperCase() !== 'RJ') return true;
-        return x.lat >= -23.5 && x.lat <= -20.6 && x.lng >= -45 && x.lng <= -40.8;
+    // ---- validação geográfica (prevenção de pino em lugar errado; migração 037) ----
+    // Toda busca vai limitada à caixa do município (viewbox + bounded=1) e o resultado só vale se o Nominatim disser
+    // que fica na MESMA cidade do ERP (address.city/town/village/municipality) e dentro dessa caixa. Sem cache em
+    // localStorage (o banco é o cache); município e bairro só são memorizados durante a rodada, e só se validados.
+    var GMAP_UF_NOME = { AC: 'Acre', AL: 'Alagoas', AP: 'Amapá', AM: 'Amazonas', BA: 'Bahia', CE: 'Ceará', DF: 'Distrito Federal',
+        ES: 'Espírito Santo', GO: 'Goiás', MA: 'Maranhão', MT: 'Mato Grosso', MS: 'Mato Grosso do Sul', MG: 'Minas Gerais', PA: 'Pará',
+        PB: 'Paraíba', PR: 'Paraná', PE: 'Pernambuco', PI: 'Piauí', RJ: 'Rio de Janeiro', RN: 'Rio Grande do Norte',
+        RS: 'Rio Grande do Sul', RO: 'Rondônia', RR: 'Roraima', SC: 'Santa Catarina', SP: 'São Paulo', SE: 'Sergipe', TO: 'Tocantins' };
+    var GMAP_TIPO_VIA = /^(rua|r|avenida|av|travessa|tv|trav|estrada|estr|est|praca|pca|alameda|al|rodovia|rod|largo|lgo|ladeira|ld|beco|via|caminho|servidao|vila|vl)\s+/;
+    function gmapNormVia(s) { return geoNorm(s).replace(GMAP_TIPO_VIA, ''); }
+    function gmapCidadeBate(p, a) {
+        var alvo = geoNorm(p.cidade);
+        return !!alvo && [a.city, a.town, a.village, a.municipality].some(function (c) { return !!c && geoNorm(c) === alvo; });
     }
-    // Resolve: {lat,lng} | null (nada achado) | undefined (falha de rede: não grava, fica pendente)
-    function gmapNominatim(params, exigeRua, sess) {
+    function gmapNoMunicipio(p, x, mun) {
+        var b = mun.bbox; // [sul, norte, oeste, leste]
+        return x.lat >= b[0] && x.lat <= b[1] && x.lng >= b[2] && x.lng <= b[3] && gmapCidadeBate(p, x.address);
+    }
+    function gmapRuaBate(p, a) {
+        var r = gmapNormVia(a.road), l = gmapNormVia(p.logradouro);
+        return !!r && !!l && (r === l || (l.length >= 4 && r.indexOf(l) >= 0) || (r.length >= 4 && l.indexOf(r) >= 0));
+    }
+    function gmapBairroBate(p, x) {
+        var a = x.address, alvo = geoNorm(p.bairro);
+        return !!alvo && [a.suburb, a.neighbourhood, a.quarter, a.city_district, a.borough, x.name].some(function (c) { return !!c && geoNorm(c) === alvo; });
+    }
+    // CEP que serve para localizar: 8 dígitos, sem dígitos repetidos e não genérico de cidade ("…000" cai no centro da cidade).
+    function gmapCepUtil(cep) { return /^\d{8}$/.test(cep) && !/^(\d)\1{7}$/.test(cep) && !/000$/.test(cep); }
+
+    // Resolve: {lat,lng,address,name,bbox} | null (nada achado) | undefined (falha de rede: não grava, fica pendente)
+    function gmapNominatim(params, sess) {
         var R = gmap.run;
         return geoEsperar(sess).then(function () {
             return geoBuscar('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=br&addressdetails=1&' + params);
@@ -4979,8 +5358,9 @@
             var x = res && res[0]; if (!x) return null;
             var lat = Number(x.lat), lng = Number(x.lon);
             if (!geoCoordValida(lat, lng)) return null;
-            if (exigeRua && !(x.address && x.address.road)) return null;
-            return { lat: lat, lng: lng };
+            var bb = Array.isArray(x.boundingbox) ? x.boundingbox.map(Number) : [];
+            return { lat: lat, lng: lng, address: (x.address && typeof x.address === 'object') ? x.address : {}, name: x.name || '',
+                     bbox: bb.length === 4 && bb.every(isFinite) ? bb : null };
         }, function (e) {
             if (e && e.cancelado) return undefined; // parado antes de consultar: não conta como falha
             var m = String(e && e.message || '');
@@ -4993,48 +5373,66 @@
     }
     function gmapEnc(s) { return encodeURIComponent(String(s == null ? '' : s).trim()); }
 
+    // Caixa do município: 1 consulta por cidade por rodada. null = cidade/UF não reconhecida (cliente fica sem localização
+    // e aparece em "Corrigir no ERP"); undefined = falha de rede.
+    function gmapMunicipio(p, sess) {
+        var R = gmap.run, uf = String(p.estado || '').toUpperCase(), estado = GMAP_UF_NOME[uf], k = geoNorm(p.cidade) + '|' + uf;
+        if (!geoNorm(p.cidade) || !estado) return Promise.resolve(null);
+        var memo = R.municipios || (R.municipios = {});
+        if (k in memo) return Promise.resolve(memo[k]);
+        return gmapNominatim('city=' + gmapEnc(p.cidade) + '&state=' + gmapEnc(estado) + '&featureType=settlement', sess).then(function (x) {
+            if (x === undefined) return undefined;
+            var ok = x && x.bbox && gmapCidadeBate(p, x.address) && (!x.address.state || geoNorm(x.address.state) === geoNorm(estado));
+            memo[k] = ok ? { bbox: x.bbox, viewbox: [x.bbox[2], x.bbox[1], x.bbox[3], x.bbox[0]].join(',') } : null;
+            return memo[k];
+        });
+    }
+
+    // Precisão: 'endereco' = rua bate + cidade bate; 'cep' = CEP útil e o Nominatim devolve o MESMO CEP na cidade;
+    // 'bairro' = bairro bate na cidade. Nenhum: 'nao_encontrado' (o cliente vai para "Corrigir no ERP").
     function gmapResolver(p, sess) {
         var R = gmap.run, base = { documento: p.documento, fonte: 'nominatim', chave_endereco: p.chave_endereco };
         function achou(x, prec) { return { documento: base.documento, lat: Math.round(x.lat * 1e6) / 1e6, lng: Math.round(x.lng * 1e6) / 1e6, precisao: prec, fonte: 'nominatim', chave_endereco: base.chave_endereco }; }
-        var cidade = '&city=' + gmapEnc(p.cidade) + '&state=' + gmapEnc(p.estado);
-        var cep = docDigitos(p.cep);
-        function etapa1() {
-            if (R.parar || !String(p.logradouro || '').trim()) return Promise.resolve(null);
-            var rua = (String(p.numero || '').trim() ? String(p.numero).trim() + ' ' : '') + String(p.logradouro).trim();
-            return gmapNominatim('street=' + gmapEnc(rua) + cidade + (cep.length === 8 ? '&postalcode=' + cep : ''), true, sess).then(function (x) {
-                return x === undefined ? undefined : (x && gmapDentro(p, x) ? achou(x, 'endereco') : null);
-            });
-        }
-        function etapa2() {
-            if (R.parar || cep.length !== 8) return Promise.resolve(null);
-            return gmapNominatim('postalcode=' + cep + cidade, false, sess).then(function (x) {
-                return x === undefined ? undefined : (x && gmapDentro(p, x) ? achou(x, 'cep') : null);
-            });
-        }
-        function etapa3() {
-            if (R.parar || !String(p.bairro || '').trim()) return Promise.resolve(null);
-            var chave = geoNorm(p.bairro) + '|' + geoNorm(p.cidade) + '|' + String(p.estado || '').toUpperCase(), c = geoLerCache()[chave];
-            if (c && geoCoordValida(c.lat, c.lng) && gmapDentro(p, c)) return Promise.resolve(achou(c, 'bairro')); // cache local de bairros: sem requisição
-            return gmapNominatim('q=' + gmapEnc([p.bairro, p.cidade, p.estado, 'Brasil'].filter(Boolean).join(', ')), false, sess).then(function (x) {
-                if (x === undefined) return undefined;
-                if (x && gmapDentro(p, x)) {
-                    var cc = geoLerCache(); cc[chave] = { lat: x.lat, lng: x.lng, ts: Date.now() }; geoGravarCache(cc);
-                    return achou(x, 'bairro');
-                }
-                return null;
-            });
-        }
-        return etapa1().then(function (r) {
-            if (r === undefined) return null;          // falha de rede: segue sem gravar
-            if (r) return r;
-            return etapa2().then(function (r2) {
-                if (r2 === undefined) return null;
-                if (r2) return r2;
-                return etapa3().then(function (r3) {
-                    if (r3 === undefined) return null;
-                    if (r3) return r3;
-                    if (R.parar) return null;
-                    return { documento: base.documento, lat: null, lng: null, precisao: 'nao_encontrado', fonte: 'nominatim', chave_endereco: base.chave_endereco };
+        function naoAchou() { return { documento: base.documento, lat: null, lng: null, precisao: 'nao_encontrado', fonte: 'nominatim', chave_endereco: base.chave_endereco }; }
+        var uf = String(p.estado || '').toUpperCase(), estado = GMAP_UF_NOME[uf] || '', cep = docDigitos(p.cep);
+        return gmapMunicipio(p, sess).then(function (mun) {
+            if (mun === undefined || R.parar) return null;   // falha de rede ou parado: segue sem gravar
+            if (!mun) return naoAchou();
+            var caixa = '&viewbox=' + mun.viewbox + '&bounded=1', cidade = '&city=' + gmapEnc(p.cidade) + '&state=' + gmapEnc(estado) + caixa;
+            function etapa1() {
+                if (R.parar || !String(p.logradouro || '').trim()) return Promise.resolve(null);
+                var rua = (String(p.numero || '').trim() ? String(p.numero).trim() + ' ' : '') + String(p.logradouro).trim();
+                return gmapNominatim('street=' + gmapEnc(rua) + cidade, sess).then(function (x) {
+                    return x === undefined ? undefined : (x && gmapNoMunicipio(p, x, mun) && gmapRuaBate(p, x.address) ? achou(x, 'endereco') : null);
+                });
+            }
+            function etapa2() {
+                if (R.parar || !gmapCepUtil(cep)) return Promise.resolve(null);
+                return gmapNominatim('postalcode=' + cep + cidade, sess).then(function (x) {
+                    return x === undefined ? undefined : (x && gmapNoMunicipio(p, x, mun) && docDigitos(x.address.postcode) === cep ? achou(x, 'cep') : null);
+                });
+            }
+            function etapa3() {
+                if (R.parar || !String(p.bairro || '').trim()) return Promise.resolve(null);
+                var k = geoNorm(p.bairro) + '|' + geoNorm(p.cidade) + '|' + uf, memo = R.bairros || (R.bairros = {});
+                if (k in memo) return Promise.resolve(memo[k] ? achou(memo[k], 'bairro') : null);
+                return gmapNominatim('q=' + gmapEnc([p.bairro, p.cidade, estado].filter(Boolean).join(', ')) + caixa, sess).then(function (x) {
+                    if (x === undefined) return undefined;
+                    memo[k] = x && gmapNoMunicipio(p, x, mun) && gmapBairroBate(p, x) ? x : null;
+                    return memo[k] ? achou(memo[k], 'bairro') : null;
+                });
+            }
+            return etapa1().then(function (r) {
+                if (r === undefined) return null;          // falha de rede: segue sem gravar
+                if (r) return r;
+                return etapa2().then(function (r2) {
+                    if (r2 === undefined) return null;
+                    if (r2) return r2;
+                    return etapa3().then(function (r3) {
+                        if (r3 === undefined) return null;
+                        if (r3) return r3;
+                        return R.parar ? null : naoAchou();
+                    });
                 });
             });
         });
@@ -5045,7 +5443,7 @@
         if (R.rodando || geo.rodando || papel !== 'admin') return;
         if (!geoTravaOk()) { R.msg = 'Este navegador não permite a trava entre abas (navigator.locks); por segurança a localização não roda aqui.'; gmapUI(); return; }
         var sess = gmap.sessao;
-        R.rodando = true; R.parar = false; R.feitos = 0; R.total = 0; R.gravados = 0; R.ignorados = 0; R.falhas = 0; R.msg = ''; R.descartar = false;
+        R.rodando = true; R.parar = false; R.feitos = 0; R.total = 0; R.gravados = 0; R.ignorados = 0; R.falhas = 0; R.msg = ''; R.descartar = false; R.municipios = {}; R.bairros = {};
         gmapUI();
         navigator.locks.request(GEO_TRAVA, { ifAvailable: true }, function (trava) {
             if (!trava) { R.rodando = false; R.msg = 'Outra aba (ou o mapa por bairro) já está localizando endereços.'; gmapUI(); return null; }
@@ -5649,7 +6047,7 @@
     ];
     var PE_DATA_ETAPA = { aberto: 'dt_pedido', na_carga: 'dt_carga', separando: 'dt_sep_inicio', separado: 'dt_sep_fim', conferido: 'dt_conferencia', saiu: 'dt_saida', atendido: 'dt_atendido' };
     var PE_ROTULO_ETAPA = { aberto: 'Aberto', na_carga: 'Na carga', separando: 'Separando', separado: 'Separado', conferido: 'Conferido', saiu: 'Saiu', atendido: 'Atendido' };
-    var PE_COLS = 'cd_pedido,dt_pedido,etapa,dt_carga,dt_sep_inicio,dt_sep_fim,dt_conferencia,dt_saida,dt_atendido,cliente_tipo,cliente_nome,nr_carga';
+    var PE_COLS = 'cd_pedido,dt_pedido,etapa,dt_carga,dt_sep_inicio,dt_sep_fim,dt_conferencia,dt_saida,dt_atendido,cliente_tipo,cliente_nome,nr_carga,valor_centavos';
     var PE_VELHO_MIN = 30;
     var pe = { carregado: false, carregando: false, erro: null, ausente: false, itens: [], coletado: null, seq: 0 };
     var peOrigem = null, peSegmento = 'aberto';   // peOrigem: null = automático (ERP quando não há pedidos do site)
@@ -5696,6 +6094,15 @@
         var hoje = new Date().toDateString() === d.toDateString();
         return (hoje ? '' : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ' ') + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
     }
+    // valor_centavos null/ausente = sem valor coletado: nada na tela (nunca "R$ 0,00" inventado).
+    function peTemValor(x) { return x.valor_centavos != null && isFinite(Number(x.valor_centavos)); }
+    function peTotalDa(l) { var n = 0, t = 0; l.forEach(function (x) { if (peTemValor(x)) { n++; t += Number(x.valor_centavos); } }); return n ? { t: t, n: n } : null; }
+    function peTotalHtml(l) {
+        var t = peTotalDa(l);
+        if (!t) return '';
+        return '<p class="text-xs px-3 pb-2" style="color:var(--adm-tinta-3)">Total <strong style="color:var(--adm-tinta-2)">' + esc(brl(t.t)) + '</strong>' +
+            (t.n < l.length ? ' <span title="Pedidos sem valor coletado não entram na soma">(' + NUM.format(t.n) + ' de ' + NUM.format(l.length) + ' com valor)</span>' : '') + '</p>';
+    }
     function peCartao(x) {
         var nome = String(x.cliente_tipo) === 'cnpj' && x.cliente_nome ? x.cliente_nome : 'Consumidor final';
         var dEtapa = x[PE_DATA_ETAPA[x.etapa]];
@@ -5703,6 +6110,7 @@
             '<p class="text-sm font-bold adm-nome-2l" title="' + esc(nome) + '">' + esc(nome) + '</p>' +
             '<p class="text-xs mt-0.5" style="color:var(--adm-tinta-3)">Pedido ' + esc(String(x.cd_pedido)) +
                 (x.nr_carga ? ' · carga ' + esc(String(x.nr_carga)) : '') + '</p>' +
+            (peTemValor(x) ? '<p class="text-sm font-bold mt-1">' + esc(brl(Number(x.valor_centavos))) + '</p>' : '') +
             '<p class="text-xs mt-1" style="color:var(--adm-tinta-3)">Feito ' + esc(peHora(x.dt_pedido)) + ' · <strong>' + esc(peHa(x.dt_pedido)) + '</strong></p>' +
             (dEtapa && x.etapa !== 'aberto' ? '<p class="text-xs mt-0.5" style="color:var(--adm-tinta-3)">' + esc(PE_ROTULO_ETAPA[x.etapa] || x.etapa) + ' ' + esc(peHora(dEtapa)) + '</p>' : '') +
         '</div>';
@@ -5737,7 +6145,7 @@
             '<div class="adm-kanban adm-kanban-pe">' +
                 cols.map(function (x) {
                     return '<div class="adm-kanban-coluna' + (peSegmento === x.c.id ? ' is-seg-ativa' : '') + '" data-pe-col="' + x.c.id + '">' +
-                        '<div class="adm-kanban-cabecalho"><span class="adm-kanban-titulo">' + esc(x.c.titulo) + '</span><span class="adm-kanban-contagem">' + x.l.length + '</span></div>' +
+                        '<div class="adm-kanban-cabecalho"><span class="adm-kanban-titulo">' + esc(x.c.titulo) + '</span><span class="adm-kanban-contagem">' + x.l.length + '</span></div>' + peTotalHtml(x.l) +
                         '<div class="adm-kanban-corpo-erp">' + (x.l.length ? x.l.map(peCartao).join('') : cartaoVazio('Nenhum pedido', '', 'erp')) + '</div>' +
                     '</div>';
                 }).join('') +
@@ -5910,7 +6318,7 @@
             '<div class="flex items-start justify-between gap-2">' +
                 '<p class="text-sm font-bold truncate">' + esc(p.razao_social) + '</p>' +
                 '<button type="button" class="shrink-0" data-ver-pedido="' + esc(p.id) + '" ' +
-                    'style="color:var(--adm-tinta-3)" title="Ver detalhes"><i class="fa-regular fa-eye"></i></button>' +
+                    'style="color:var(--adm-tinta-3)" title="Ver detalhes" aria-label="Ver detalhes do pedido de ' + esc(p.razao_social) + '"><i class="fa-regular fa-eye" aria-hidden="true"></i></button>' +
             '</div>' +
             '<p class="text-xs mt-0.5 truncate" style="color:var(--adm-tinta-3)">' +
                 esc((p.cidade || '') + '/' + (p.uf || '')) + '</p>' +
@@ -5981,9 +6389,13 @@
                 var para = corpo.getAttribute('data-coluna');
                 if (de === para) return;
 
-                if (para === 'cancelado' && !window.confirm('Cancelar este pedido?')) return;
+                var cartaoSolto = arrastando;
+                if (para === 'cancelado') {
+                    confirmarAdmin('Cancelar este pedido?', 'Cancelar pedido').then(function (ok) { if (ok) mudarStatus(id, para, cartaoSolto); });
+                    return;
+                }
 
-                mudarStatus(id, para, arrastando);
+                mudarStatus(id, para, cartaoSolto);
             });
         });
     }
@@ -6386,12 +6798,13 @@
             b.addEventListener('click', function (ev) {
                 ev.stopPropagation(); // o botão mora dentro do cartão/linha que abre o modal
                 var novo = b.getAttribute('data-status');
-                if (novo === 'cancelado' && !window.confirm('Cancelar este pedido?')) return;
-                b.disabled = true;
-                mudarStatus(b.getAttribute('data-id'), novo, b);
+                var disparar = function () { b.disabled = true; mudarStatus(b.getAttribute('data-id'), novo, b); };
+                if (novo === 'cancelado') { confirmarAdmin('Cancelar este pedido?', 'Cancelar pedido').then(function (ok) { if (ok) disparar(); }); return; }
+                disparar();
             });
         });
 
+        linhasClicaveis(raiz);
         raiz.querySelectorAll('[data-ver-pedido]').forEach(function (elemento) {
             elemento.addEventListener('click', function (ev) {
                 if (ev.target.closest('button[data-status]')) return; // clique era no botão, não na linha
@@ -6999,6 +7412,7 @@
             }),
             [false, false, false, true, true, true, false]);
 
+        linhasClicaveis(alvo);
         alvo.querySelectorAll('[data-ver-pedido]').forEach(function (elemento) {
             elemento.addEventListener('click', function (ev) {
                 if (ev.target.closest('[data-reenviar-recibo]')) return;
@@ -8058,7 +8472,7 @@
         return true;
     }
 
-    var LGPD_TIPO_ROTULO = { exclusao: 'Exclusão', correcao: 'Correção' };
+    var LGPD_TIPO_ROTULO = { acesso: 'Acesso', exclusao: 'Exclusão', correcao: 'Correção' };
 
     function desenharLgpd() {
         var alvo = $('#painel-lgpd');
@@ -8281,6 +8695,80 @@
                 osc.stop(t0 + 0.2);
             });
         } catch (e) { /* áudio bloqueado pelo navegador: sem áudio, sem erro visível */ }
+    }
+
+    /* ===================================================================
+     * Acessibilidade transversal (admin)
+     * =================================================================== */
+    // Confirmação com foco (substitui window.confirm): mesmo visual do modal do painel, role=alertdialog, foco no "Voltar"
+    // (a ação destrutiva exige escolha deliberada), Tab preso no diálogo, Esc cancela e o foco volta a quem abriu.
+    function confirmarAdmin(pergunta, rotuloOk) {
+        return new Promise(function (resolve) {
+            var anterior = document.activeElement;
+            var fundo = document.createElement('div');
+            fundo.className = 'adm-modal-fundo';
+            fundo.style.zIndex = '1100';
+            fundo.innerHTML = '<div class="adm-modal-painel" style="max-width:26rem" role="alertdialog" aria-modal="true" aria-labelledby="adm-conf-t">' +
+                '<p id="adm-conf-t" class="font-bold mb-5">' + esc(pergunta) + '</p>' +
+                '<div class="flex flex-wrap gap-2 justify-end"><button type="button" class="adm-botao-fantasma" data-conf="nao">Voltar</button>' +
+                '<button type="button" class="adm-botao" data-conf="sim">' + esc(rotuloOk || 'Confirmar') + '</button></div></div>';
+            document.body.appendChild(fundo);
+            window.ScrollLock && window.ScrollLock.acquire('confirmar-admin');
+            var nao = fundo.querySelector('[data-conf="nao"]'), sim = fundo.querySelector('[data-conf="sim"]');
+            function fim(ok) {
+                document.removeEventListener('keydown', tecla, true);
+                fundo.remove();
+                window.ScrollLock && window.ScrollLock.release('confirmar-admin');
+                if (anterior && anterior.isConnected && anterior.focus) { try { anterior.focus(); } catch (e) { /* sem foco */ } }
+                resolve(ok);
+            }
+            function tecla(ev) {
+                if (ev.key === 'Escape') { ev.preventDefault(); ev.stopImmediatePropagation(); fim(false); return; }
+                if (ev.key !== 'Tab') return;
+                var alvos = [nao, sim], i = alvos.indexOf(document.activeElement);
+                ev.preventDefault();
+                alvos[(i + (ev.shiftKey ? alvos.length - 1 : 1)) % alvos.length].focus();
+            }
+            document.addEventListener('keydown', tecla, true);
+            nao.addEventListener('click', function () { fim(false); });
+            sim.addEventListener('click', function () { fim(true); });
+            fundo.addEventListener('click', function (ev) { if (ev.target === fundo) fim(false); });
+            nao.focus();
+        });
+    }
+
+    // Linhas de tabela que abrem detalhe: alcançáveis por Tab; Enter ou Espaço abrem (como o clique).
+    function linhasClicaveis(raiz) {
+        raiz.querySelectorAll('tr[data-ver-pedido]').forEach(function (tr) {
+            tr.setAttribute('tabindex', '0');
+            tr.setAttribute('title', 'Ver detalhes do pedido');
+            tr.addEventListener('keydown', function (ev) {
+                if (ev.target !== tr || (ev.key !== 'Enter' && ev.key !== ' ')) return;   // botões dentro da linha têm o próprio comportamento
+                ev.preventDefault(); tr.click();
+            });
+        });
+    }
+
+    // Ícones do Font Awesome são decoração (o texto ou o aria-label dizem o que é): aria-hidden. Botão só de ícone sem nome
+    // ganha aria-label do próprio title e a marca .adm-so-icone (alvo mínimo no CSS). Roda nas mudanças do DOM, agrupadas num frame.
+    function a11yVarrer(raiz) {
+        raiz.querySelectorAll('i.fa-solid:not([aria-hidden]), i.fa-regular:not([aria-hidden]), i.fa-brands:not([aria-hidden])').forEach(function (i) { i.setAttribute('aria-hidden', 'true'); });
+        raiz.querySelectorAll('button:not(.adm-so-icone)').forEach(function (b) {
+            if (b.textContent.trim() || !b.querySelector('i')) return;
+            b.classList.add('adm-so-icone');
+            if (!b.hasAttribute('aria-label') && !b.hasAttribute('aria-labelledby') && b.getAttribute('title')) b.setAttribute('aria-label', b.getAttribute('title'));
+        });
+    }
+    function a11yIniciar() {
+        if (a11yIniciar.feito) return;
+        a11yIniciar.feito = true;
+        var agendado = false;
+        a11yVarrer(document);
+        new MutationObserver(function () {
+            if (agendado) return;
+            agendado = true;
+            requestAnimationFrame(function () { agendado = false; a11yVarrer(document); });
+        }).observe(document.body, { childList: true, subtree: true });
     }
 
     /* ===================================================================

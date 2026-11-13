@@ -146,9 +146,9 @@ body.modo-rapido .whatsapp-float { bottom: calc(var(--pr-barra-altura) + 20px + 
     background-color: #111111;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 0.5rem;
-    outline: none;
 }
 .pr-numero:focus { border-color: #F28C52; }
+.pr-numero:focus-visible { outline: 2px solid #F5A474; outline-offset: 2px; }
 .pr-numero:disabled { opacity: 0.35; }
 
 .pr-vazio { padding: 24px 12px; text-align: center; color: #BFBFBF; font-size: 0.9rem; }

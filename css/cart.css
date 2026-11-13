@@ -5,6 +5,9 @@
  * legível. As cores repetem os tokens de js/main.js de propósito.
  */
 
+/* Foco visível global (teclado): 2px laranja, afastado 2px. Especificidade zero: qualquer regra própria de foco continua valendo. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible { outline: 2px solid #F5A474; outline-offset: 2px; }
+
 /* ===================== Botão flutuante ===================== */
 /* O botão do WhatsApp já ocupa bottom:40px / right:40px com 60x60
    (css/components.css). Subimos 76px = 40 + 60 de altura + 16 de respiro,
@@ -194,11 +197,12 @@
     font-size: 1rem;
     border-radius: 0.75rem;
     padding: 0.875rem 1rem;
-    outline: none;
     transition: border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-.campo-input::placeholder { color: rgba(255, 255, 255, 0.3); }
+.campo-input:focus-visible { outline: 2px solid #F5A474; outline-offset: 2px; }
+
+.campo-input::placeholder { color: rgba(255, 255, 255, 0.58); }   /* >= 4,5:1 sobre #1A1A1A (era 0,3 = ~2,6:1) */
 
 .campo-input:hover,
 .campo-select:hover { border-color: rgba(242, 140, 82, 0.5); }

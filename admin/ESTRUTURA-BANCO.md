@@ -605,3 +605,19 @@ o script pré-022. Objetos 019/020 e dados de estoque/eventos permanecem intacto
 - Funções SECURITY DEFINER que `anon` executa (lista fechada): `criar_pedido`, `marcar_enviado_whatsapp`, `completar_visita`, `lgpd_meus_dados`, `historico_do_cliente`, `solidcon_catalogo_publico` e `solidcon_ficha_publica`. Todas as outras perderam EXECUTE de `anon`/PUBLIC; `authenticated`/`service_role` ficaram como estavam. Os gatilhos não dependem desse EXECUTE.
 - Função nova em `public`: sempre `revoke all on function ... from public, anon` e depois `grant` explícito (o PUBLIC é padrão global do Postgres).
 - DEFINER com `search_path = pg_catalog, pg_temp` (019–035) e `public, pg_temp` (004–016, 028); tabelas sempre qualificadas como `public.x`.
+
+## 037 — Qualidade do endereço, "Corrigir no ERP" e interessados
+
+- `solidcon_037_avaliacao()`: qualidade (`confiavel` / `aproximado` / `sem_localizacao`) + motivos por cliente CNPJ, calculada na leitura (nada gravado).
+- `solidcon_mapa_clientes()` ganhou `qualidade` e `motivos` no fim.
+- `solidcon_geo_corrigir_erp()`: clientes sem localização confiável ou com cadastro a corrigir no ERP.
+- `solidcon_interessados()`: lista de espera e pedidos do site cujo CNPJ não comprou no ERP. Documento mascarado, sem contato; posição aproximada pela média dos clientes já localizados (CEP, depois bairro, depois cidade).
+- Todas INVOKER, só equipe, sem EXECUTE para anon. A validação "o ponto está no município" é feita no navegador ao geocodificar (busca limitada à caixa do município e com a cidade conferida).
+
+## 038 — RLS mais rápido, sem FOR ALL e anon só INSERT
+
+- Políticas chamam `(select public.eh_admin())` / `(select public.eh_equipe())`, calculadas uma vez por consulta.
+- Sem `FOR ALL`: admin tem `insere/atualiza/apaga` explícitos em `catalogo_produtos`, `pedido_items`, `regioes`, `regioes_faixas_cep`, e `insere/apaga` em `usuarios`/`clientes` (ler e atualizar vêm das políticas de equipe).
+- `pedidos.cnpj_digitos` (gerada, indexada), usada por `historico_do_cliente`.
+- anon só tem INSERT em `pedidos`, `leads`, `visitas`, `lista_espera`, `solicitacoes_lgpd`, `consentimentos` e `vitrines`; o site insere sempre com `return=minimal`.
+- `public.vitrines` agora tem definição de referência em `admin/migracoes/base/vitrines.sql` (export de produção).
