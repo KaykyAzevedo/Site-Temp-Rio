@@ -611,6 +611,7 @@ nova deve ter `OK saude` e `status=ok`.
 | 2 | Saúde: o banco não respondeu, ou a batida não chegou ao Supabase (veja `motivo=` ou `fase=` no log) |
 | 3 | Contas a receber (seção 030): consulta, conferência ou envio recusado (veja `ERRO receber` no log) |
 | 4 | Margem (seção 031): vendas ou custos com falha (veja `ERRO margem` no log) |
+| 5 | Pedidos do ERP por etapa (migração 035): consulta, conferência ou envio recusado (veja `ERRO pedidos` no log) |
 | 267009 | A tarefa ainda está rodando; consulte de novo em alguns segundos |
 
 Módulos futuros ganham os próximos códigos (3, 4, ...); vale o do primeiro módulo que falhar.

@@ -1,7 +1,8 @@
 #requires -Version 5.1
 # Coleta SOMENTE LEITURA pelo banco SQL Server da SOLIDCON (tarefa propria, a cada 5 min).
 # Independente do sync-produtos.ps1 (API HTTP): outro mutex, outra trava, outro log.
-# Acordo com a SOLIDCON: so VIEWS liberadas (dbo.VW_*/vw*), nunca tabelas tb*.
+# Acordo com a SOLIDCON: so VIEWS liberadas (dbo.VW_*/vw*). Unica excecao (autorizada pelo dono
+# em 2026-11-13): o modulo 'pedidos' le SOMENTE as tabelas de $TabelasPedidos (SELECT, filial 4).
 # Cada modulo: consulta FIXA (texto no codigo, so views da lista $ViewsPermitidas)
 #   -> projecao explicita de colunas -> RPC Supabase propria -> log sem dados pessoais.
 # Falha de um modulo nao impede os outros. Modulos: 'saude' (SELECT 1, toda execucao) e
@@ -14,12 +15,16 @@
 #   -Forcar roda todos os modulos agora, ignorando o intervalo proprio de cada um.
 #   Backfill da margem: sync-banco.ps1 -BackfillMargemDesde 2026-05-29 (so vendas da margem,
 #   blocos de 31 dias ate hoje; nao mexe na agenda nem nos outros modulos).
+# 'pedidos' (pedidos de venda da filial 4 com a etapa do WMS, toda execucao; 30 dias, concluidos
+#   so nos ultimos 3 dias). Conferencia sem gravar nada: sync-banco.ps1 -Testar [-Simular]
+#   (so o modulo pedidos; imprime contagens por etapa; sem Supabase, sem agenda, sem arquivo).
 [CmdletBinding()]
 param(
     [string]$Config = 'C:\TempRio\solidcon\config-banco.json',
     [switch]$Simular,
     [switch]$SimularFalha,
     [switch]$Forcar,
+    [switch]$Testar,
     [ValidatePattern('^20[0-9]{2}-[0-9]{2}-[0-9]{2}$')][string]$BackfillMargemDesde
 )
 Set-StrictMode -Version Latest
@@ -38,6 +43,8 @@ $SidAdmins = New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')
 
 # Unicas views que qualquer modulo pode ler (nome exato, schema dbo), combinadas com a SOLIDCON.
 $ViewsPermitidas = @('dbo.VW_RDUPHOLD_CONTASRECEBER_ABERTO', 'dbo.VW_MGN_PARCEIRO', 'dbo.VW_RDUPHOLD_VENDA_ITENS', 'dbo.VW_MGN_ESTOQUE')
+# Tabelas que SO as consultas 'pedidos.*' podem ler (nome exato, schema dbo). Nenhum outro modulo.
+$TabelasPedidos = @('dbo.tbPedido', 'dbo.tbPedidoVenda', 'dbo.tbWmsCarga', 'dbo.tbWmsCargaUmaSaida')
 # Consultas aprovadas na revisao, LITERAIS, por 'modulo.consulta': uma consulta so roda se o
 # texto for identico ao daqui. E a garantia principal; o validador estrutural e defesa auxiliar.
 # Toda consulta de dados filtra a FILIAL 4 (Temp Rio); as outras filiais nunca saem do banco.
@@ -47,8 +54,10 @@ $ConsultasAprovadas = @{
     'margem.vendas' = "SELECT CAST(v.DataMovimento AS date) AS dia, v.Codigo_Produto AS codigo_produto, SUM(v.quantidade_produto) AS quantidade, SUM(v.Vlitem) AS venda_soma, SUM(v.Vlitem * v.quantidade_produto) AS venda_x_qtd, SUM(v.Valor_total_unidade * v.quantidade_produto) AS venda_unidade_x_qtd, SUM(v.Valor_total_unidade) AS venda_unidade_soma, SUM(v.CustoItem) AS custo_soma, SUM(v.CustoItem * v.quantidade_produto) AS custo_x_qtd, COUNT(*) AS linhas, SUM(CASE WHEN v.quantidade_produto IS NULL THEN 1 ELSE 0 END) AS nulos_qtd, SUM(CASE WHEN v.Vlitem IS NULL THEN 1 ELSE 0 END) AS nulos_venda, SUM(CASE WHEN v.Valor_total_unidade IS NULL THEN 1 ELSE 0 END) AS nulos_unidade, SUM(CASE WHEN v.CustoItem IS NULL THEN 1 ELSE 0 END) AS nulos_custo FROM dbo.VW_RDUPHOLD_VENDA_ITENS AS v WHERE v.CodigoFilial = 4 AND v.DataMovimento >= @desde AND v.DataMovimento < @ate GROUP BY CAST(v.DataMovimento AS date), v.Codigo_Produto"
     'margem.custos' = "SELECT e.CodigoProduto AS codigo_produto, e.Unidade AS unidade, e.CustoMedioUnitario AS custo_medio, e.CustoReposicaoUnitario AS custo_reposicao, e.PrecoVenda AS preco_venda, e.DataUltimoRecebimento AS ultimo_recebimento FROM dbo.VW_MGN_ESTOQUE AS e WHERE e.CodigoFilial = 4 AND e.EstoqueTipo = 'Produto'"
     'receber.parceiros' = "SELECT p.CodigoParceiro AS codigo_parceiro, p.CNPJ AS documento FROM dbo.VW_MGN_PARCEIRO AS p WHERE p.CodigoParceiro IN (SELECT r.Codigo_Fornecedor FROM dbo.VW_RDUPHOLD_CONTASRECEBER_ABERTO AS r WHERE r.Codigo_Filial = 4)"
+    'pedidos.lista' = "SELECT p.cdPedido AS cd_pedido, p.dtPedido AS dt_pedido, p.dtAtendido AS dt_atendido, v.cdPessoaComercial AS cd_cliente, v.cdWmsCarga AS cd_carga, c.dtCarga AS dt_carga, c.dtLiberadaPartida AS dt_partida, c.dtEmissaoNota AS dt_nota, c.dtCancelada AS dt_cancelada, s.sep_ini AS dt_sep_inicio, s.sep_fim AS dt_sep_fim, s.conf AS dt_conferencia, s.carregou AS dt_carregou, s.saidas_abertas AS saidas_abertas FROM dbo.tbPedido AS p JOIN dbo.tbPedidoVenda AS v ON v.cdPedidoVenda = p.cdPedido AND v.cdPessoaFilial = p.cdPessoaFilial LEFT JOIN dbo.tbWmsCarga AS c ON c.cdWmsCarga = v.cdWmsCarga AND c.cdPessoaFilial = p.cdPessoaFilial LEFT JOIN (SELECT u.cdPessoaFilial, u.cdPedido, MIN(u.dtInicio) AS sep_ini, MAX(u.dtFim) AS sep_fim, MAX(u.dtConferencia) AS conf, MAX(u.dtCarregou) AS carregou, SUM(CASE WHEN u.dtFim IS NULL THEN 1 ELSE 0 END) AS saidas_abertas FROM dbo.tbWmsCargaUmaSaida AS u WHERE u.cdPessoaFilial = 4 AND u.cdPedido IN (SELECT q.cdPedido FROM dbo.tbPedido AS q WHERE q.cdPessoaFilial = 4 AND q.dtPedido >= @desde) GROUP BY u.cdPessoaFilial, u.cdPedido) AS s ON s.cdPedido = p.cdPedido AND s.cdPessoaFilial = p.cdPessoaFilial WHERE p.cdPessoaFilial = 4 AND p.dtPedido >= @desde"
+    'pedidos.clientes' = "SELECT pa.CodigoParceiro AS codigo_parceiro, pa.CNPJ AS documento FROM dbo.VW_MGN_PARCEIRO AS pa WHERE pa.CodigoParceiro IN (SELECT v.cdPessoaComercial FROM dbo.tbPedidoVenda AS v JOIN dbo.tbPedido AS p ON p.cdPedido = v.cdPedidoVenda AND p.cdPessoaFilial = v.cdPessoaFilial WHERE p.cdPessoaFilial = 4 AND p.dtPedido >= @desde)"
 }
-$RpcsPermitidas = @('solidcon_receber_banco_saude', 'solidcon_receber_contas_receber', 'solidcon_receber_margem_vendas', 'solidcon_receber_custos')
+$RpcsPermitidas = @('solidcon_receber_banco_saude', 'solidcon_receber_contas_receber', 'solidcon_receber_margem_vendas', 'solidcon_receber_custos', 'solidcon_receber_pedidos_erp')
 # Semantica de VW_RDUPHOLD_VENDA_ITENS CONFIRMADA pelo probe real da filial 4 (2026-11-12):
 #   Vlitem = PRECO UNITARIO; Valor_total_unidade = TOTAL DA LINHA (apesar do nome);
 #   CustoItem = CUSTO TOTAL DA LINHA. SUM(Valor_total_unidade) = SUM(Vlitem*qtd) conciliou com o
@@ -248,8 +257,16 @@ function Validar-ConsultaFixa([string]$Nome, [string]$Sql) {
     # Defesa auxiliar (texto fixo e aprovado): barra engano em modulos futuros.
     if ($Sql -notmatch '^\s*SELECT\s') { throw 'consulta deve comecar com SELECT' }
     if ($Sql -match ';|--|/\*|\*/') { throw 'consulta com ; ou comentario' }
+    # So 'pedidos.*' pode citar tabelas, e so as de $TabelasPedidos escritas exatamente como
+    # 'dbo.tbX' (sem colchetes): essas ocorrencias saem do texto checado; qualquer outro tb* barra.
+    $checado = $Sql
+    $tabelasDoModulo = @()
+    if ($Nome.StartsWith('pedidos.', [StringComparison]::Ordinal)) {
+        $tabelasDoModulo = $TabelasPedidos
+        foreach ($t in $TabelasPedidos) { $checado = [regex]::Replace($checado, '(?<![\w.\[])' + [regex]::Escape($t) + '(?![\w\]])', 'dbo.TABELA_PEDIDOS') }
+    }
     $proibidas = '\b(INSERT|UPDATE|DELETE|MERGE|EXEC|EXECUTE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|DENY|INTO|OPENROWSET|OPENQUERY|OPENDATASOURCE|OPENXML|BULK|WAITFOR|SHUTDOWN|DBCC|BACKUP|RESTORE|USE|SET|DECLARE|KILL|RECONFIGURE)\b|\bOPEN\w*|\bNEXT\s+VALUE\b|\b(xp|sp)_\w*|\btb\w*|\bsys\s*\.|INFORMATION_SCHEMA|@@'
-    if ($Sql -match $proibidas) { throw 'consulta com comando ou objeto proibido' }
+    if ($checado -match $proibidas) { throw 'consulta com comando ou objeto proibido' }
     # Funcao com schema (dbo.fn(...)) le objetos sem passar por FROM.
     if ($Sql -match '[\w\]]\s*\.\s*\[?\w+\]?\s*\(') { throw 'chamada de funcao com schema nao permitida' }
     # FROM a, b (juncao por virgula) esconderia o segundo objeto do validador.
@@ -260,6 +277,9 @@ function Validar-ConsultaFixa([string]$Nome, [string]$Sql) {
         $permitida = $false
         foreach ($v in $ViewsPermitidas) {
             if ($v -match '^dbo\.(VW_|vw)\w+$' -and [string]::Equals($v, $nome, [StringComparison]::OrdinalIgnoreCase)) { $permitida = $true }
+        }
+        foreach ($t in $tabelasDoModulo) {
+            if ($t -cmatch '^dbo\.tb\w+$' -and [string]::Equals($t, $m.Groups[2].Value, [StringComparison]::Ordinal)) { $permitida = $true }
         }
         if (-not $permitida) { throw 'objeto fora da lista de views permitidas' }
         $usadas += $nome
@@ -404,6 +424,8 @@ function Descrever-Erro($Registro) {
         'semantica-pendente' = 'semantica de venda/custo pendente'
         'custos-duplicados' = 'mesmo produto/unidade com custos diferentes'
         'custo-invalido' = 'linha de custo com produto invalido'
+        'pedido-invalido' = 'pedido com codigo, data ou carga invalidos'
+        'pedidos-duplicados' = 'mesmo pedido repetido na consulta'
     }
     if ($m -ceq 'login-com-escrita' -and $script:DetalhePermissoes) { return ($fixas[$m] + ' (' + $script:DetalhePermissoes + ')') }
     if ($fixas.ContainsKey($m)) { return $fixas[$m] }
@@ -923,10 +945,211 @@ function Modulo-Margem($Modulo) {
     if (-not $script:MargemOk) { throw 'modulo-com-erro' }
 }
 
+# ---------- pedidos: pedidos de venda da filial 4 com a etapa do WMS (Kanban) ----------
+# Etapas, na ordem do fluxo. Mesma lista no CHECK da 035.
+$EtapasPedido = @('aberto', 'na_carga', 'separando', 'separado', 'conferido', 'saiu', 'atendido')
+$PedidosDiasJanela = 30
+$PedidosDiasConcluidos = 3
+# So METADADOS (nomes/tipos de colunas) para o -Testar real: candidatas a valor do pedido em
+# tbPedidoItem e a documento em tbCliente. Texto interno fixo; nunca le dados; so roda no -Testar.
+$SqlMetadadosPedidos = "SELECT OBJECT_NAME(c.object_id) AS tabela, c.name AS coluna, ty.name AS tipo FROM sys.columns AS c JOIN sys.types AS ty ON ty.user_type_id = c.user_type_id WHERE (c.object_id = OBJECT_ID('dbo.tbPedidoItem') AND ty.name IN ('money','smallmoney','decimal','numeric','float','real','int','bigint','smallint')) OR (c.object_id = OBJECT_ID('dbo.tbCliente') AND (c.name LIKE '%Cnpj%' OR c.name LIKE '%Cpf%' OR c.name LIKE '%Doc%' OR c.name LIKE 'cdPessoa%')) ORDER BY 1, c.column_id"
+
+function Data-Erp($Valor) {
+    # datetime do ERP (hora de Sao Paulo, sem fuso) -> ISO com offset; sentinela antiga = sem data.
+    if ($null -eq $Valor -or $Valor -is [DBNull]) { return $null }
+    if ($Valor -isnot [datetime]) { throw 'pedido-invalido' }
+    if ($Valor.Year -lt 2000 -or $Valor.Year -gt 2099) { return $null }
+    $z = [TimeZoneInfo]::FindSystemTimeZoneById('E. South America Standard Time')
+    $local = [datetime]::SpecifyKind($Valor, [DateTimeKind]::Unspecified)
+    return (New-Object DateTimeOffset($local, $z.GetUtcOffset($local))).ToString("yyyy-MM-dd'T'HH:mm:ss.fffzzz", $Invariant)
+}
+
+function Menor-Data($A, $B) {
+    $a = if ($A -is [datetime] -and $A.Year -ge 2000) { $A } else { $null }
+    $b = if ($B -is [datetime] -and $B.Year -ge 2000) { $B } else { $null }
+    if ($null -eq $a) { return $b }
+    if ($null -eq $b) { return $a }
+    if ($a -le $b) { return $a } else { return $b }
+}
+
+function Etapa-Pedido($L) {
+    # Prioridade definida pelo Tech Lead (2026-11-13). Cancelada e tratada antes (fica fora).
+    $ok = { param($v) $v -is [datetime] -and $v.Year -ge 2000 }
+    $saida = Menor-Data $L.dt_carregou $L.dt_partida
+    $temCarga = $null -ne (Inteiro-Banco $L.cd_carga)
+    if ((& $ok $L.dt_atendido) -and (-not $temCarga -or $null -ne $saida)) { return 'atendido' }
+    if ($null -ne $saida) { return 'saiu' }
+    if (& $ok $L.dt_conferencia) { return 'conferido' }
+    $abertas = if ($null -eq $L.saidas_abertas -or $L.saidas_abertas -is [DBNull]) { 0 } else { [decimal]$L.saidas_abertas }
+    if ((& $ok $L.dt_sep_fim) -and $abertas -eq 0) { return 'separado' }
+    if (& $ok $L.dt_sep_inicio) { return 'separando' }
+    if ($temCarga) { return 'na_carga' }
+    return 'aberto'
+}
+
+function Normalizar-Pedidos($Linhas, $Clientes, [datetime]$Recente) {
+    # Codigo do cliente -> documento so digitos. Codigo repetido com documentos diferentes = indefinido.
+    $docs = @{}
+    foreach ($p in $Clientes) {
+        $cod = Inteiro-Banco $p.codigo_parceiro
+        if ($null -eq $cod) { continue }
+        $d = if ($null -eq $p.documento -or $p.documento -is [DBNull]) { '' } else { ([string]$p.documento) -replace '[^0-9]', '' }
+        if ($docs.ContainsKey($cod) -and $docs[$cod] -cne $d) { $docs[$cod] = '' } else { $docs[$cod] = $d }
+    }
+    $itens = New-Object Collections.ArrayList
+    $vistos = @{}
+    $cont = [ordered]@{ canceladas = 0; fora_da_janela = 0; cnpj = 0; cpf = 0; indefinido = 0 }
+    $porEtapa = [ordered]@{}
+    foreach ($e in $EtapasPedido) { $porEtapa[$e] = 0 }
+    foreach ($l in $Linhas) {
+        $cd = Inteiro-Banco $l.cd_pedido
+        if ($null -eq $cd -or $cd -gt 999999999999 -or $l.dt_pedido -isnot [datetime]) { throw 'pedido-invalido' }
+        if ($vistos.ContainsKey($cd)) { throw 'pedidos-duplicados' }
+        $vistos[$cd] = $true
+        $dtPedido = Data-Erp $l.dt_pedido
+        if ($null -eq $dtPedido) { throw 'pedido-invalido' }
+        if ($l.dt_cancelada -is [datetime] -and $l.dt_cancelada.Year -ge 2000) { $cont.canceladas++; continue }
+        $etapa = Etapa-Pedido $l
+        $saida = Menor-Data $l.dt_carregou $l.dt_partida
+        # Concluidos so ficam enquanto recentes; o resto da janela de 30 dias vai inteiro.
+        if (($etapa -ceq 'atendido' -and $l.dt_atendido -lt $Recente) -or ($etapa -ceq 'saiu' -and $saida -lt $Recente)) { $cont.fora_da_janela++; continue }
+        $codCli = Inteiro-Banco $l.cd_cliente
+        $doc = if ($null -ne $codCli -and $docs.ContainsKey($codCli)) { $docs[$codCli] } else { '' }
+        # LGPD: so CNPJ valido identifica; CPF e indefinido viajam so como tipo.
+        $tipo = if ($doc.Length -eq 14 -and (Cnpj-Valido $doc)) { 'cnpj' } elseif ($doc.Length -eq 11) { 'cpf' } else { 'indefinido' }
+        $cont[$tipo]++
+        $porEtapa[$etapa]++
+        $carga = Inteiro-Banco $l.cd_carga
+        if ($null -ne $carga -and $carga -gt 999999999999) { throw 'pedido-invalido' }
+        [void]$itens.Add([ordered]@{
+            cd_pedido = [long]$cd; dt_pedido = $dtPedido; etapa = $etapa
+            dt_carga = Data-Erp $l.dt_carga
+            dt_sep_inicio = Data-Erp $l.dt_sep_inicio
+            dt_sep_fim = Data-Erp $l.dt_sep_fim
+            dt_conferencia = Data-Erp $l.dt_conferencia
+            dt_saida = Data-Erp $saida
+            dt_nota = Data-Erp $l.dt_nota
+            dt_atendido = Data-Erp $l.dt_atendido
+            cliente_tipo = $tipo
+            documento = $(if ($tipo -ceq 'cnpj') { $doc } else { $null })
+            # Valor: colunas de tbPedidoItem ainda nao confirmadas (ver -Testar). Sempre null por ora.
+            valor_centavos = $null
+            nr_carga = $(if ($null -ne $carga) { [long]$carga } else { $null })
+        })
+    }
+    return @{ itens = [object[]]$itens.ToArray(); contagens = $cont; etapas = $porEtapa }
+}
+
+$ModuloPedidos = @{
+    nome = 'pedidos'; codigo = 5; intervaloMin = 0; intervaloErroMin = 0
+    consultas = [ordered]@{
+        lista = @{
+            maxLinhas = 5000; parametros = @('desde')
+            colunas = @('cd_pedido', 'dt_pedido', 'dt_atendido', 'cd_cliente', 'cd_carga', 'dt_carga', 'dt_partida', 'dt_nota', 'dt_cancelada',
+                        'dt_sep_inicio', 'dt_sep_fim', 'dt_conferencia', 'dt_carregou', 'saidas_abertas')
+            sql = "SELECT p.cdPedido AS cd_pedido, p.dtPedido AS dt_pedido, p.dtAtendido AS dt_atendido, v.cdPessoaComercial AS cd_cliente, v.cdWmsCarga AS cd_carga, c.dtCarga AS dt_carga, c.dtLiberadaPartida AS dt_partida, c.dtEmissaoNota AS dt_nota, c.dtCancelada AS dt_cancelada, s.sep_ini AS dt_sep_inicio, s.sep_fim AS dt_sep_fim, s.conf AS dt_conferencia, s.carregou AS dt_carregou, s.saidas_abertas AS saidas_abertas FROM dbo.tbPedido AS p JOIN dbo.tbPedidoVenda AS v ON v.cdPedidoVenda = p.cdPedido AND v.cdPessoaFilial = p.cdPessoaFilial LEFT JOIN dbo.tbWmsCarga AS c ON c.cdWmsCarga = v.cdWmsCarga AND c.cdPessoaFilial = p.cdPessoaFilial LEFT JOIN (SELECT u.cdPessoaFilial, u.cdPedido, MIN(u.dtInicio) AS sep_ini, MAX(u.dtFim) AS sep_fim, MAX(u.dtConferencia) AS conf, MAX(u.dtCarregou) AS carregou, SUM(CASE WHEN u.dtFim IS NULL THEN 1 ELSE 0 END) AS saidas_abertas FROM dbo.tbWmsCargaUmaSaida AS u WHERE u.cdPessoaFilial = 4 AND u.cdPedido IN (SELECT q.cdPedido FROM dbo.tbPedido AS q WHERE q.cdPessoaFilial = 4 AND q.dtPedido >= @desde) GROUP BY u.cdPessoaFilial, u.cdPedido) AS s ON s.cdPedido = p.cdPedido AND s.cdPessoaFilial = p.cdPessoaFilial WHERE p.cdPessoaFilial = 4 AND p.dtPedido >= @desde"
+            # FICTICIO: um pedido por etapa + cancelado + atendido antigo (fora da janela).
+            simulacao = {
+                param($v)
+                $h = [datetime]::Now
+                $b = @{ dt_atendido = $null; cd_carga = $null; dt_carga = $null; dt_partida = $null; dt_nota = $null; dt_cancelada = $null; dt_sep_inicio = $null; dt_sep_fim = $null; dt_conferencia = $null; dt_carregou = $null; saidas_abertas = $null }
+                function L($extra) { $x = $b.Clone(); foreach ($k in $extra.Keys) { $x[$k] = $extra[$k] }; $x }
+                ,@(
+                    (L @{ cd_pedido = 9001; dt_pedido = $h.AddHours(-2); cd_cliente = 1 }),
+                    (L @{ cd_pedido = 9002; dt_pedido = $h.AddHours(-20); cd_cliente = 2; cd_carga = 77; dt_carga = $h.AddHours(-10) }),
+                    (L @{ cd_pedido = 9003; dt_pedido = $h.AddDays(-1); cd_cliente = 1; cd_carga = 77; dt_carga = $h.AddHours(-10); dt_sep_inicio = $h.AddHours(-3); saidas_abertas = 1 }),
+                    (L @{ cd_pedido = 9004; dt_pedido = $h.AddDays(-1); cd_cliente = 3; cd_carga = 77; dt_carga = $h.AddHours(-10); dt_sep_inicio = $h.AddHours(-5); dt_sep_fim = $h.AddHours(-4); saidas_abertas = 0 }),
+                    (L @{ cd_pedido = 9005; dt_pedido = $h.AddDays(-2); cd_cliente = 1; cd_carga = 78; dt_carga = $h.AddDays(-1); dt_sep_inicio = $h.AddHours(-30); dt_sep_fim = $h.AddHours(-28); dt_conferencia = $h.AddHours(-20); saidas_abertas = 0 }),
+                    (L @{ cd_pedido = 9006; dt_pedido = $h.AddDays(-2); cd_cliente = 2; cd_carga = 78; dt_carga = $h.AddDays(-1); dt_sep_inicio = $h.AddHours(-30); dt_sep_fim = $h.AddHours(-28); dt_conferencia = $h.AddHours(-20); dt_carregou = $h.AddHours(-5); dt_partida = $h.AddHours(-4); saidas_abertas = 0 }),
+                    (L @{ cd_pedido = 9007; dt_pedido = $h.AddDays(-3); cd_cliente = 1; cd_carga = 79; dt_carga = $h.AddDays(-2); dt_carregou = $h.AddDays(-1); dt_nota = $h.AddDays(-1); dt_atendido = $h.AddHours(-20) }),
+                    (L @{ cd_pedido = 9008; dt_pedido = $h.AddDays(-1); cd_cliente = 4; dt_atendido = $h.AddHours(-12) }),
+                    (L @{ cd_pedido = 9009; dt_pedido = $h.AddDays(-9); cd_cliente = 1; dt_atendido = $h.AddDays(-8) }),
+                    (L @{ cd_pedido = 9010; dt_pedido = $h.AddDays(-4); cd_cliente = 1; cd_carga = 80; dt_carga = $h.AddDays(-3); dt_cancelada = $h.AddDays(-3) })
+                )
+            }
+        }
+        clientes = @{
+            maxLinhas = 20000; parametros = @('desde')
+            colunas = @('codigo_parceiro', 'documento')
+            sql = "SELECT pa.CodigoParceiro AS codigo_parceiro, pa.CNPJ AS documento FROM dbo.VW_MGN_PARCEIRO AS pa WHERE pa.CodigoParceiro IN (SELECT v.cdPessoaComercial FROM dbo.tbPedidoVenda AS v JOIN dbo.tbPedido AS p ON p.cdPedido = v.cdPedidoVenda AND p.cdPessoaFilial = v.cdPessoaFilial WHERE p.cdPessoaFilial = 4 AND p.dtPedido >= @desde)"
+            # FICTICIO: CNPJ de exemplo valido, um CPF de exemplo e um documento quebrado.
+            simulacao = { param($v) ,@(@{ codigo_parceiro = 1; documento = '11.222.333/0001-81' }, @{ codigo_parceiro = 2; documento = '000.000.001-91' }, @{ codigo_parceiro = 3; documento = '123' }) }
+        }
+    }
+}
+
+function Modulo-Pedidos($Modulo) {
+    $relogio = [Diagnostics.Stopwatch]::StartNew()
+    $sessao = $null
+    $metadados = $null
+    $agoraSp = [TimeZoneInfo]::ConvertTimeFromUtc([DateTime]::UtcNow, [TimeZoneInfo]::FindSystemTimeZoneById('E. South America Standard Time'))
+    $desde = $agoraSp.Date.AddDays(-$PedidosDiasJanela)
+    $recente = $agoraSp.AddDays(-$PedidosDiasConcluidos)
+    try {
+        $sessao = Abrir-Sessao
+        $linhas = Executar-Consulta $sessao $Modulo 'lista' @{ desde = $desde }
+        $clientes = Executar-Consulta $sessao $Modulo 'clientes' @{ desde = $desde }
+        $coleta = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", $Invariant)
+        if ($Testar -and -not $sessao.simulada) {
+            $cmd = $sessao.con.CreateCommand(); $cmd.CommandTimeout = 30; $cmd.CommandText = $SqlMetadadosPedidos
+            $metadados = Ler-Linhas $cmd @('tabela', 'coluna', 'tipo') 200
+        }
+    } catch {
+        $motivo = Descrever-Erro $_
+        if ($Testar) { Write-Output ('ERRO pedidos fase=consulta motivo=' + $motivo) }
+        else { Log ('ERRO pedidos modo={0} fase=consulta motivo={1} execucao={2}' -f $Cfg.modo, $motivo, $ExecucaoId) }
+        throw 'modulo-com-erro'
+    } finally { Fechar-Sessao $sessao }
+    try { $normal = Normalizar-Pedidos $linhas $clientes $recente }
+    catch {
+        # Inteiro-Banco usa o codigo do modulo receber; aqui o texto certo e o de pedido.
+        $motivo = if ([string]$_.Exception.Message -ceq 'parcela-invalida') { Descrever-Erro ([pscustomobject]@{ Exception = [Exception]::new('pedido-invalido') }) } else { Descrever-Erro $_ }
+        if ($Testar) { Write-Output ('ERRO pedidos fase=normalizacao motivo=' + $motivo) }
+        else { Log ('ERRO pedidos modo={0} fase=normalizacao motivo={1} execucao={2}' -f $Cfg.modo, $motivo, $ExecucaoId) }
+        throw 'modulo-com-erro'
+    }
+    $c = $normal.contagens
+    $etapasTxt = (@($normal.etapas.Keys | ForEach-Object { $_ + '=' + $normal.etapas[$_] }) -join ' ')
+    if ($Testar) {
+        # So contagens e nomes de colunas: nada de codigo de pedido, cliente, documento ou valor.
+        Write-Output ('TESTE pedidos{0} (nada gravado): lidos={1} enviaria={2} canceladas_fora={3} concluidos_antigos_fora={4}' -f
+            $(if ($Simular) { ' SIMULADO' } else { '' }), $linhas.Count, $normal.itens.Count, $c.canceladas, $c.fora_da_janela)
+        Write-Output ('  por etapa: ' + $etapasTxt)
+        Write-Output ('  cliente: cnpj={0} cpf={1} indefinido={2} (codigos de cliente distintos lidos no parceiro: {3})' -f $c.cnpj, $c.cpf, $c.indefinido, $clientes.Count)
+        Write-Output '  valor do pedido: nao coletado (valor_centavos = null) ate confirmar as colunas abaixo.'
+        if ($null -ne $metadados) {
+            Write-Output '  colunas candidatas (so metadados):'
+            foreach ($m in $metadados) { Write-Output ('    {0}.{1} ({2})' -f $m.tabela, $m.coluna, $m.tipo) }
+            if ($metadados.Count -eq 0) { Write-Output '    nenhuma visivel para o login' }
+        }
+        return
+    }
+    $enviado = 'nao'
+    if ($Real -and -not $Simular) {
+        $script:Fase = 'envio'
+        $resposta = Chamar-Rpc 'solidcon_receber_pedidos_erp' @{ p_itens = $normal.itens; p_coletado_em = $coleta; p_execucao_id = $ExecucaoId }
+        if ((Campo $resposta 'status') -cne 'ok') {
+            $mot = [string](Campo $resposta 'motivo')
+            if ($mot -notmatch '^[a-z0-9_]{1,40}$') { $mot = 'sem_motivo' }
+            Log ('ERRO pedidos modo={0} fase=rpc motivo={1} linhas={2} execucao={3}' -f $Cfg.modo, $mot, $normal.itens.Count, $ExecucaoId)
+            throw 'modulo-com-erro'
+        }
+        $enviado = 'sim'
+    } elseif (-not $Real) {
+        $script:Fase = 'estado-local'
+        Salvar-Json ([ordered]@{ coletado_em = $coleta; execucao_id = $ExecucaoId; simulado = [bool]$Simular; itens = $normal.itens }) (Join-Path $Pasta 'banco-pedidos-teste.json')
+    }
+    $relogio.Stop()
+    Log ('OK pedidos modo={0}{1} linhas={2} {3} cnpj={4} cpf={5} indefinido={6} canceladas={7} antigos={8} duracao_ms={9} enviado={10} execucao={11}' -f
+        $Cfg.modo, $(if ($Simular) { ' SIMULADO' } else { '' }), $normal.itens.Count, $etapasTxt, $c.cnpj, $c.cpf, $c.indefinido,
+        $c.canceladas, $c.fora_da_janela, $relogio.ElapsedMilliseconds, $enviado, $ExecucaoId)
+}
+
 $Modulos = @(
     @{ def = $ModuloSaude; funcao = 'Modulo-Saude' }
     @{ def = $ModuloReceber; funcao = 'Modulo-Receber' }
     @{ def = $ModuloMargem; funcao = 'Modulo-Margem' }
+    @{ def = $ModuloPedidos; funcao = 'Modulo-Pedidos' }
 )
 
 # Dot-source (testes) carrega so as funcoes e definicoes.
@@ -937,6 +1160,7 @@ try {
     if ($Cfg.modo -cnotin @('teste', 'real')) { throw 'modo invalido' }
     $Real = $Cfg.modo -ceq 'real'
     if ($SimularFalha -and -not $Simular) { throw '-SimularFalha exige -Simular' }
+    if ($Testar -and ($BackfillMargemDesde -or $Forcar)) { throw '-Testar nao combina com -BackfillMargemDesde/-Forcar' }
     if ([string]::IsNullOrWhiteSpace([string](Campo $Cfg 'pastaSaida')) -or -not [IO.Path]::IsPathRooted($Cfg.pastaSaida)) {
         throw 'pastaSaida deve ser absoluta'
     }
@@ -958,7 +1182,7 @@ try {
     $Fase = 'trava'
     $Mensagem = 'Outra execucao esta ativa ou a pasta de saida nao permite escrita.'
     $Trava = [IO.File]::Open((Join-Path $Pasta 'sync-banco.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
-    if ($Real -and -not $Simular) {
+    if ($Real -and -not $Simular -and -not $Testar) {
         $Fase = 'configuracao-supabase'
         $Mensagem = 'Configuracao Supabase invalida (configSupabase aponta para o config.json do sync-produtos).'
         $caminhoSup = [string](Campo $Cfg 'configSupabase')
@@ -992,12 +1216,17 @@ try {
         # Backfill: so a margem, sem agenda (nao adia nem antecipa o ciclo normal).
         $listaModulos = @($Modulos | Where-Object { $_.def.nome -ceq 'margem' })
     }
+    if ($Testar) {
+        # Conferencia: so pedidos, sem agenda, sem Supabase, sem arquivo de estado.
+        $Fase = 'testar'
+        $listaModulos = @($Modulos | Where-Object { $_.def.nome -ceq 'pedidos' })
+    }
     foreach ($m in $listaModulos) {
         $Fase = 'modulo-' + $m.def.nome
         # Agenda: ler e RESERVAR antes de consultar (grava o intervalo de erro). Se o estado
         # local nao pode ser lido ou gravado, o modulo nao consulta (sem limite = sem coleta).
         try {
-            if (-not $BackfillMargemDesde) {
+            if (-not $BackfillMargemDesde -and -not $Testar) {
                 if (-not (Modulo-Devido $m.def)) { continue }
                 Agendar-Modulo $m.def $false
             }
@@ -1010,7 +1239,7 @@ try {
             # Consulta fora da whitelist/aprovacao: o modulo nem abre conexao.
             foreach ($nc in $m.def.consultas.Keys) { $null = Validar-ConsultaFixa ($m.def.nome + '.' + $nc) $m.def.consultas[$nc].sql }
             & $m.funcao $m.def
-            try { if (-not $BackfillMargemDesde) { Agendar-Modulo $m.def $true } }
+            try { if (-not $BackfillMargemDesde -and -not $Testar) { Agendar-Modulo $m.def $true } }
             catch {
                 # Coletou, mas a agenda de sucesso nao gravou: vale a reserva (15 min) e o modulo sai com erro.
                 $falhos += $m.def

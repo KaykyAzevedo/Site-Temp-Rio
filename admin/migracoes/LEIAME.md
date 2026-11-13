@@ -30,6 +30,7 @@ separação eh_equipe/eh_admin por papel. Consulte MERGE_DECISOES.md.
 | 032_antispam.sql | Anti-spam: limite por origem (IP hasheado) + disjuntor global + honeypot nos INSERTs anônimos | APLICADA (2026-11-12) |
 | 033_solidcon_clientes_geo.sql | Coordenadas por cliente CNPJ + leitura do mapa de expansão (linha do tempo) | APLICADA (2026-11-12) |
 | 034_pedidos_erp_vinculo.sql | Kanban pelo ERP, fase 2: vínculo pedido↔venda SOLIDCON e confirmação automática | NÃO APLICADA (aguarda o dono) |
+| 035_solidcon_pedidos_erp.sql | Pedidos de venda do ERP com a etapa do WMS (módulo pedidos do sync-banco) | NÃO APLICADA |
 
 019/020 são nomes de organização do repositório. Os objetos SQL, RPCs e a
 assinatura chamada pelo script continuam iguais. 017/018 não são reutilizados
@@ -1196,3 +1197,108 @@ commit;
 ```
 
 Status e `confirmado_em` já gravados permanecem; o histórico fica em `auditoria`.
+
+## 035_solidcon_pedidos_erp.sql — Pedidos de venda do ERP por etapa do WMS (NÃO APLICADA)
+
+Objetivo: o Kanban mostrar os pedidos de venda do ERP (filial 4) na etapa real do depósito. Os dados vêm do módulo `pedidos` do `integracao/solidcon/sync-banco.ps1`.
+
+Requer 019 (`integracoes_autorizadas`), 023 (`solidcon_clientes`), 026 (`solidcon_026_documento_valido`) e `eh_equipe()`. Idempotente, `begin/commit`, DELETE com WHERE (safeupdate). Lock `(5100,35)`.
+
+### Origem no ERP (só SELECT, READ UNCOMMITTED, filial 4)
+
+Leitura de **tabelas** autorizada pelo dono em 2026-11-13, só estas quatro:
+- `tbPedido`;
+- `tbPedidoVenda`;
+- `tbWmsCarga`;
+- `tbWmsCargaUmaSaida`.
+
+O validador do sync aceita essas tabelas só nas consultas `pedidos.*`, escritas exatamente como `dbo.tbX`. Qualquer outro `tb*` ou outro módulo é barrado. O documento do cliente vem de `VW_MGN_PARCEIRO` (`CodigoParceiro = tbPedidoVenda.cdPessoaComercial`), o mesmo caminho do módulo `receber`. Não lê endereço, `txObs`, `txJson` nem `tbPedidoItem`. A trava de permissões do login (falha fechado se puder gravar) continua valendo.
+
+### Etapa (prioridade; calculada no coletor, conferida no banco)
+
+| Etapa | Regra | Data exigida |
+|---|---|---|
+| (fora) | carga cancelada (`dtCancelada`) | — |
+| `atendido` | `dtAtendido` e (sem carga **ou** carregou/partida) | `dt_atendido` |
+| `saiu` | carregou (`MAX dtCarregou`) ou partida (`dtLiberadaPartida`) | `dt_saida` = a menor das duas |
+| `conferido` | `MAX dtConferencia` | `dt_conferencia` |
+| `separado` | `MAX dtFim` e 0 saídas abertas | `dt_sep_fim` |
+| `separando` | `MIN dtInicio` | `dt_sep_inicio` |
+| `na_carga` | tem `cdWmsCarga` | `nr_carga` |
+| `aberto` | nenhuma das anteriores | — |
+
+Datas anteriores a 2000 (sentinelas do ERP) contam como vazias. Os horários do ERP são tratados como hora de São Paulo e enviados em ISO com fuso.
+
+### Janela e poda
+
+- Pedidos com `dtPedido` nos últimos 30 dias.
+- `saiu` e `atendido` ficam só enquanto a data de conclusão estiver nos últimos 3 dias.
+- Cada coleta aceita substitui a tabela inteira, então o que sai da janela some (poda).
+- O módulo roda a cada execução da tarefa (5 min).
+
+### Contrato da RPC `solidcon_receber_pedidos_erp(p_itens jsonb, p_coletado_em timestamptz, p_execucao_id uuid)`
+
+- Só a conta de integração (`integracoes_autorizadas`). Equipe, anon e outros recebem `42501`. **Nunca** adicionar a conta de sync a `admins`.
+- `p_itens`: até 5000 objetos, até 4 MiB, com campos **exatos**:
+  - `cd_pedido`, `dt_pedido`, `etapa`;
+  - `dt_carga`, `dt_sep_inicio`, `dt_sep_fim`, `dt_conferencia`, `dt_saida`, `dt_nota`, `dt_atendido`;
+  - `cliente_tipo`, `documento`, `valor_centavos`, `nr_carga`.
+- `cliente_nome` nunca vem do coletor. Para CNPJ, a RPC preenche com o `nome` de `solidcon_clientes`.
+- Datas são `null` ou ISO com fuso, entre 2000 e a coleta + 1 dia. `dt_pedido` é obrigatória e tem no máximo 32 dias.
+- `cliente_tipo`:
+  - `cnpj` exige um CNPJ válido;
+  - `cpf` e `indefinido` exigem `documento = null` (LGPD: só o tipo).
+- A etapa precisa da data que a justifica (tabela acima). `valor_centavos` é `null` ou inteiro ≥ 0. `cd_pedido` não repete.
+- Recusas: coleta com mais de 1 h ou no futuro, snapshot mais antigo que o último aceito, `execucao_id` repetido e queda de mais de 70% com 20 ou mais linhas anteriores.
+- Resposta:
+  - sucesso: `{status:'ok', linhas, ...}`;
+  - recusa: `{status:'erro', motivo}`, com motivo fixo, sem SQLERRM, e a tabela não muda.
+
+### Objetos
+
+| Objeto | Acesso |
+|---|---|
+| `solidcon_pedidos_erp` (PK `cd_pedido`; `dt_pedido`, `etapa`, `dt_carga`, `dt_sep_inicio`, `dt_sep_fim`, `dt_conferencia`, `dt_saida`, `dt_nota`, `dt_atendido`, `cliente_tipo`, `documento`, `cliente_nome`, `valor_centavos`, `nr_carga`, `atualizado_em`) | SELECT só equipe (RLS `eh_equipe()`); sem escrita direta |
+| `solidcon_pedidos_erp_sync` (`status`, `linhas`, `por_etapa` jsonb, `coletado_em`, `execucao_id`, `mensagem`; 30 dias) | SELECT só equipe |
+| `solidcon_receber_pedidos_erp(...)` | DEFINER, `search_path=pg_catalog`; EXECUTE authenticated; barrada sem `integracoes_autorizadas` |
+
+Para o painel:
+- ler `solidcon_pedidos_erp` ordenado por `etapa, dt_pedido`;
+- o frescor é `max(coletado_em)` de `solidcon_pedidos_erp_sync` com `status='ok'`.
+
+### Pendências conhecidas
+
+- **Valor do pedido:** `valor_centavos` vai sempre `null`. As colunas de `tbPedidoItem` ainda não foram confirmadas. `sync-banco.ps1 -Testar` lista as candidatas (só metadados) para decidir depois.
+- **Cliente:** falta confirmar que `cdPessoaComercial` = `VW_MGN_PARCEIRO.CodigoParceiro`. O `-Testar` mostra quantos pedidos resolveram para CNPJ/CPF/indefinido. Muitos `indefinido` indicam ligação errada; nesse caso, nada identifica ninguém.
+
+### Instalar
+
+1. Aplicar a 035 no SQL Editor.
+2. Copiar o `sync-banco.ps1` novo para o servidor.
+3. No servidor, rodar `sync-banco.ps1 -Testar`. Ele roda só o módulo pedidos, imprime as contagens por etapa e por tipo de cliente e as colunas candidatas. Não grava nada no Supabase, na agenda nem em arquivo.
+4. A partir daí, a tarefa de 5 min já envia o módulo.
+
+### Validação (PG 18 local isolado, mesmo ambiente da 033/034)
+
+035 aplicada 2x. 26 casos:
+- **acesso:**
+  - anon sem EXECUTE e sem SELECT;
+  - equipe não escreve pela RPC nem por INSERT;
+  - fora da equipe lê 0 linhas;
+  - vendedor lê;
+- **payload:**
+  - o lote gerado por `sync-banco.ps1 -Simular` é aceito (8 pedidos, nome preenchido só nos CNPJ, 0 identificação em CPF/indefinido);
+  - recusas com o motivo certo e tabela intacta: campo extra `cliente_nome`, CPF com documento, etapa sem data, CNPJ inválido, pedido com 40 dias, duplicado, data sem fuso, etapa desconhecida, valor negativo, `dt_pedido` nula, coleta antiga e execução repetida;
+- **trava de queda:** 25 → 5 recusado; 25 → 10 aceito (poda).
+
+### Desfazer
+
+```sql
+begin;
+drop function if exists public.solidcon_receber_pedidos_erp(jsonb, timestamptz, uuid);
+drop table if exists public.solidcon_pedidos_erp;
+drop table if exists public.solidcon_pedidos_erp_sync;
+commit;
+```
+
+No servidor, voltar o `sync-banco.ps1` anterior. Sem a 035, o módulo `pedidos` falha só ele (código de saída 5); os outros módulos seguem.
