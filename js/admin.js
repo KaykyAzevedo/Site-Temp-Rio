@@ -8014,24 +8014,29 @@
         // nome/telefone/e-mail/endereço em usuarios, clientes e pedidos, e apaga leads com o mesmo documento.
         alvo.querySelectorAll('[data-excluir-cliente]').forEach(function (b) {
             b.addEventListener('click', function () {
+                if (b.disabled || b.dataset.confirmando === '1') return;
                 var documento = b.getAttribute('data-documento');
                 if (!documento) {
                     window.alert('Este cliente não tem CPF/CNPJ cadastrado — não é possível excluir.');
                     return;
                 }
-                if (!window.confirm(
+                b.dataset.confirmando = '1';
+                confirmarAdmin(
                     'Excluir este cliente?\n\n' +
                     'Remove nome, telefone, e-mail e endereço do cadastro. Pedidos já fechados ' +
                     'continuam existindo (obrigação fiscal de 5 anos), mas sem contato nem endereço ' +
                     'ligados a eles.\n\n' +
-                    'Não tem como desfazer.'
-                )) return;
-
-                b.disabled = true;
-                sb.rpc('lgpd_excluir_pessoa', { p_documento: documento }).then(function (r) {
-                    b.disabled = false;
-                    if (r.error) { window.alert('Não foi possível excluir: ' + r.error.message); return; }
-                    carregar();
+                    'Não tem como desfazer.',
+                    'Excluir', true, b
+                ).then(function (ok) {
+                    delete b.dataset.confirmando;
+                    if (!ok || b.disabled) return;
+                    b.disabled = true;
+                    sb.rpc('lgpd_excluir_pessoa', { p_documento: documento }).then(function (r) {
+                        b.disabled = false;
+                        if (r.error) { window.alert('Não foi possível excluir: ' + r.error.message); return; }
+                        carregar();
+                    });
                 });
             });
         });
@@ -8809,21 +8814,32 @@
     function ligarAcoesDeVitrine(raiz) {
         raiz.querySelectorAll('button[data-vitrine]').forEach(function (b) {
             b.addEventListener('click', function () {
+                if (b.disabled || b.dataset.confirmando === '1') return;
                 var aprovar = b.getAttribute('data-aprovar') === 'true';
-                if (!aprovar && !window.confirm('Recusar este pedido de destaque?')) return;
-
-                b.disabled = true;
-                // decidir_vitrine calcula as datas no banco. Fazer isso aqui
-                // deixaria o prazo à mercê do relógio desta máquina.
-                sb.rpc('decidir_vitrine', {
-                    p_id: b.getAttribute('data-vitrine'),
-                    p_aprovar: aprovar,
-                    p_observacao: null
-                }).then(function (r) {
-                    b.disabled = false;
-                    if (r.error) { window.alert('Não foi possível decidir: ' + r.error.message); return; }
-                    carregar();
-                });
+                function executar() {
+                    if (b.disabled) return;
+                    b.disabled = true;
+                    // decidir_vitrine calcula as datas no banco. Fazer isso aqui
+                    // deixaria o prazo à mercê do relógio desta máquina.
+                    sb.rpc('decidir_vitrine', {
+                        p_id: b.getAttribute('data-vitrine'),
+                        p_aprovar: aprovar,
+                        p_observacao: null
+                    }).then(function (r) {
+                        b.disabled = false;
+                        if (r.error) { window.alert('Não foi possível decidir: ' + r.error.message); return; }
+                        carregar();
+                    });
+                }
+                if (!aprovar) {
+                    b.dataset.confirmando = '1';
+                    confirmarAdmin('Recusar este pedido de destaque?', 'Recusar', true, b).then(function (ok) {
+                        delete b.dataset.confirmando;
+                        if (ok) executar();
+                    });
+                    return;
+                }
+                executar();
             });
         });
     }
@@ -8938,20 +8954,33 @@
     function ligarAcoesDeRegiao(raiz) {
         raiz.querySelectorAll('button[data-alternar-regiao]').forEach(function (b) {
             b.addEventListener('click', function () {
+                if (b.disabled || b.dataset.confirmando === '1') return;
                 var ativo = b.getAttribute('data-ativo') === 'true';
-                if (!ativo && !window.confirm(
+                function executar() {
+                    if (b.disabled) return;
+                    b.disabled = true;
+                    sb.from('regioes').update({ ativo: ativo })
+                        .eq('id', b.getAttribute('data-alternar-regiao'))
+                        .then(function (r) {
+                            b.disabled = false;
+                            if (r.error) { window.alert('Não foi possível atualizar: ' + r.error.message); return; }
+                            carregar();
+                        });
+                }
+                if (!ativo) {
+                    b.dataset.confirmando = '1';
+                    confirmarAdmin(
                         'Suspender a entrega nesta região?\n\n' +
                         'Quem tentar comprar de lá vai ver a mensagem de indisponibilidade ' +
-                        'e a opção de entrar na lista de espera. Nada é apagado.')) return;
-
-                b.disabled = true;
-                sb.from('regioes').update({ ativo: ativo })
-                    .eq('id', b.getAttribute('data-alternar-regiao'))
-                    .then(function (r) {
-                        b.disabled = false;
-                        if (r.error) { window.alert('Não foi possível atualizar: ' + r.error.message); return; }
-                        carregar();
+                        'e a opção de entrar na lista de espera. Nada é apagado.',
+                        'Desativar', true, b
+                    ).then(function (ok) {
+                        delete b.dataset.confirmando;
+                        if (ok) executar();
                     });
+                    return;
+                }
+                executar();
             });
         });
 
@@ -9444,22 +9473,27 @@
 
         alvo.querySelectorAll('[data-lgpd-excluir]').forEach(function (b) {
             b.addEventListener('click', function () {
+                if (b.disabled || b.dataset.confirmando === '1') return;
                 var id = b.getAttribute('data-lgpd-excluir');
                 var documento = b.getAttribute('data-lgpd-documento');
-                if (!window.confirm(
+                b.dataset.confirmando = '1';
+                confirmarAdmin(
                     'Confirmar exclusão dos dados de ' + documento + '?\n\n' +
                     'Isso apaga o cadastro, telefone e endereço. Pedidos já fechados continuam ' +
                     'existindo (obrigação fiscal de 5 anos), mas sem contato nem endereço ligados a eles.\n\n' +
-                    'Não tem como desfazer.'
-                )) return;
-
-                b.disabled = true;
-                sb.rpc('lgpd_excluir_pessoa', { p_documento: documento, p_solicitacao_id: id })
-                    .then(function (r) {
-                        b.disabled = false;
-                        if (r.error) { window.alert('Não foi possível excluir: ' + r.error.message); return; }
-                        carregar();
-                    });
+                    'Não tem como desfazer.',
+                    'Excluir', true, b
+                ).then(function (ok) {
+                    delete b.dataset.confirmando;
+                    if (!ok || b.disabled) return;
+                    b.disabled = true;
+                    sb.rpc('lgpd_excluir_pessoa', { p_documento: documento, p_solicitacao_id: id })
+                        .then(function (r) {
+                            b.disabled = false;
+                            if (r.error) { window.alert('Não foi possível excluir: ' + r.error.message); return; }
+                            carregar();
+                        });
+                });
             });
         });
     }
@@ -9499,16 +9533,22 @@
 
         var botaoPurgar = alvo.querySelector('#btn-lgpd-purgar');
         if (botaoPurgar) botaoPurgar.addEventListener('click', function () {
-            if (!window.confirm(
+            if (botaoPurgar.disabled || botaoPurgar.dataset.confirmando === '1') return;
+            botaoPurgar.dataset.confirmando = '1';
+            confirmarAdmin(
                 'Isso anonimiza (apaga contato e endereço, mantém o pedido fiscal) todo cliente marcado ' +
-                'há 90 dias ou mais. Não tem como desfazer. Continuar?'
-            )) return;
-            botaoPurgar.disabled = true;
-            sb.rpc('lgpd_purgar_marcados').then(function (r) {
-                botaoPurgar.disabled = false;
-                if (r.error) { window.alert('Não foi possível anonimizar: ' + r.error.message); return; }
-                resultado.textContent = (r.data || 0) + ' cliente(s) anonimizado(s) por retenção vencida.';
-                if (r.data > 0) carregar();
+                'há 90 dias ou mais. Não tem como desfazer. Continuar?',
+                'Anonimizar', true, botaoPurgar
+            ).then(function (ok) {
+                delete botaoPurgar.dataset.confirmando;
+                if (!ok || botaoPurgar.disabled) return;
+                botaoPurgar.disabled = true;
+                sb.rpc('lgpd_purgar_marcados').then(function (r) {
+                    botaoPurgar.disabled = false;
+                    if (r.error) { window.alert('Não foi possível anonimizar: ' + r.error.message); return; }
+                    resultado.textContent = (r.data || 0) + ' cliente(s) anonimizado(s) por retenção vencida.';
+                    if (r.data > 0) carregar();
+                });
             });
         });
     }
@@ -9598,20 +9638,27 @@
      * =================================================================== */
     // Confirmação com foco (substitui window.confirm): mesmo visual do modal do painel, role=alertdialog, foco no "Voltar"
     // (a ação destrutiva exige escolha deliberada), Tab preso no diálogo, Esc cancela e o foco volta a quem abriu.
-    function confirmarAdmin(pergunta, rotuloOk) {
+    function confirmarAdmin(pergunta, rotuloOk, perigo, opener) {
+        if (confirmarAdmin.aberto) return Promise.resolve(false);
+        confirmarAdmin.aberto = true;
         return new Promise(function (resolve) {
-            var anterior = document.activeElement;
+            var encerrado = false;
+            var anterior = opener || document.activeElement;
             var fundo = document.createElement('div');
             fundo.className = 'adm-modal-fundo';
             fundo.style.zIndex = '1100';
+            var estiloSim = perigo ? ' style="background:var(--adm-ruim);color:var(--adm-acao-texto)"' : '';
             fundo.innerHTML = '<div class="adm-modal-painel" style="max-width:26rem" role="alertdialog" aria-modal="true" aria-labelledby="adm-conf-t">' +
-                '<p id="adm-conf-t" class="font-bold mb-5">' + esc(pergunta) + '</p>' +
+                '<p id="adm-conf-t" class="font-bold mb-5" style="white-space:pre-line">' + esc(pergunta) + '</p>' +
                 '<div class="flex flex-wrap gap-2 justify-end"><button type="button" class="adm-botao-fantasma" data-conf="nao">Voltar</button>' +
-                '<button type="button" class="adm-botao" data-conf="sim">' + esc(rotuloOk || 'Confirmar') + '</button></div></div>';
+                '<button type="button" class="adm-botao"' + estiloSim + ' data-conf="sim">' + esc(rotuloOk || 'Confirmar') + '</button></div></div>';
             document.body.appendChild(fundo);
             window.ScrollLock && window.ScrollLock.acquire('confirmar-admin');
             var nao = fundo.querySelector('[data-conf="nao"]'), sim = fundo.querySelector('[data-conf="sim"]');
             function fim(ok) {
+                if (encerrado) return;
+                encerrado = true;
+                confirmarAdmin.aberto = false;
                 document.removeEventListener('keydown', tecla, true);
                 fundo.remove();
                 window.ScrollLock && window.ScrollLock.release('confirmar-admin');
