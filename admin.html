@@ -120,6 +120,7 @@
                     <button type="button" class="adm-aba" data-aba="regioes"><i class="fa-solid fa-map-location-dot"></i><span>Regiões</span></button>
                     <button type="button" class="adm-aba" data-aba="solidcon"><i class="fa-solid fa-plug"></i><span>Integração</span></button>
                     <button type="button" class="adm-aba" data-aba="lgpd"><i class="fa-solid fa-shield-halved"></i><span>LGPD</span></button>
+                    <button type="button" class="adm-aba" data-aba="whatsapp"><i class="fa-brands fa-whatsapp"></i><span>WhatsApp</span></button>
                 </div>
             </div>
         </nav>
@@ -235,6 +236,8 @@
             <section id="painel-lgpd" class="hidden"></section>
             <!-- Rota do dia (js/admin-rota.js): S10 + caminhão do CEASA. -->
             <section id="painel-rotas" class="hidden"></section>
+            <!-- WhatsApp (js/admin-whatsapp.js, migração 042): só admin. -->
+            <section id="painel-whatsapp" class="hidden"></section>
         </main>
         </div>
     </div>
@@ -254,7 +257,11 @@
     <div id="dica" class="adm-dica"></div>
 
     <script src="./js/admin-erp-casamento.js"></script>
+    <!-- Núcleo puro da rota (fonte única: também usado pela Edge Function whatsapp-rotinas) -->
+    <script src="./supabase/functions/_shared/rota-core.js"></script>
     <script src="./js/admin-rota.js"></script>
+    <script src="./supabase/functions/_shared/whatsapp-core.js"></script>
+    <script src="./js/admin-whatsapp.js"></script>
     <script src="./js/admin.js"></script>
 </body>
 

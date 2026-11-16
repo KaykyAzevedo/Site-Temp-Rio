@@ -366,7 +366,7 @@
     // 'pedidoserp' = Kanban do ERP + vendas do SOLIDCON (aba Pedidos). site* = blocos do site que saíram de abas mistas.
     var ABAS = ['dashboard', 'pedidoserp', 'pedidos', 'clientes', 'historico', 'vendas',
                 'espera', 'vitrine', 'regioes', 'visitas', 'solidcon', 'leads', 'lgpd', 'lojistas',
-                'siteclientes', 'siteprodutos', 'sitedash', 'sitevendas', 'rotas'];
+                'siteclientes', 'siteprodutos', 'sitedash', 'sitevendas', 'rotas', 'whatsapp'];
 
     // Menu: item -> seções que ele mostra. restrito = item inteiro só admin. Na aba Site (mista), o que é só admin sai
     // seção a seção (SECOES_SO_ADMIN, em secoesDe). Histórico = vista "Encerrados" dos pedidos do site.
@@ -381,7 +381,9 @@
         solidcon: { secoes: ['solidcon'],  restrito: false },
         lgpd:     { secoes: ['lgpd'],      restrito: true },
         // Rota do dia (js/admin-rota.js): admin e vendedor (as fontes já são eh_equipe).
-        rotas:    { secoes: ['rotas'],     restrito: false }
+        rotas:    { secoes: ['rotas'],     restrito: false },
+        // WhatsApp (js/admin-whatsapp.js, migração 042): só admin (telefones, valores, modo de envio).
+        whatsapp: { secoes: ['whatsapp'],  restrito: true }
     };
     // Nomes antigos de aba (links, atalhos, estado antigo) caem no item novo correspondente; desconhecido cai em "hoje".
     var ALIAS_ABA = { dashboard: 'hoje', historico: 'site', vitrine: 'estoque', espera: 'site', leads: 'site', visitas: 'site',
@@ -775,6 +777,7 @@
         gmapEncerrar(true);
         hmDestruir(); hm.animou = false; hm.pediu = false;
         if (window.TempRioRota) window.TempRioRota.sair();   // Rota do dia: solta o mapa e esquece os dados da conta
+        if (window.TempRioWhats) window.TempRioWhats.sair(); // WhatsApp: esquece telefones/textos da conta
         saudeParar();
         if (canalRealtime) { sb.removeChannel(canalRealtime); canalRealtime = null; }
         sb.auth.signOut().then(function () {
@@ -1005,6 +1008,13 @@
         if (!window.TempRioRota) { alvo.innerHTML = cartaoVazio('Rota do dia indisponível', 'O arquivo js/admin-rota.js não carregou.', 'erp'); return; }
         window.TempRioRota.desenhar(alvo, { sb: sb, papel: papel });
     }
+    // WhatsApp: tela e dados em js/admin-whatsapp.js. Aqui só o contêiner, o cliente e o confirmarAdmin.
+    function desenharWhatsapp() {
+        var alvo = $('#painel-whatsapp');
+        if (!alvo) return;
+        if (!window.TempRioWhats) { alvo.innerHTML = cartaoVazio('WhatsApp indisponível', 'O arquivo js/admin-whatsapp.js não carregou.', 'erp'); return; }
+        window.TempRioWhats.desenhar(alvo, { sb: sb, papel: papel, confirmar: confirmarAdmin });
+    }
 
     var DESENHAR_ABA = {
         dashboard: desenharDashboard,
@@ -1025,7 +1035,8 @@
         siteprodutos: desenharSiteProdutos,
         sitedash: desenharSiteDash,
         sitevendas: desenharSiteVendas,
-        rotas: desenharRotas
+        rotas: desenharRotas,
+        whatsapp: desenharWhatsapp
     };
 
     // aba = item do menu: redesenha, entre as seções dele, só as que estão "sujas".
@@ -2588,10 +2599,13 @@
         if (qual === 'siteprodutos' && precisa(solid)) carregarSolidcon();
         // Rota do dia: o módulo carrega sozinho na 1ª vez; aqui só o ATUALIZAR (forcar) relê.
         if (qual === 'rotas' && forcar && window.TempRioRota) window.TempRioRota.recarregar();
+        if (qual === 'whatsapp' && forcar && window.TempRioWhats) window.TempRioWhats.recarregar();
         if ((qual === 'clientes' || qual === 'regioes' || qual === 'vendas') && precisa(cmp)) carregarCompras();
         if (qual === 'regioes' && precisa(geo)) carregarGeoClientes();
         if (qual === 'regioes' && papel === 'admin' && precisa(gmap)) carregarMapaClientes();
         if (qual === 'clientes' && papel === 'admin' && precisa(rec)) carregarReceber();
+        // 041: fornecedores (lista Clientes, compras por cliente, Regiões, Vendas, Hoje). Sem a 041: ausente, sem efeito.
+        if (['clientes', 'siteclientes', 'regioes', 'vendas', 'dashboard'].indexOf(qual) >= 0 && precisa(forn)) carregarFornecedores();
         if (qual === 'vitrine' && precisa(giro)) carregarGiro();
         if (qual === 'vitrine' && precisa(ent)) carregarEntradas();
         if (qual === 'vitrine' && precisa(ins)) carregarInsumos();
@@ -2825,6 +2839,78 @@
         return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
     }
 
+    /* ---- 041: FORNECEDORES (cadastros do ERP que NÃO são clientes; decisão do dono, 2026-11-16) ----
+     * O ERP mistura clientes e fornecedores no mesmo cadastro e é só leitura: a marcação fica em solidcon_fornecedores.
+     * No banco, as RPCs do mapa (mapa, pendentes, corrigir, interessados) já excluem os marcados (041). Aqui, onde o
+     * painel lê tabelas direto: lista Clientes (ERP), compras por cliente (cmp: KPIs, Vendas, Regiões) e o mapa antigo
+     * por bairro (geo). Pedido do ERP de fornecedor NÃO é filtrado (é pedido real: Kanban e Rotas seguem iguais).
+     * Sem a 041: forn.ausente = true e nada muda. */
+    var forn = { carregado: false, carregando: false, ausente: false, erro: null, docs: {}, msg: '', versao: 0 };
+    function ehFornecedor(doc) { return !!doc && Object.prototype.hasOwnProperty.call(forn.docs, doc); }
+    function carregarFornecedores() {
+        if (forn.carregando) return Promise.resolve();
+        forn.carregando = true;
+        var v0 = forn.versao;
+        return vendPaginar(function () { return sb.from('solidcon_fornecedores').select('documento,observacao').order('documento', { ascending: true }); }, 5000)
+            .then(function (r) {
+                forn.carregando = false;
+                if (v0 !== forn.versao) return carregarFornecedores();
+                if (r.error) {
+                    forn.ausente = solidTabelaAusente(r.error); forn.erro = forn.ausente ? null : String(r.error.message || r.error);
+                    forn.carregado = false; forn.docs = {};
+                } else {
+                    forn.docs = {}; (r.data || []).forEach(function (f) { forn.docs[f.documento] = f.observacao || ''; });
+                    forn.carregado = true; forn.ausente = false; forn.erro = null;
+                }
+                fornAplicar();
+            }, function (e) {
+                forn.carregando = false;
+                if (v0 !== forn.versao) return carregarFornecedores();
+                forn.erro = String((e && e.message) || e);
+            });
+    }
+    // Recalcula o que conta "clientes" a partir dos dados brutos já carregados (sem nova consulta) e redesenha.
+    function fornAplicar() {
+        if (cmp.brutas) cmpCalcular(cmp.brutas);
+        if (geo.brutas) { var gl = geoSemFornecedores(geo.brutas); geo.totalClientes = gl.length; geo.locais = geoAgregar(gl); geoAplicarCache(); }
+        ['clientes', 'siteclientes', 'regioes', 'vendas', 'dashboard'].forEach(function (a) { abasParaRedesenhar[a] = true; });
+        dashAtualizarResumo();
+        desenharAbaSeSuja(abaAtual);
+    }
+    function geoSemFornecedores(linhas) { return linhas.filter(function (l) { return !ehFornecedor(docNorm(l.documento, l.tipo)); }); }
+    function fornPode() { return papel === 'admin' && forn.carregado && !forn.ausente; }
+    // Marcar/desmarcar (só admin, com confirmarAdmin). Atualiza listas, contagens e o mapa (RPC filtra no banco).
+    function fornMarcar(doc, nome, marcar, opener) {
+        if (!fornPode() || !/^\d{11,14}$/.test(doc)) return;
+        var pergunta = marcar
+            ? 'Marcar "' + nome + '" como FORNECEDOR? Ele sai do mapa e das listas e contagens de clientes. O cadastro no ERP não muda.'
+            : 'Desmarcar "' + nome + '" como fornecedor? Ele volta a contar como cliente.';
+        confirmarAdmin(pergunta, marcar ? 'Marcar como fornecedor' : 'Desmarcar', false, opener).then(function (ok) {
+            if (!ok) return;
+            var q = marcar ? sb.from('solidcon_fornecedores').insert({ documento: doc })
+                           : sb.from('solidcon_fornecedores').delete().eq('documento', doc);
+            q.then(function (r) {
+                // Já marcado (23505) conta como sucesso: o estado desejado é o mesmo.
+                if (r.error && !(marcar && String(r.error.code) === '23505')) {
+                    forn.msg = 'Não foi possível ' + (marcar ? 'marcar' : 'desmarcar') + ' o fornecedor: ' + (r.error.message || r.error);
+                    gmap.run.msg = forn.msg; gmapUI(); fornAplicar(); return;
+                }
+                forn.versao++;
+                if (marcar) forn.docs[doc] = ''; else delete forn.docs[doc];
+                forn.msg = '"' + nome + '" ' + (marcar ? 'marcado como fornecedor.' : 'voltou a contar como cliente.');
+                if (mapaClientes) { try { mapaClientes.closePopup(); } catch (e) { /* sem popup */ } }
+                fornAplicar();
+                if (gmap.carregado || gmap.erro) carregarMapaClientes();   // as RPCs do mapa já filtram no banco
+            }, function (e) { forn.msg = 'Falha ao gravar: ' + String((e && e.message) || e); fornAplicar(); });
+        });
+    }
+    // Botão do popup do pino do mapa (delegado: o popup do Leaflet é HTML recriado a cada abertura).
+    document.addEventListener('click', function (ev) {
+        var b = ev.target && ev.target.closest ? ev.target.closest('[data-gmap-forn]') : null;
+        if (!b) return;
+        fornMarcar(b.getAttribute('data-gmap-forn'), b.getAttribute('data-nome') || 'este cadastro', true, b);
+    });
+
     // Agrega por documento: n compras, total e ticket dos últimos 6 meses, frequência típica
     // (mediana do intervalo entre DIAS de compra distintos), valor médio mensal (total ÷ meses entre a 1ª e a última compra, mín. 1).
     function cmpCalcular(linhas) {
@@ -2832,6 +2918,7 @@
         linhas.forEach(function (l) {
             var k = docNorm(l.documento, l.tipo);
             if (!k) { semDoc++; return; }
+            if (ehFornecedor(k)) return;   // 041: fornecedor não é cliente
             var dia = String(l.dia).slice(0, 10), v = vendNum(l.valor_centavos);
             var o = por[k] || (por[k] = { doc: k, dias: [], n: 0, total: 0, n6: 0, total6: 0 });
             o.n++; o.total += v; o.dias.push(dia);
@@ -2863,7 +2950,8 @@
                 cmp.carregado = false; cmp.por = null;
             } else {
                 cmp.truncado = (r.data || []).length >= CMP_LIMITE;
-                if (cmp.truncado) { cmp.por = null; } else { cmpCalcular(r.data || []); }
+                cmp.brutas = cmp.truncado ? null : (r.data || []);   // 041: guardadas para recalcular ao marcar fornecedor
+                if (cmp.truncado) { cmp.por = null; } else { cmpCalcular(cmp.brutas); }
                 cmp.carregado = true;
             }
             cmpRedesenhar();
@@ -4516,8 +4604,10 @@
                 if (solidTabelaAusente(r.error)) geo.ausente = true; else geo.erro = String(r.error.message || r.error);
                 geo.carregado = false;
             } else {
-                geo.totalClientes = (r.data || []).length;
-                geo.locais = geoAgregar(r.data || []);
+                geo.brutas = r.data || [];                     // 041: sem fornecedores na contagem por bairro
+                var gl = geoSemFornecedores(geo.brutas);
+                geo.totalClientes = gl.length;
+                geo.locais = geoAgregar(gl);
                 geoAplicarCache();
                 geo.carregado = true;
             }
@@ -5007,7 +5097,10 @@
             'Compras: ' + NUM.format(l._cu[i]) + '<br>' +
             '1ª compra: ' + (l.primeira_compra ? esc(cmpData(String(l.primeira_compra).slice(0, 10))) : '—') + '<br>' +
             'Última (até a data): ' + (l._ult[i] ? esc(gmapMesRot(l._ult[i])) : '—') +
-            (l.precisao === 'bairro' ? '<br><em>Posição aproximada (centro do bairro)</em>' : l.precisao === 'cep' ? '<br><em>Posição pelo CEP</em>' : '') + parou;
+            (l.precisao === 'bairro' ? '<br><em>Posição aproximada (centro do bairro)</em>' : l.precisao === 'cep' ? '<br><em>Posição pelo CEP</em>' : '') + parou +
+            (fornPode() && /^\d{14}$/.test(String(l.documento || ''))
+                ? '<div style="margin-top:.6rem"><button type="button" class="adm-botao-fantasma" data-gmap-forn="' + esc(l.documento) + '" data-nome="' + esc(l.nome || '') + '">' +
+                  '<i class="fa-solid fa-truck-ramp-box mr-1" aria-hidden="true"></i>Marcar como fornecedor</button></div>' : '');
     }
 
     // ---- pinos em gota (divIcon SVG; cores/estilos em css/admin.css, .adm-gota-*) ----
@@ -7248,7 +7341,7 @@
 
                 var cartaoSolto = arrastando;
                 if (para === 'cancelado') {
-                    confirmarAdmin('Cancelar este pedido?', 'Cancelar pedido').then(function (ok) { if (ok) mudarStatus(id, para, cartaoSolto); });
+                    confirmarAdmin('Cancelar este pedido?', 'Cancelar pedido', true, cartaoSolto).then(function (ok) { if (ok) mudarStatus(id, para, cartaoSolto); });
                     return;
                 }
 
@@ -7656,7 +7749,7 @@
                 ev.stopPropagation(); // o botão mora dentro do cartão/linha que abre o modal
                 var novo = b.getAttribute('data-status');
                 var disparar = function () { b.disabled = true; mudarStatus(b.getAttribute('data-id'), novo, b); };
-                if (novo === 'cancelado') { confirmarAdmin('Cancelar este pedido?', 'Cancelar pedido').then(function (ok) { if (ok) disparar(); }); return; }
+                if (novo === 'cancelado') { confirmarAdmin('Cancelar este pedido?', 'Cancelar pedido', true, b).then(function (ok) { if (ok) disparar(); }); return; }
                 disparar();
             });
         });
@@ -7762,7 +7855,7 @@
     // Mesma lista, estado independente por aba: ucli/clientesPagina/clientesFiltroAtivo são o estado do escopo ATIVO;
     // ucliEscopo() guarda o do outro e carrega o pedido (os handlers de cada lista ativam o seu escopo antes de agir).
     var ucli = { escopo: 'site', busca: '', origem: 'todos', ordem: { col: 'total', dir: -1 }, base: [], filtradas: [] };
-    var UCLI_EST = { erp: { ucli: { escopo: 'erp', busca: '', origem: 'todos', ordem: { col: 'total', dir: -1 }, base: [], filtradas: [] }, pagina: 1, status: 'todos' } };
+    var UCLI_EST = { erp: { ucli: { escopo: 'erp', verForn: 'clientes', busca: '', origem: 'todos', ordem: { col: 'total', dir: -1 }, base: [], filtradas: [] }, pagina: 1, status: 'todos' } };
     function ucliEscopo(esc) {
         if (ucli.escopo === esc) return;
         UCLI_EST[ucli.escopo] = { ucli: ucli, pagina: clientesPagina, status: clientesFiltroAtivo };
@@ -7794,13 +7887,15 @@
             var r = d && !(porKey[d] && porKey[d].site) ? porDoc(d) : nova('site:' + c.clienteId, d);
             r.site = c;
         });
+        var soForn = !ucliSite() && ucli.verForn === 'fornecedores';   // 041: aba "Fornecedores" da lista ERP
         if (scli.carregado && scli.lista) scli.lista.forEach(function (c, i) {
             var d = docNorm(c.documento, c.tipo);
+            if (!ucliSite() && soForn !== ehFornecedor(d)) return;   // ERP: clientes sem fornecedores / só fornecedores
             if (!d) { nova('erp:' + i, '').erp = c; return; }
             var r = porDoc(d);
             if (!r.erp) r.erp = c;
         });
-        if (cmpPronto()) Object.keys(cmp.por).forEach(function (k) { porDoc(k).cmp = cmp.por[k]; });
+        if (cmpPronto() && !soForn) Object.keys(cmp.por).forEach(function (k) { porDoc(k).cmp = cmp.por[k]; });   // cmp já vem sem fornecedores
 
         var A = recPronto() ? recAgregar() : null;
         linhas.forEach(function (r) {
@@ -7891,7 +7986,8 @@
         if (!alvo) return;
         function em(f) { return function (ev) { ucliEscopo(e); f(ev); }; }   // handler desta lista age no escopo dela
         ucli.base = ucliLinhas();
-        if (!ucli.base.length && !(scli.carregando && !scli.carregado)) {
+        var temForn = e === 'erp' && forn.carregado && !forn.ausente;
+        if (!ucli.base.length && !(scli.carregando && !scli.carregado) && !temForn) {
             alvo.innerHTML = ucliAviso() + cartaoVazio('Nenhum cliente ainda', site
                 ? 'Um cliente entra aqui sozinho assim que o primeiro pedido dele é gravado no site.'
                 : 'Os clientes aparecem aqui quando existirem no cadastro do SOLIDCON ou tiverem compras no ERP.', site ? 'site' : 'erp');
@@ -7902,7 +7998,10 @@
             '<div class="flex items-center justify-between flex-wrap gap-3 mb-3">' +
                 (site ? '<div class="flex gap-1 flex-wrap" role="group" aria-label="Cadastro no ERP">' +
                     ucliChips('data-ucli-origem', [['todos', 'Todos os clientes do site'], ['site', 'Ainda não estão no ERP'], ['ambos', 'Já estão no ERP']], ucli.origem) +
-                '</div>' : '<div></div>') +
+                '</div>' : (forn.carregado && !forn.ausente
+                    ? '<div class="flex gap-1 flex-wrap" role="group" aria-label="Clientes ou fornecedores">' +
+                        ucliChips('data-ucli-forn', [['clientes', 'Clientes'], ['fornecedores', 'Fornecedores (' + NUM.format(Object.keys(forn.docs).length) + ')']], ucli.verForn || 'clientes') + '</div>'
+                    : '<div></div>')) +
                 '<div class="flex items-center gap-3 flex-wrap">' + botoesExportar('clientes') + '</div>' +
             '</div>' +
             '<div class="flex items-center justify-between flex-wrap gap-3 mb-4">' +
@@ -7922,6 +8021,9 @@
             ucliAviso() +
             '<div id="ucli-corpo-' + e + '"></div>';
 
+        alvo.querySelectorAll('[data-ucli-forn]').forEach(function (b) {
+            b.addEventListener('click', em(function () { ucli.verForn = b.getAttribute('data-ucli-forn'); clientesPagina = 1; desenharClientesLista(); }));
+        });
         alvo.querySelectorAll('[data-ucli-origem]').forEach(function (b) {
             b.addEventListener('click', em(function () { ucli.origem = b.getAttribute('data-ucli-origem'); clientesPagina = 1; desenharClientesLista(); }));
         });
@@ -7952,10 +8054,21 @@
         var adm = papel === 'admin';
         var nSite = 0, nErp = 0, nAmbos = 0;
         filtradas.forEach(function (r) { if (r.origem === 'site') nSite++; else if (r.origem === 'erp') nErp++; else nAmbos++; });
+        var avisoForn = !site && forn.msg ? '<p class="text-xs mb-3" role="status" style="color:var(--adm-tinta-2)"><i class="fa-solid fa-circle-info mr-1"></i>' + esc(forn.msg) + '</p>' : '';
         var aviso = ucliFiltroDoSiteAtivo() && ucli.base.some(function (r) { return !r.site; })
             ? '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)"><i class="fa-solid fa-filter mr-1"></i>Filtro de período/região ativo: cadastros que existem só no ERP ficam de fora (esses dados são do site).</p>' : '';
         if (!filtradas.length) {
-            alvo.innerHTML = aviso + cartaoVazio('Nenhum cliente com esses filtros', 'Há ' + NUM.format(ucli.base.length) + ' clientes ao todo — tente limpar os filtros ou a busca.');
+            if (!site && ucli.verForn === 'fornecedores' && !ucli.base.length) {
+                alvo.innerHTML = avisoForn + cartaoVazio('Nenhum fornecedor marcado', 'Use "Marcar como fornecedor" na lista de clientes ou no pino do mapa.', 'erp');
+                return;
+            }
+            if (!site && !ucli.base.length) {
+                alvo.innerHTML = avisoForn + cartaoVazio('Nenhum cliente ainda', Object.keys(forn.docs).length
+                    ? 'Todos os cadastros estão marcados como fornecedores (use "Fornecedores" acima para ver ou desmarcar).'
+                    : 'Os clientes aparecem aqui quando existirem no cadastro do SOLIDCON ou tiverem compras no ERP.', 'erp');
+                return;
+            }
+            alvo.innerHTML = avisoForn + aviso + cartaoVazio('Nenhum cliente com esses filtros', 'Há ' + NUM.format(ucli.base.length) + ' clientes ao todo — tente limpar os filtros ou a busca.');
             return;
         }
         var pag = paginar(filtradas, clientesPagina, POR_PAGINA_CLIENTES);
@@ -7966,14 +8079,16 @@
             return '<th' + (num ? ' class="num"' : '') + (ordenavel ? ' style="cursor:pointer" data-ucli-ord="' + col + '" aria-sort="' + (ucli.ordem.col === col ? (ucli.ordem.dir > 0 ? 'ascending' : 'descending') : 'none') + '"' : '') + '>' +
                 rot + (ordenavel && ucli.ordem.col === col ? (ucli.ordem.dir > 0 ? ' ▲' : ' ▼') : '') + '</th>';
         }
-        alvo.innerHTML = aviso +
+        alvo.innerHTML = avisoForn + aviso +
             '<div class="adm-card p-5"><div class="overflow-x-auto"><table class="adm-tabela adm-tabela-lista"><thead><tr>' +
                 th('nome', 'Cliente') + th('', 'Contato') + (site ? th('', 'Pedidos (site)', true) : '') + th('ultima', 'Última compra', true) + th('total', 'Total', true) +
                 (adm ? th('vencido', 'Vencido', true) : '') + th('', 'Ação') +
             '</tr></thead><tbody>' + pag.itens.map(function (r) { return linhaClienteUnico(r, colunas); }).join('') + '</tbody></table></div>' +
             '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">' + (site
                 ? NUM.format(filtradas.length) + ' clientes do site — ' + NUM.format(nAmbos) + ' já estão no ERP · ' + NUM.format(nSite) + ' ainda não. Total = histórico no ERP (quando existe) ou pedidos fechados do site.'
-                : NUM.format(filtradas.length) + ' clientes no ERP (cadastro ou compras). Total = histórico de compras no ERP.') + '</p>' +
+                : ucli.verForn === 'fornecedores' ? NUM.format(filtradas.length) + ' fornecedor(es) marcado(s): não entram no mapa, nas listas nem nas contagens de clientes.'
+                : NUM.format(filtradas.length) + ' clientes no ERP (cadastro ou compras). Total = histórico de compras no ERP.' +
+                  (forn.carregado && Object.keys(forn.docs).length ? ' Fornecedores marcados ficam fora.' : '')) + '</p>' +
             controlesDePaginacao('clientes', pag.pagina, pag.totalPaginas) + '</div>';
 
         alvo.querySelectorAll('[data-ucli-ord]').forEach(function (h) {
@@ -7982,6 +8097,12 @@
                 ucliEscopo(e);
                 ucli.ordem = { col: c, dir: ucli.ordem.col === c ? -ucli.ordem.dir : (c === 'nome' ? 1 : -1) };
                 clientesPagina = 1; desenharClientesLista();
+            });
+        });
+        alvo.querySelectorAll('[data-forn-marcar], [data-forn-desmarcar]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                var marcar = b.hasAttribute('data-forn-marcar');
+                fornMarcar(b.getAttribute(marcar ? 'data-forn-marcar' : 'data-forn-desmarcar'), b.getAttribute('data-nome') || 'este cadastro', marcar, b);
             });
         });
         alvo.querySelectorAll('[data-pagina^="clientes:"]').forEach(function (b) {
@@ -8061,6 +8182,11 @@
             '<td><div class="flex items-center gap-1 flex-wrap">' +
                 '<button type="button" class="adm-botao-fantasma" data-ver-cliente="' + esc(r.key) + '" aria-expanded="false">' +
                     '<i class="fa-solid fa-chevron-down mr-1" data-icone-detalhe></i>Detalhes</button>' +
+                (!ucliSite() && fornPode() && r.doc
+                    ? (ehFornecedor(r.doc)
+                        ? '<button type="button" class="adm-botao-fantasma" data-forn-desmarcar="' + esc(r.doc) + '" data-nome="' + esc(r.nome) + '"><i class="fa-solid fa-rotate-left mr-1"></i>Desmarcar fornecedor</button>'
+                        : '<button type="button" class="adm-botao-fantasma" data-forn-marcar="' + esc(r.doc) + '" data-nome="' + esc(r.nome) + '"><i class="fa-solid fa-truck-ramp-box mr-1"></i>Marcar como fornecedor</button>')
+                    : '') +
                 (s ? '<button type="button" class="adm-botao-fantasma" data-editar-cliente="' + esc(s.clienteId) + '">' +
                     '<i class="fa-solid fa-pen mr-1"></i>Editar</button>' +
                 '<button type="button" class="adm-botao-fantasma" data-excluir-cliente="' + esc(s.clienteId) + '" ' +
@@ -9644,6 +9770,18 @@
         return new Promise(function (resolve) {
             var encerrado = false;
             var anterior = opener || document.activeElement;
+            function escCss(v) { return String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"'); }
+            var seletor = (function (el) {
+                if (!el || !el.getAttribute) return null;
+                if (el.id) return '#' + (window.CSS && CSS.escape ? CSS.escape(el.id) : escCss(el.id));
+                var p = [el.tagName ? el.tagName.toLowerCase() : 'button'], a = el.attributes || [];
+                for (var i = 0; i < a.length; i++) {
+                    if (a[i].name.indexOf('data-') === 0 && a[i].name !== 'data-confirmando') p.push('[' + a[i].name + '="' + escCss(a[i].value) + '"]');
+                }
+                return p.length > 1 ? p.join('') : null;
+            })(anterior);
+            var sec = anterior && anterior.closest ? anterior.closest('section[id^="painel-"]') : null;
+            var secId = sec ? sec.id : null;
             var fundo = document.createElement('div');
             fundo.className = 'adm-modal-fundo';
             fundo.style.zIndex = '1100';
@@ -9655,6 +9793,35 @@
             document.body.appendChild(fundo);
             window.ScrollLock && window.ScrollLock.acquire('confirmar-admin');
             var nao = fundo.querySelector('[data-conf="nao"]'), sim = fundo.querySelector('[data-conf="sim"]');
+            function tentarFocar(el) {
+                if (!el) return false;
+                if (el.matches && !el.matches('button,a[href],input,select,textarea,summary,[tabindex]')) {
+                    var int = (el.querySelector && el.querySelector('button[data-status="cancelado"]')) || focaveis(el)[0];
+                    if (int && int.focus) {
+                        try { int.focus(); } catch (e) { /* sem foco */ }
+                        if (document.activeElement === int) return true;
+                    }
+                    el.setAttribute('tabindex', '-1');
+                }
+                if (el.focus) { try { el.focus(); } catch (e) { /* sem foco */ } }
+                return document.activeElement === el;
+            }
+            function devolverFoco() {
+                var alvo = (anterior && anterior.isConnected && anterior.offsetParent !== null) ? anterior : null;
+                var raizSec = secId ? document.getElementById(secId) : null;
+                if (!alvo && seletor) {
+                    var eq = null;
+                    try { eq = (raizSec && raizSec.querySelector(seletor)) || document.querySelector(seletor); } catch (e) { eq = null; }
+                    if (eq && eq.offsetParent !== null) alvo = eq;
+                }
+                if (tentarFocar(alvo)) return;
+                if (raizSec && !raizSec.classList.contains('hidden')) {
+                    var cab = document.getElementById('cab-' + secId.replace(/^painel-/, ''));
+                    var fb = (cab && !cab.classList.contains('hidden')) ? cab : raizSec;
+                    if (!fb.hasAttribute('tabindex')) fb.setAttribute('tabindex', '-1');
+                    if (fb.focus) { try { fb.focus(); } catch (e) { /* sem foco */ } }
+                }
+            }
             function fim(ok) {
                 if (encerrado) return;
                 encerrado = true;
@@ -9662,7 +9829,7 @@
                 document.removeEventListener('keydown', tecla, true);
                 fundo.remove();
                 window.ScrollLock && window.ScrollLock.release('confirmar-admin');
-                if (anterior && anterior.isConnected && anterior.focus) { try { anterior.focus(); } catch (e) { /* sem foco */ } }
+                devolverFoco();
                 resolve(ok);
             }
             function tecla(ev) {

@@ -78,3 +78,41 @@
     body.rota-imprimindo .rota-linha-ruim td { background: #fde2df !important; }
     body.rota-imprimindo tr { break-inside: avoid; }
 }
+
+/* ---------- 040: veículo por parada, regras e diálogo "Configurar rota" ---------- */
+.rota-motivo { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.72rem; font-weight: 700; color: var(--adm-tinta-2);
+    background: var(--adm-neutro-fundo); border: 1px solid var(--adm-borda); border-radius: 999px; padding: 0.1rem 0.5rem; white-space: nowrap; }
+.rota-motivo i { color: var(--adm-acao); }
+.rota-motivo-padrao { color: var(--adm-tinta-3); }
+.rota-motivo-padrao i { color: var(--adm-tinta-3); }
+.rota-motivo-excecao { border-color: var(--adm-atencao-borda); color: var(--adm-atencao); background: var(--adm-atencao-fundo); }
+.rota-motivo-excecao i { color: var(--adm-atencao); }
+.rota-veic { display: block; margin-top: 0.35rem; }
+.rota-veic select { width: auto; max-width: 100%; padding: 0.3rem 0.5rem; font-size: 0.78rem; }
+
+.rota-config-resumo { font-size: 0.82rem; color: var(--adm-tinta-2); }
+.rota-config-resumo summary { cursor: pointer; font-weight: 700; color: var(--adm-tinta); }
+.rota-config-resumo summary i { color: var(--adm-acao); margin-right: 0.3rem; }
+.rota-config-resumo ul { margin: 0.5rem 0 0 1.1rem; list-style: disc; display: grid; gap: 0.2rem; }
+
+.rota-dialogo { width: min(40rem, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); padding: 0; border: 1px solid var(--adm-borda-forte, var(--adm-borda));
+    border-radius: 1rem; background: var(--adm-superficie); color: var(--adm-tinta); }
+.rota-dialogo::backdrop { background: rgba(0, 0, 0, 0.6); }
+.rota-dlg-form { padding: 1.25rem 1.25rem 1rem; display: grid; gap: 1rem; }
+.rota-dlg-form fieldset { border: 1px solid var(--adm-borda); border-radius: 0.75rem; padding: 0.75rem 0.9rem 0.9rem; display: grid; gap: 0.5rem; }
+.rota-dlg-form legend { font-weight: 800; font-size: 0.9rem; padding: 0 0.35rem; }
+.rota-dlg-linha { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.rota-dlg-linha .adm-input { flex: 1 1 14rem; padding: 0.5rem 0.7rem; }
+.rota-dlg-linha label:not(.sr-only) { font-size: 0.8rem; color: var(--adm-tinta-2); }
+.rota-dlg-check { display: flex; align-items: flex-start; gap: 0.5rem; font-size: 0.88rem; cursor: pointer; }
+.rota-dlg-check input { margin-top: 0.2rem; width: 1rem; height: 1rem; accent-color: var(--adm-acao); }
+.rota-dlg-msg { min-height: 1.1rem; font-size: 0.82rem; color: var(--adm-atencao); }
+.rota-dlg-acoes { display: flex; justify-content: flex-end; gap: 0.5rem; }
+.rota-chips { display: flex; flex-wrap: wrap; gap: 0.35rem; margin: 0; padding: 0; list-style: none; }
+.rota-chips li { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.15rem 0.2rem 0.15rem 0.6rem; border-radius: 999px;
+    background: var(--adm-neutro-fundo-2, var(--adm-neutro-fundo)); border: 1px solid var(--adm-borda); font-size: 0.78rem; font-weight: 700; }
+.rota-chip-x { display: inline-flex; align-items: center; justify-content: center; width: 1.5rem; height: 1.5rem; border-radius: 999px; color: var(--adm-tinta-2); }
+.rota-chip-x:hover, .rota-chip-x:focus-visible { background: var(--adm-ruim-fundo); color: var(--adm-ruim); }
+@media print { body.rota-imprimindo .rota-veic, body.rota-imprimindo .rota-config-resumo, body.rota-imprimindo .rota-dialogo { display: none !important; } }
+/* sr-only próprio (não depende do Tailwind ter gerado a classe) */
+#painel-rotas .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }

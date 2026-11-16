@@ -1475,3 +1475,49 @@ Arquivo: `039_pedidos_caixas.sql`. Requer 035 e 019. Independente de 036/037/038
 - Testada em PG 18 local: formato antigo continua aceito; misto 10/4/0; sem campo, `null`, lista vazia e fracionada = NULL; produto fora do espelho = outras; 7 rejeições (q negativa, campo extra, p texto, q > 100000, > 300 itens, campo novo fora da lista, `cliente_nome`) recusam o lote e não mexem na tabela; grants iguais.
 - **Atenção ao nome:** `caixas_outras` **não são caixas**: é a quantidade em **UNIDADES (potes avulsos)** dos produtos com código próprio, fora do espelho 24/48. Conferido em produção (2026-11-16): pedido 1497 = 530 × R$ 3,30; 1494 = 149 × R$ 3,30; 1481 = 260 × R$ 3,30. O nome da coluna ficou (039 já aplicada); a Rota do dia (`js/admin-rota.js`, `ROTA.VOLUME_POTE`) trata como potes: volume = potes × 9/24 (24 potes ocupam uma caixa de 24).
 - Rollback: `alter table public.solidcon_pedidos_erp drop column caixas_24, drop column caixas_48, drop column caixas_outras;` e reaplicar a função da 035 (desligue `pedidos_enviar_caixas` antes).
+
+## 040 — configuração da Rota do dia (aba Rotas) — APLICADA em 2026-11-16
+
+Arquivo: `040_rota_config.sql`. Requer `eh_admin()`/`eh_equipe()` (014). Independente de 035..039. Idempotente, `lock_timeout 5s`.
+
+- `rota_config` (linha única, `id = 1`): `bairros_caminhao` (o gatilho normaliza: MAIÚSCULAS, sem acento, espaços simples, sem repetidos, ordenado), `corte_hora` (0..23 ou NULL), `s10_volta_sede`, `feriados_sem_saida` (padrão true), `feriados_extras`, `atualizado_em/por` (carimbados pelo gatilho com `auth.uid()`).
+- `rota_cliente_veiculo` (`documento` só dígitos → `caminhao` | `s10`): exceção por cliente; sem linha = automático.
+- RLS: leitura `(select eh_equipe())` (vendedor lê); `insert/update` (e `delete` só na de exceções) `(select eh_admin())`; nada de FOR ALL; `rota_config` sem DELETE. anon sem grant.
+- Sem a 040 o painel funciona com os padrões (sem bairros extras, feriado sem saída, sem corte, S10 sem volta) e o botão "Configurar rota" fica desabilitado.
+- Testada em PG 18 local (aplicada 2x): admin grava e a normalização confere (`Irajá`, `  irajá ` → `IRAJA`; `Pavuna ª` → `PAVUNA`; datas fora de 2020..2100 descartadas); vendedor lê e update/delete afetam 0 linhas, insert é recusado pela RLS; logado fora da equipe vê 0 linhas; anon = permission denied; `corte_hora = 24`, documento/veículo inválidos e segunda linha são recusados.
+- Rollback: `drop table public.rota_cliente_veiculo, public.rota_config; drop function public.rota_040_config_normalizar(), public.rota_040_veiculo_carimbar();` (o painel volta aos padrões sozinho).
+
+## 041 — fornecedor não é cliente — NÃO aplicada
+
+Arquivo: `041_fornecedores.sql`. Requer 033 e 037 e `eh_admin()/eh_equipe()`. Independente de 038–040. Idempotente, `lock_timeout 5s`.
+
+- O ERP mistura clientes e fornecedores no mesmo cadastro (e é só leitura). `solidcon_fornecedores` guarda a marcação do lado do painel: `documento` (só dígitos, 11–14), `observacao` (≤ 200), `marcado_em/marcado_por` (gatilho). RLS: leitura `(select eh_equipe())`; insert/delete `(select eh_admin())`; sem update; anon sem grant. **Nenhum documento no arquivo** (repositório público): o Tech Lead insere os 41 pelo SQL Editor (`insert into public.solidcon_fornecedores(documento, observacao) values (...)`) ou o admin marca no painel.
+- `solidcon_geo_pendentes`, `solidcon_mapa_clientes`, `solidcon_geo_corrigir_erp` e `solidcon_interessados` recriadas a partir do texto atual (033/037), mudando **só** o filtro `not exists (... solidcon_fornecedores ...)`. Mesmas assinaturas, retorno, SECURITY INVOKER, search_path e grants.
+- Pedido do ERP de fornecedor **não** é filtrado (é pedido real: Kanban e Rotas). No painel: lista Clientes (ERP), compras por cliente (KPIs, Vendas, Regiões) e mapa por bairro excluem os marcados; a lista tem a aba "Fornecedores (N)" e, para admin, "Marcar como fornecedor / Desmarcar" (também no popup do pino).
+- Testada em PG 18 local (aplicada 2x; sem marcados = igual a antes; marcado some do mapa/pendentes/corrigir e volta ao desmarcar; vendedor lê e não escreve; anon nada).
+- Rollback: reaplicar as funções da 033/037 e `drop table public.solidcon_fornecedores; drop function public.solidcon_041_fornecedor_carimbar();`.
+
+## 042 — WhatsApp (fila/log + agendamento) — NÃO aplicada
+
+Arquivo: `042_whatsapp.sql`. Requer `eh_admin()`, 033 e **041** (`solidcon_rota_posicoes`). Idempotente, `lock_timeout 5s`. Passo a passo completo em `integracao/whatsapp/LEIAME.md`.
+
+- `whatsapp_destinatarios`: nome, telefone E.164 (único), papel `gestor|entregador|outro`, ativo, `consentimento_em/_por` (LGPD; carimbados pelo gatilho).
+- `whatsapp_rotinas`: 4 linhas semeadas (`receber_diario`, `rota_s10`, `rota_caminhao`, `alertas_marcio`), **desligadas e em simulação**; horário de São Paulo, dias, destinatários, modo, template.
+- `whatsapp_envios`: log com status `simulado|enviado|erro|pulado`, corpo ≤ 6000 caracteres; retenção de 90 dias (`whatsapp_042_limpar`, cron diário).
+- `whatsapp_execucoes`: trava (rotina, dia); `whatsapp_042_reservar` devolve true só na 1ª vez do dia.
+- RLS:
+  - só `(select eh_admin())`, com políticas por comando;
+  - admin lê o log mas não escreve nele;
+  - rotinas: só update;
+  - anon: nada;
+  - funções `whatsapp_042_*`: EXECUTE só para `service_role`.
+- pg_cron (se `pg_cron` e `pg_net` existirem; senão, só um aviso):
+  - `whatsapp-rotinas` a cada 15 min, `net.http_post` para a Edge Function com o header `x-cron-token` lido do Vault (`project_url`, `whatsapp_cron_token`);
+  - `whatsapp-limpeza` diário.
+  - Não usa a chave de serviço no header: o pg_net deixa os headers legíveis em `net.http_request_queue` enquanto a requisição espera.
+- Testada em PG 18 local:
+  - aplicada 2x;
+  - admin escreve, vendedor 0 linhas, anon 42501;
+  - trava t/f/t; retenção; apagar destinatário mantém o log;
+  - cron com stubs: 2 jobs após 2 aplicações; comando monta URL, header e body certos.
+- Rollback: `select cron.unschedule('whatsapp-rotinas'); select cron.unschedule('whatsapp-limpeza');` e `drop table public.whatsapp_envios, public.whatsapp_execucoes, public.whatsapp_rotinas, public.whatsapp_destinatarios; drop function public.whatsapp_042_reservar(text,date), public.whatsapp_042_limpar(), public.whatsapp_042_carimbar();`
