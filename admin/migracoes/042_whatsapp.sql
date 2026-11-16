@@ -91,7 +91,8 @@ alter table public.whatsapp_envios add column if not exists partes smallint;
 alter table public.whatsapp_envios drop constraint if exists whatsapp_envios_042_parte;
 alter table public.whatsapp_envios add constraint whatsapp_envios_042_parte check (
   (parte is null and partes is null)
-  or (parte is not null and partes is not null and partes between 1 and 500 and parte between 1 and partes));
+  or (parte is not null and partes is not null and partes between 1 and 100 and parte between 1 and partes));
+-- 100 = WA.PARTES_MAX (whatsapp-core.js): a rota e limitada ANTES do envio (99 mensagens + 1 aviso), entao nada passa disso.
 create index if not exists whatsapp_envios_criado_em_idx on public.whatsapp_envios (criado_em desc);
 
 create table if not exists public.whatsapp_execucoes (

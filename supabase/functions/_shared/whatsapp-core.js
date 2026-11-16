@@ -23,6 +23,9 @@
         ESTOQUE_HORAS: 24,           // eventos de estoque crítico das últimas 24 h
         PARAM_MAX: 700,              // parâmetro de template: curto, sem quebra de linha (regra da Meta)
         LOTE_PARADAS: ROTA.LOTE_GMAPS_MOVEL,   // 3 paradas intermediárias + destino = 4 por link (app do celular)
+        // Teto de mensagens por rota e por destinatário (= CHECK de whatsapp_envios.partes na 042). Acima disso a rota
+        // manda as primeiras PARTES_MAX-1 mensagens + 1 aviso com quantas paradas ficaram de fora (ver no painel).
+        PARTES_MAX: 100,
         DIAS: ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'],
         ROTINAS: ['receber_diario', 'rota_s10', 'rota_caminhao', 'alertas_marcio']
     };
@@ -316,8 +319,18 @@
                 param('sem posição no mapa, ' + de + (ate > de ? '–' + ate : '') + ' de ' + total, 40), param(g.join('; '), LISTA_MAX),
                 param('sem link (cliente sem posição no mapa)', 300)]));
         });
+        // Rota gigante (ex.: milhares de pedidos PF sem posição): limita ANTES do envio, com aviso na última mensagem.
+        var omitidas = 0;
+        if (partes.length > WA.PARTES_MAX) {
+            var fora = partes.splice(WA.PARTES_MAX - 1);
+            fora.forEach(function (x) { omitidas += x.params[3].split('; ').length; });
+            partes.push(parte('rota_do_dia', opts.template, [param(rotulo, 20), param(dataLonga(hoje), 40), param('aviso', 40),
+                param('rota longa demais para o WhatsApp: ' + plural(omitidas, 'parada não foi enviada', 'paradas não foram enviadas') +
+                      ' (' + (total - omitidas + 1) + ' a ' + total + '). Veja a rota completa na aba Rotas do painel.', LISTA_MAX),
+                param(linkPainel(opts.painelUrl, 'rotas') || 'abra o painel', 300)]));
+        }
         return { texto: textoDe(partes), partes: partes,
-                 resumo: { paradas: total, semPosicao: r.semPosicao.length, links: links.length, fica: veiculo === 's10' ? pl.fica.length : 0 } };
+                 resumo: { paradas: total, semPosicao: r.semPosicao.length, links: links.length, fica: veiculo === 's10' ? pl.fica.length : 0, omitidas: omitidas } };
     }
 
     // alertas_marcio. d = coletarAlertas(...). Sem nada a alertar: vazio (não manda mensagem). SÓ para gestor.
