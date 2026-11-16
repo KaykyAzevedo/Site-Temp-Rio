@@ -295,6 +295,8 @@
     // Uma parada = um item inteiro (nunca cortado): "n) nome — bairro — caixas", no máximo ITEM_MAX caracteres.
     var ITEM_MAX = 115, LISTA_MAX = 480;
     function itemParada(sp, n) { return nomeCurto(n + ') ' + nomeParada(sp) + ' — ' + (sp.bairro ? nomeCurto(sp.bairro, 22) : 's/ bairro') + ' — ' + caixasTxt(sp), ITEM_MAX); }
+    // Quantas paradas a parte leva: guardado na estrutura (o texto não é reanalisado). Não vai para a Meta.
+    function comParadas(pt, n) { pt.paradas = n; return pt; }
     function montarRota(d, veiculo, agora, opts) {
         opts = opts || {};
         var hoje = core.diaSP(agora), rotulo = veiculo === 'caminhao' ? 'Caminhão CEASA' : 'S10';
@@ -308,22 +310,22 @@
         var links = core.linksGoogleMaps(r.paradas, WA.LOTE_PARADAS);
         links.forEach(function (lk) {
             var itens = r.paradas.slice(lk.de - 1, lk.ate).map(function (sp, i) { return itemParada(sp, lk.de + i); });
-            partes.push(parte('rota_do_dia', opts.template, [param(rotulo, 20), param(dataLonga(hoje), 40),
-                param('paradas ' + lk.de + (lk.ate > lk.de ? '–' + lk.ate : '') + ' de ' + total, 40), param(itens.join('; '), LISTA_MAX), param(lk.url, 300)]));
+            partes.push(comParadas(parte('rota_do_dia', opts.template, [param(rotulo, 20), param(dataLonga(hoje), 40),
+                param('paradas ' + lk.de + (lk.ate > lk.de ? '–' + lk.ate : '') + ' de ' + total, 40), param(itens.join('; '), LISTA_MAX), param(lk.url, 300)]), itens.length));
         });
         // Sem posição: mesmos lotes (até 4 paradas e LISTA_MAX caracteres), sem cortar parada.
         var ini = r.paradas.length + 1, n = ini;
         empacotar(r.semPosicao.map(function (sp, i) { return itemParada(sp, ini + i); }), WA.LOTE_PARADAS, LISTA_MAX, '; ').forEach(function (g) {
             var de = n, ate = n + g.length - 1; n = ate + 1;
-            partes.push(parte('rota_do_dia', opts.template, [param(rotulo, 20), param(dataLonga(hoje), 40),
+            partes.push(comParadas(parte('rota_do_dia', opts.template, [param(rotulo, 20), param(dataLonga(hoje), 40),
                 param('sem posição no mapa, ' + de + (ate > de ? '–' + ate : '') + ' de ' + total, 40), param(g.join('; '), LISTA_MAX),
-                param('sem link (cliente sem posição no mapa)', 300)]));
+                param('sem link (cliente sem posição no mapa)', 300)]), g.length));
         });
         // Rota gigante (ex.: milhares de pedidos PF sem posição): limita ANTES do envio, com aviso na última mensagem.
         var omitidas = 0;
         if (partes.length > WA.PARTES_MAX) {
             var fora = partes.splice(WA.PARTES_MAX - 1);
-            fora.forEach(function (x) { omitidas += x.params[3].split('; ').length; });
+            fora.forEach(function (x) { omitidas += x.paradas; });   // pela estrutura, nunca pelo texto (nome pode ter '; ')
             partes.push(parte('rota_do_dia', opts.template, [param(rotulo, 20), param(dataLonga(hoje), 40), param('aviso', 40),
                 param('rota longa demais para o WhatsApp: ' + plural(omitidas, 'parada não foi enviada', 'paradas não foram enviadas') +
                       ' (' + (total - omitidas + 1) + ' a ' + total + '). Veja a rota completa na aba Rotas do painel.', LISTA_MAX),
