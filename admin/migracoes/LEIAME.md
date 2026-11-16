@@ -1422,7 +1422,7 @@ commit;
 
 `public.vitrines` existia em produção sem CREATE versionado no repositório (achado 6). `admin/migracoes/base/vitrines.sql` é o export somente leitura de 2026-11-13: colunas, CHECKs, índices, as 3 políticas e o gatilho do antispam. Não precisa rodar em produção; serve para auditoria e para recriar o banco do zero (depois da 001, de `pedidos`, da 028 e da 032). É idempotente. Os grants de anon nessa tabela são endurecidos pela 038.
 
-## 038_rls_desempenho_grants.sql — RLS mais rápido, sem FOR ALL e anon só INSERT (NÃO APLICADA)
+## 038_rls_desempenho_grants.sql — RLS mais rápido, sem FOR ALL e anon só INSERT (APLICADA em 2026-11-16)
 
 Achados 3, 4 e 7 da auditoria + endurecimento de grants. Não altera linhas; não toca no ERP. Idempotente, `lock_timeout 5s`/`statement_timeout 60s`, `search_path = pg_catalog, pg_temp` dentro da transação. **Independente da 037**: testada nas duas ordens.
 

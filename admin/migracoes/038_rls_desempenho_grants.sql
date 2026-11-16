@@ -1,5 +1,5 @@
 -- 038: desempenho e limpeza de RLS + grants minimos de anon (achados 3, 4 e 7 da auditoria de 2026-11-13).
--- NAO APLICADA. Instalacao manual no SQL Editor (papel postgres). Idempotente: pode rodar de novo.
+-- APLICADA em 2026-11-16 (conferida: 0 politicas sem (select eh_*), 0 FOR ALL, pedidos.cnpj_digitos criada, anon so INSERT nas 7 tabelas). Instalacao manual no SQL Editor (papel postgres). Idempotente: pode rodar de novo.
 -- Nao apaga nem altera linhas (nenhum INSERT/UPDATE/DELETE). Nao toca no ERP/SOLIDCON.
 -- INDEPENDENTE da 037 (pode aplicar antes ou depois; testado nas duas ordens).
 -- Estado esperado das politicas: export de producao de 2026-11-13 (67 politicas). Cada troca so
