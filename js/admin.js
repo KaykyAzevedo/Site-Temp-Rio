@@ -762,6 +762,7 @@
 
     function sair() {
         gmapEncerrar(true);
+        hmDestruir(); hm.animou = false; hm.pediu = false;
         saudeParar();
         if (canalRealtime) { sb.removeChannel(canalRealtime); canalRealtime = null; }
         sb.auth.signOut().then(function () {
@@ -4572,6 +4573,11 @@
 
     function desenharRegioes() {
         var alvo = $('#painel-regioes');
+        // Tela cheia do mapa: refazer a seção removeria o cartão que está em tela cheia e o navegador sairia na hora
+        // ("entra e sai"). O resize da entrada/saída já é filtrado no listener de window.resize (gmapResizeDaTelaCheia);
+        // o que chega aqui em tela cheia é redesenho de verdade (dados novos): adia e refaz logo depois de sair.
+        if (gmapTelaCheiaAtiva()) { gmap.tc.adiado = true; return; }
+        gmap.tc.adiado = false;
         gmapTelaCheiaFim();
         if (mapaClientes) { mapaObservarFim(); mapaClientes.remove(); mapaClientes = null; mapaClientesCamada = null; gmap.camada = null; gmap.marcadores = {}; }
         desenharRegioesBase();
@@ -4768,11 +4774,13 @@
                  filtro: 'todos', cur: 0, ordem: [], cumMes: [], vel: 2, raf: 0, nParou: 0, tResumo: 0,
                  int: { carregado: false, carregando: false, ausente: false, erro: null, linhas: [], semPos: 0, camada: null },
                  cor: { carregado: false, ausente: false, erro: null, linhas: [] },
+                 tc: { entrando: false, adiado: false, ignorarAte: 0, geracao: 0, timer: 0, travouBody: false }, faixas: { n: 0, poucos: false, grupos: {} },
                  pend: null, pendErro: null, run: { rodando: false, parar: false, feitos: 0, total: 0, gravados: 0, ignorados: 0, falhas: 0, msg: '' } };
 
     function gmapRedesenhar() {
         abasParaRedesenhar.regioes = true;
         desenharAbaSeSuja(abaAtual);
+        hmAtualizar();   // cartão do mapa na aba Hoje (admin)
     }
     function gmapAusente(e) { return /PGRST202|42883|42P01|PGRST205|does not exist|Could not find the function|Could not find the table/i.test(String((e && e.message) || '') + ' ' + String((e && e.code) || '')); }
     function gmapAtivo() { return papel === 'admin' && gmap.carregado && gmap.linhas.length > 0 && gmap.meses.length > 0; }
@@ -4822,9 +4830,12 @@
         gmap.cur = gmap.cumMes[gmap.idx] || 0;
     }
 
-    // Faixa por valor dos ÚLTIMOS 12 MESES (20% de cima = laranja, 50% do meio = amarelo, 30% de baixo = azul; sem compra em
-    // 12 meses = base), "parou de comprar" (sem comprar há mais de 2x o intervalo médio dele; mínimo 45 dias; 1 compra só = 45)
-    // e a ordem cronológica da 1ª compra (animação de crescimento). Calculado uma vez por carga.
+    // Faixa por valor dos ÚLTIMOS 12 MESES em TERÇOS (tercis) dos clientes ativos (compraram em 12 meses e não pararam):
+    // alta = verde, media = laranja, baixa = amarelo; sem compra em 12 meses = 'inativo' (cinza). Os limites saem dos dados
+    // (gmap.faixas.grupos), não são fixos. Antes os cortes 20/50/30% eram contados sobre TODOS os CNPJ do ERP (inclusive quem
+    // nunca comprou e nem aparece no mapa): com mais de 5x cadastros que compradores, todo comprador caía nos "20% de cima".
+    // "parou de comprar" (sem comprar há mais de 2x o intervalo médio dele; mínimo 45 dias; 1 compra só = 45) = vermelho com "!".
+    // E a ordem cronológica da 1ª compra (animação de crescimento). Calculado uma vez por carga.
     function gmapClassificar(linhas, meses) {
         var hojeMs = Date.parse(recHoje() + 'T12:00:00Z'), ult12 = meses.slice(-12), nParou = 0;
         function dia(d) { return d ? Date.parse(String(d).slice(0, 10) + 'T12:00:00Z') : NaN; }
@@ -4841,9 +4852,34 @@
             }
             if (l._parou) nParou++;
         });
-        var porValor = linhas.slice().sort(function (a, b) { return b._u12 - a._u12; }), N = porValor.length;
-        var corteAlta = Math.ceil(N * 0.2), corteMedia = Math.ceil(N * 0.7);
-        porValor.forEach(function (l, r) { l._faixa = l._u12 <= 0 ? 'base' : r < corteAlta ? 'alta' : r < corteMedia ? 'media' : 'base'; });
+        var v = linhas.filter(function (l) { return l._u12 > 0 && !l._parou; }).map(function (l) { return l._u12; }).sort(function (a, b) { return a - b; });
+        // Terços por POSIÇÃO (rank), não por valor: empates ficam juntos no terço da posição média do grupo de iguais
+        // (todos iguais = todos "média"). n < 3: não dá para dividir, todos "média". n = 0: sem faixa.
+        // gmap.faixas.grupos = faixa -> {min, max, n} reais (só faixas não vazias; a legenda usa isso, sem intervalo degenerado).
+        var n = v.length, grupos = {}, faixaDe = {};
+        function poe(f, val, k) {
+            var g = grupos[f] || (grupos[f] = { min: val, max: val, n: 0 });
+            g.min = Math.min(g.min, val); g.max = Math.max(g.max, val); g.n += k; faixaDe[val] = f;
+        }
+        for (var i = 0; i < n;) {
+            var j = i; while (j + 1 < n && v[j + 1] === v[i]) j++;
+            var meio = (i + j) / 2;
+            poe(n < 3 ? 'media' : meio < n / 3 ? 'baixa' : meio >= 2 * n / 3 ? 'alta' : 'media', v[i], j - i + 1);
+            i = j + 1;
+        }
+        gmap.faixas = { n: n, poucos: n > 0 && n < 3, grupos: grupos };
+        // Quem parou (fora dos terços) recebe a faixa do valor dele, só para o popup; a cor dele é a de "parou".
+        function faixaDoValor(u) {
+            if (faixaDe[u]) return faixaDe[u];
+            if (!n) return null;
+            if (grupos.alta && u >= grupos.alta.min) return 'alta';
+            if (grupos.media && u >= grupos.media.min) return 'media';
+            return grupos.baixa ? 'baixa' : grupos.media ? 'media' : 'alta';
+        }
+        linhas.forEach(function (l) {
+            l._faixa = l._u12 <= 0 ? 'inativo' : faixaDoValor(l._u12);
+            l._cat = l._parou ? 'parou' : (l._faixa || 'media');   // cor do pino (sem faixa só acontece com quem parou)
+        });
         var cron = linhas.filter(function (l) { return l._pm; }).sort(function (a, b) {
             var x = String(a.primeira_compra), y = String(b.primeira_compra);
             return x < y ? -1 : x > y ? 1 : (String(a.documento) < String(b.documento) ? -1 : 1);
@@ -4873,7 +4909,8 @@
                 ') — boa hora para oferta ou pedir feedback.</div>'
             : '';
         return '<strong>' + esc(l.nome || '(sem nome)') + '</strong><br>' + esc(local || '—') + '<br>' + gmapQualidadeHtml(l) +
-            'Faixa (12 meses): ' + esc(GMAP_FAIXA_ROT[l._faixa]) + ' · ' + esc(brl(l._u12)) + '<br>' +
+            'Categoria no mapa: <strong>' + esc(GMAP_CAT_ROT[l._cat] || '—') + '</strong><br>' +
+            'Faixa (12 meses): ' + esc((gmap.faixas.poucos && l._faixa !== 'inativo' ? 'Comprou (poucos clientes para terços)' : GMAP_FAIXA_ROT[l._faixa]) || '—') + ' · ' + esc(brl(l._u12)) + '<br>' +
             'Vendido até ' + esc(gmapMesRot(mes)) + ': ' + esc(brl(l._ac[i])) + '<br>' +
             'Compras: ' + NUM.format(l._cu[i]) + '<br>' +
             '1ª compra: ' + (l.primeira_compra ? esc(cmpData(String(l.primeira_compra).slice(0, 10))) : '—') + '<br>' +
@@ -4882,7 +4919,8 @@
     }
 
     // ---- pinos em gota (divIcon SVG; cores/estilos em css/admin.css, .adm-gota-*) ----
-    var GMAP_FAIXA_ROT = { alta: 'Melhores clientes', media: 'Intermediários', base: 'Base' };
+    var GMAP_FAIXA_ROT = { alta: 'Compra alta (terço de cima)', media: 'Compra média (terço do meio)', baixa: 'Compra baixa (terço de baixo)', inativo: 'Sem compra em 12 meses' };
+    var GMAP_CAT_ROT = { alta: 'Compra alta (verde)', media: 'Compra média (laranja)', baixa: 'Compra baixa (amarelo)', inativo: 'Sem compra em 12 meses (cinza)', parou: 'Parou de comprar (vermelho com !)' };
     var GMAP_VEL = { 1: 8, 2: 25, 3: 70 };   // pinos por segundo: lenta / normal / rápida
     // Ponto de ligação do filtro "Interessados": RPC solidcon_interessados (migração 037, AINDA não aplicada). Contrato combinado
     // com o backend: sem parâmetros; 1 linha por origem+CNPJ ('lista_espera' | 'pedido_site'); chave (opaca), nome (razão social),
@@ -5030,22 +5068,40 @@
             (L_.length > lim ? '<p class="text-xs mt-2" style="color:var(--adm-tinta-3)">Mostrando os ' + lim + ' primeiros de ' + NUM.format(L_.length) + '.</p>' : '') + '</details>';
     }
 
-    function gmapGotaSvg(faixa, parou, aprox) {
-        return '<svg class="adm-gota-svg adm-gota-' + faixa + (aprox ? ' adm-gota-aprox' : '') + '" viewBox="0 0 30 36" aria-hidden="true" focusable="false">' +
-            '<path class="adm-gota-corpo" d="M13 34C13 34 2 21.5 2 13a11 11 0 0 1 22 0c0 8.5-11 21-11 21z"/><circle class="adm-gota-furo" cx="13" cy="13" r="4"/>' +
-            (parou ? '<circle class="adm-gota-alerta" cx="23" cy="7" r="6.5"/><path class="adm-gota-alerta-marca" d="M23 4v3.4M23 9.6v.1"/>' : '') + '</svg>';
+    // cat: alta | media | baixa | inativo | parou. Forma também diferencia: parou = "!" no lugar do furo; inativo = furo vazado.
+    function gmapGotaSvg(cat, aprox) {
+        return '<svg class="adm-gota-svg adm-gota-' + cat + (aprox ? ' adm-gota-aprox' : '') + '" viewBox="0 0 30 36" aria-hidden="true" focusable="false">' +
+            '<path class="adm-gota-corpo" d="M13 34C13 34 2 21.5 2 13a11 11 0 0 1 22 0c0 8.5-11 21-11 21z"/>' +
+            (cat === 'parou' ? '<path class="adm-gota-exclama" d="M13 7.2v6.4M13 17.6v.2"/>' : '<circle class="adm-gota-furo" cx="13" cy="13" r="4"/>') + '</svg>';
+    }
+    // Contagem por categoria dos clientes que já compraram (o que a linha do tempo mostra no fim).
+    function gmapContarCat() {
+        var c = { alta: 0, media: 0, baixa: 0, inativo: 0, parou: 0 };
+        gmap.linhas.forEach(function (l) { if (l._rank !== undefined && c[l._cat] !== undefined) c[l._cat]++; });
+        return c;
     }
     function gmapLegendaHtml() {
-        return '<div class="adm-leg" role="group" aria-label="Legenda do mapa">' +
-            '<span>' + gmapGotaSvg('alta', false, false) + 'Melhores: 20% que mais compraram nos últimos 12 meses</span>' +
-            '<span>' + gmapGotaSvg('media', false, false) + 'Intermediários: 50% do meio</span>' +
-            '<span>' + gmapGotaSvg('base', false, false) + 'Base: 30% de baixo e quem não comprou em 12 meses</span>' +
-            '<span>' + gmapGotaSvg('media', true, false) + 'Selo “!”: parou de comprar (sem comprar há mais de 2× o ritmo dele; mínimo 45 dias)</span>' +
-            '<span>' + gmapGotaSvg('base', false, true) + 'Tracejada: posição aproximada (centro do bairro) ou endereço a conferir no cadastro</span>' +
-            (gmapTemInteressados() ? '<span>' + gmapAnelSvg('cep', 1) + gmapAnelSvg('bairro', 1) + gmapAnelSvg('cidade', 3) + 'Anel: interessou e ainda não comprou (pelo CEP, bairro ou cidade; quanto maior e mais fraco, menos preciso)</span>' : '') + '</div>';
+        var f = gmap.faixas, c = gmapContarCat(), int = gmap.int;
+        function item(svg, txt, n) { return '<span>' + svg + '<span>' + txt + (n == null ? '' : ' <span class="adm-leg-n">(' + NUM.format(n) + ')</span>') + '</span></span>'; }
+        var g = (f && f.grupos) || {};
+        // Faixa = intervalo REAL dos clientes dela em 12 meses (só faixas com gente; um valor só = "R$ X").
+        function intervalo(x) { return x.min === x.max ? ' — ' + brl(x.min) : ' — de ' + brl(x.min) + ' até ' + brl(x.max); }
+        function faixa(k, rot, terco) { return g[k] ? item(gmapGotaSvg(k, false), '<strong>' + rot + '</strong>' + (f.poucos ? ' em 12 meses' : ': ' + terco) + esc(intervalo(g[k])), c[k]) : ''; }
+        var faixasHtml = f && f.poucos ? faixa('media', 'Comprou', '')
+            : faixa('alta', 'Compra alta', 'terço de cima em 12 meses') + faixa('media', 'Compra média', 'terço do meio') + faixa('baixa', 'Compra baixa', 'terço de baixo');
+        return '<div class="adm-leg" role="group" aria-label="Legenda do mapa">' + faixasHtml +
+            item(gmapGotaSvg('parou', false), '<strong>Parou de comprar</strong> (“!”): sem comprar há mais de 2× o ritmo dele; mínimo 45 dias', c.parou) +
+            (c.inativo ? item(gmapGotaSvg('inativo', false), '<strong>Sem compra em 12 meses</strong>', c.inativo) : '') +
+            item(gmapAnelSvg('cep', 1), '<strong>Interessado</strong> (anel): pediu/entrou na lista e ainda não comprou' +
+                (int.carregado ? '' : int.carregando ? ' — carregando' : ' — indisponível'), int.carregado ? int.linhas.length : null) +
+            item(gmapGotaSvg('media', true), 'Contorno tracejado e mais claro: posição aproximada (centro do bairro) ou endereço a conferir', null) +
+            '<span class="adm-leg-nota">' + (!f || !f.n ? 'Nenhum cliente comprou nos últimos 12 meses sem ter parado: sem faixas de valor.'
+                : f.poucos ? 'Só ' + NUM.format(f.n) + ' cliente(s) ativo(s) em 12 meses: poucos para dividir em terços.'
+                : 'Terços por posição sobre ' + NUM.format(f.n) + ' clientes que compraram nos últimos 12 meses e não pararam (valores iguais ficam no mesmo terço).') + '</span>' +
+            '</div>';
     }
     function gmapIcone(l) {
-        return L.divIcon({ className: 'adm-gota', html: gmapGotaSvg(l._faixa, l._parou, l.precisao === 'bairro' || l.qualidade === 'aproximado' || l.qualidade === 'sem_localizacao'), iconSize: [30, 36], iconAnchor: [13, 34], popupAnchor: [0, -32] });
+        return L.divIcon({ className: 'adm-gota', html: gmapGotaSvg(l._cat, l.precisao === 'bairro' || l.qualidade === 'aproximado' || l.qualidade === 'sem_localizacao'), iconSize: [30, 36], iconAnchor: [13, 34], popupAnchor: [0, -32] });
     }
 
     // Visível na linha do tempo = já "entrou" (ordem cronológica da 1ª compra < cursor); filtro = chips Todos/Ativos/Pararam.
@@ -5092,17 +5148,21 @@
             if (l.lat == null || l.lng == null || l.pino_desatualizado) return;
             var lat = Number(l.lat), lng = Number(l.lng);
             if (!geoCoordValida(lat, lng)) return;
-            var mk = L.marker([lat, lng], { icon: gmapIcone(l), keyboard: true, riseOnHover: true, zIndexOffset: l._faixa === 'alta' ? 200 : l._faixa === 'media' ? 100 : 0,
-                title: (l.nome || '(sem nome)') + ' — ' + GMAP_FAIXA_ROT[l._faixa] + (l._parou ? ' — parou de comprar' : '') });
+            var mk = L.marker([lat, lng], { icon: gmapIcone(l), keyboard: true, riseOnHover: true, zIndexOffset: l._cat === 'parou' ? 300 : l._cat === 'alta' ? 200 : l._cat === 'media' ? 100 : 0,
+                title: (l.nome || '(sem nome)') + ' — ' + (GMAP_CAT_ROT[l._cat] || '') });
             mk.bindPopup(function () { return gmapPopup(l); });
             gmap.marcadores[l.documento] = mk; pts.push([lat, lng]);
         });
         if (gmap.int.carregado) { gmapIntCriar(); gmapIntMostrar(); }
         // Enquadra a região principal: clientes muito longe (outros estados) não podem esmagar o resto; seguem no mapa, é só dar zoom out.
+        mapaAjustarVista(gmapPtsPrincipais(pts));
+    }
+    // Pontos da região principal (mesma regra de sempre, só extraída para o cartão da aba Hoje reutilizar).
+    function gmapPtsPrincipais(pts) {
         var med = function (i) { var v = pts.map(function (p) { return p[i]; }).sort(function (a, b) { return a - b; }); return v[Math.floor(v.length / 2)]; };
         var m0 = pts.length > 4 ? med(0) : 0, m1 = pts.length > 4 ? med(1) : 0;
         var perto = pts.length > 4 ? pts.filter(function (p) { return Math.abs(p[0] - m0) < 2.5 && Math.abs(p[1] - m1) < 2.5; }) : pts;
-        mapaAjustarVista(perto.length >= pts.length * 0.6 ? perto : pts);
+        return perto.length >= pts.length * 0.6 ? perto : pts;
     }
 
     // ---- totais por região para a data escolhida ----
@@ -5132,11 +5192,18 @@
         var int = gmap.int, nInt = int.linhas.length;
         var estadoInt = int.carregado ? ' (' + NUM.format(nInt) + ')' : int.carregando ? ' (carregando…)' : int.erro ? ' (indisponível)' : ' (em breve)';
         var desInt = !int.carregado;
+        // Amostra de cor/forma no chip = a mesma do pino (decorativa; o texto do chip já diz o filtro).
+        var amostra = {
+            todos: '',
+            ativos: '<span class="adm-chip-amostra" aria-hidden="true">' + gmapGotaSvg('alta', false) + gmapGotaSvg('media', false) + gmapGotaSvg('baixa', false) + '</span>',
+            pararam: '<span class="adm-chip-amostra" aria-hidden="true">' + gmapGotaSvg('parou', false) + '</span>',
+            interessados: '<span class="adm-chip-amostra" aria-hidden="true">' + gmapAnelSvg('cep', 1) + '</span>'
+        };
         return [['todos', 'Todos'], ['ativos', 'Ativos'], ['pararam', 'Pararam (' + NUM.format(gmap.nParou) + ')'], ['interessados', 'Interessados']].map(function (c) {
             var ehInt = c[0] === 'interessados', des = ehInt && desInt, on = gmap.filtro === c[0];
             return '<button type="button" class="adm-chip' + (on ? ' is-ativo' : '') + '" data-gmap-filtro="' + c[0] + '" aria-pressed="' + on + '"' +
                 (des ? ' disabled' + (int.erro ? ' title="' + esc(int.erro) + '"' : int.ausente || !int.carregando ? ' title="Em breve: depende da migração 037"' : '') : '') + '>' +
-                c[1] + (ehInt ? '<span style="font-weight:400;margin-left:.3rem">' + estadoInt + '</span>' : '') + '</button>';
+                amostra[c[0]] + c[1] + (ehInt ? '<span style="font-weight:400;margin-left:.3rem">' + estadoInt + '</span>' : '') + '</button>';
         }).join('');
     }
     // Atualiza só os chips e a legenda (sem refazer o mapa) quando os interessados terminam de carregar.
@@ -5244,40 +5311,87 @@
         b.innerHTML = '<i class="fa-solid ' + (ativa ? 'fa-compress' : 'fa-expand') + '" aria-hidden="true"></i><span class="ml-2">' + (ativa ? 'Sair da tela cheia' : 'Tela cheia') + '</span>';
     }
     function gmapTelaCheiaEsc(ev) { if (ev.key === 'Escape') gmapTelaCheiaSair(); }
-    function gmapTelaCheiaFim() {
+    // Em tela cheia (nativa ou sobreposição) ou pedindo para entrar: desenharRegioes() não pode refazer o cartão.
+    function gmapTelaCheiaAtiva() {
         var el = $('#geo-cartao-mapa');
+        return !!el && (gmap.tc.entrando || el.classList.contains('is-tela-cheia') || document.fullscreenElement === el);
+    }
+    // Para o listener de window.resize: resize causado por entrar/sair da tela cheia do mapa não redesenha o painel.
+    function gmapResizeDaTelaCheia() { return gmapTelaCheiaAtiva() || Date.now() < gmap.tc.ignorarAte; }
+    function gmapTelaCheiaInvalidar() { if (mapaClientes) setTimeout(function () { if (mapaClientes) mapaClientes.invalidateSize({ animate: false }); }, 50); }
+    function gmapTelaCheiaSoltarBody() { if (gmap.tc.travouBody) { document.body.style.overflow = ''; gmap.tc.travouBody = false; } }
+    function gmapTelaCheiaFim() {
+        // Primeiro o que não pode ficar preso, antes de qualquer return: body, Esc, pedido pendente (timer + promessa tardia).
+        gmapTelaCheiaSoltarBody();
         document.removeEventListener('keydown', gmapTelaCheiaEsc);
+        if (gmap.tc.timer) { clearTimeout(gmap.tc.timer); gmap.tc.timer = 0; }
+        gmap.tc.geracao++;   // invalida a resposta tardia de requestFullscreen (ver gmapTelaCheiaAlternar)
+        gmap.tc.entrando = false;
+        var el = $('#geo-cartao-mapa');
+        if (document.fullscreenElement && document.fullscreenElement.id === 'geo-cartao-mapa' && document.exitFullscreen) {
+            try { document.exitFullscreen().then(null, function () { /* já saiu */ }); } catch (e) { /* sem suporte */ }
+        }
         if (!el || !el.classList.contains('is-tela-cheia')) return;
-        if (el.classList.contains('is-sobreposto')) document.body.style.overflow = '';
         el.classList.remove('is-tela-cheia', 'is-sobreposto');
+        gmap.tc.ignorarAte = Date.now() + 1000;   // o resize da saída (desenharTudo em 200ms) não refaz a seção
         gmapTelaCheiaUI(false);
-        if (mapaClientes) setTimeout(function () { if (mapaClientes) mapaClientes.invalidateSize({ animate: false }); }, 50);
+        gmapTelaCheiaInvalidar();
         var b = $('#geo-tela-cheia'); if (b) b.focus();
+        // Algo pediu redesenho durante a tela cheia (dados novos): refaz agora, já fora dela.
+        if (gmap.tc.adiado) setTimeout(function () { if (gmap.tc.adiado && !gmapTelaCheiaAtiva() && secaoVisivel('regioes')) gmapRedesenhar(); }, 300);
     }
     function gmapTelaCheiaSair() {
         if (document.fullscreenElement && document.exitFullscreen) { document.exitFullscreen().then(null, gmapTelaCheiaFim); } else gmapTelaCheiaFim();
     }
     function gmapTelaCheiaAlternar() {
         var el = $('#geo-cartao-mapa');
-        if (!el) return;
+        if (!el || gmap.tc.entrando) return;   // pedido em andamento: 2º clique não faz nada
         if (el.classList.contains('is-tela-cheia')) { gmapTelaCheiaSair(); return; }
+        gmap.tc.ignorarAte = Date.now() + 1500;   // resize da entrada (desenharTudo em 200ms) não redesenha
+        // Geração: trocar de aba, redesenhar ou sair (gmapTelaCheiaFim) incrementa gmap.tc.geracao; resposta tardia de um
+        // pedido antigo (timer de 600ms, promessa resolvida/rejeitada depois) não pode mais aplicar sobreposição nem travar o body.
+        var ger = ++gmap.tc.geracao;
+        function valido() { return ger === gmap.tc.geracao && el.isConnected && secaoVisivel('regioes'); }
+        function sairNativaOrfa() { if (document.fullscreenElement === el && document.exitFullscreen) document.exitFullscreen().then(null, function () { /* já saiu */ }); }
         function entrar(sobreposto) {
+            gmap.tc.ignorarAte = Math.max(gmap.tc.ignorarAte, Date.now() + 1000);
             el.classList.add('is-tela-cheia');
-            if (sobreposto) { el.classList.add('is-sobreposto'); document.body.style.overflow = 'hidden'; document.addEventListener('keydown', gmapTelaCheiaEsc); }
+            if (sobreposto) {
+                el.classList.add('is-sobreposto'); document.addEventListener('keydown', gmapTelaCheiaEsc);
+                document.body.style.overflow = 'hidden'; gmap.tc.travouBody = true;
+            }
             gmapTelaCheiaUI(true);
-            if (mapaClientes) setTimeout(function () { if (mapaClientes) mapaClientes.invalidateSize({ animate: false }); }, 50);
+            gmapTelaCheiaInvalidar();
         }
-        var feito = false;   // a promessa da Fullscreen API pode nunca resolver (webviews): sem resposta em 600ms, usa a sobreposição
-        function uma(sobreposto) { if (feito) return; feito = true; entrar(sobreposto); }
+        // Sobreposição (CSS) só se a Fullscreen API não existir, rejeitar, ou não responder em 600ms (webviews).
+        var feito = false;
+        function uma(sobreposto) {
+            if (gmap.tc.timer && ger === gmap.tc.geracao) { clearTimeout(gmap.tc.timer); gmap.tc.timer = 0; }
+            if (feito) return;
+            if (!valido()) { feito = true; if (ger === gmap.tc.geracao) gmap.tc.entrando = false; sairNativaOrfa(); return; }   // pedido de outra geração/aba: descarta
+            gmap.tc.entrando = false; feito = true; entrar(sobreposto);
+        }
         if (el.requestFullscreen) {
-            el.requestFullscreen().then(function () { uma(false); }, function () { uma(true); });
-            setTimeout(function () { if (!feito && !document.fullscreenElement) uma(true); }, 600);
+            gmap.tc.entrando = true;
+            var pedido;
+            try { pedido = el.requestFullscreen(); } catch (e) { uma(true); return; }
+            if (!pedido || typeof pedido.then !== 'function') { setTimeout(function () { uma(document.fullscreenElement !== el); }, 0); return; }
+            pedido.then(function () {
+                if (!feito) { uma(false); return; }
+                // Respondeu depois da sobreposição: vira tela cheia nativa (ou sai, se já fechou/trocou de aba).
+                if (!valido() || !el.classList.contains('is-tela-cheia')) { sairNativaOrfa(); return; }
+                el.classList.remove('is-sobreposto'); gmapTelaCheiaSoltarBody(); document.removeEventListener('keydown', gmapTelaCheiaEsc);
+                gmapTelaCheiaInvalidar();
+            }, function () { uma(true); });
+            gmap.tc.timer = setTimeout(function () { gmap.tc.timer = 0; if (!feito && document.fullscreenElement !== el) uma(true); }, 600);
         } else uma(true);
     }
-    document.addEventListener('fullscreenchange', function () {
+    // Registrado UMA vez (nível do módulo, não a cada desenho). Saída nativa (Esc do navegador, F11, botão) chega aqui.
+    function gmapTelaCheiaMudou() {
         var el = $('#geo-cartao-mapa');
         if (el && document.fullscreenElement !== el && el.classList.contains('is-tela-cheia') && !el.classList.contains('is-sobreposto')) gmapTelaCheiaFim();
-    });
+    }
+    document.addEventListener('fullscreenchange', gmapTelaCheiaMudou);
 
     function gmapUI() {
         var R = gmap.run, b = $('#geo-pend-btn'), p = $('#geo-pend-parar'), pr = $('#geo-pend-prog'), st = $('#geo-pend-status');
@@ -5495,6 +5609,7 @@
         var R = gmap.run;
         if (R.rodando) { R.parar = true; if (descartar) R.descartar = true; if (geo.abortar) { try { geo.abortar(); } catch (e) { /* já encerrada */ } } }
         if (geo.rodando) geoParar();
+        gmapTelaCheiaFim();   // sair()/troca de aba: não deixa tela cheia, sobreposição ou body travado para trás
     }
 
     function desenharTudo() {
@@ -5565,6 +5680,144 @@
      * Cada item só aparece para quem já vê aquela informação hoje (admin x vendedor inalterado). Sem dado = linha discreta.
      * =================================================================== */
     var dash = { iniciado: false, rodando: false };
+
+    /* ===================================================================
+     * Hoje — cartão "Crescimento da marca" (SÓ admin): mapa compacto + 3 números. Reaproveita os dados e as funções do mapa de
+     * Regiões (gmap*: classificação, ícone do pino, popup); aqui só há uma 2ª instância Leaflet (#hm-mapa), independente da de Regiões.
+     * Carrega depois do resto da aba (a RPC solidcon_mapa_clientes é a mesma de Regiões, uma vez por sessão). Pinos caem na ordem
+     * da 1ª compra uma vez por carregamento (sem movimento se prefers-reduced-motion). Sem dado novo: tudo sai de gmap.linhas.
+     * =================================================================== */
+    var HM_ATRASO_CARGA_MS = 500, HM_ANIM_TOTAL_MS = 3600, HM_PASSO_MAX_MS = 45;
+    var hm = { mapa: null, ro: null, animou: false, pediu: false, estado: '', linhas: null, pts: null };
+
+    function hmDestruir() {
+        if (hm.ro) { try { hm.ro.disconnect(); } catch (e) { /* já solto */ } hm.ro = null; }
+        if (hm.mapa) { try { hm.mapa.remove(); } catch (e) { /* já removido */ } hm.mapa = null; }
+        hm.estado = ''; hm.linhas = null; hm.pts = null;
+    }
+    function hmPedirCarga() {
+        if (papel !== 'admin' || hm.pediu) return;
+        hm.pediu = true;
+        setTimeout(function () {
+            if (papel !== 'admin') return;
+            if (!gmap.carregado && !gmap.carregando && !gmap.ausente && !gmap.erro) carregarMapaClientes(); else hmAtualizar();
+        }, HM_ATRASO_CARGA_MS);
+    }
+    function hmNorm(s) { return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').trim().toLowerCase(); }
+    // Pinos = clientes que já compraram e têm posição confiável (mesma regra de gmapCriarPinos), em ordem cronológica da 1ª compra.
+    function hmPinos() {
+        return gmap.ordem.filter(function (l) {
+            if (l.lat == null || l.lng == null || l.pino_desatualizado) return false;
+            return geoCoordValida(Number(l.lat), Number(l.lng));
+        });
+    }
+    // Números: ativos = comprou em 12 meses e não "parou" (mesma classificação do mapa); novos = 1ª compra no mês (o mês corrente é parcial);
+    // cidades = cidades distintas dos clientes ativos (cadastro do ERP: cidade + UF).
+    function hmNumeros() {
+        var ms = gmap.meses, mAt = ms[ms.length - 1], mAnt = ms.length > 1 ? ms[ms.length - 2] : null, cid = {};
+        var r = { ativos: 0, novos: 0, ant: mAnt ? 0 : null, cidades: 0, mAt: mAt, mAnt: mAnt };
+        gmap.linhas.forEach(function (l) {
+            if (l._rank === undefined) return;
+            if (!l._parou && l._u12 > 0) { r.ativos++; var c = hmNorm(l.cidade); if (c) cid[c + '/' + hmNorm(l.estado)] = 1; }
+            if (l._pm === mAt) r.novos++; else if (mAnt && l._pm === mAnt) r.ant++;
+        });
+        r.cidades = Object.keys(cid).length;
+        return r;
+    }
+    function hmEstado() {
+        if (gmap.erro) return 'erro';
+        if (gmap.ausente) return 'ausente';
+        if (gmap.carregado) return gmap.ordem.length && hmPinos().length ? 'pronto' : 'vazio';
+        return 'carregando';
+    }
+    function hmNumHtml(icone, valor, rotulo, sub) {
+        return '<li class="hm-num"><span class="hm-num-ico">' + icoFa(icone) + '</span><div class="hm-num-corpo"><span class="hm-num-valor">' + valor + '</span>' +
+            '<span class="hm-num-rot">' + rotulo + '</span>' + (sub ? '<span class="hm-num-sub">' + sub + '</span>' : '') + '</div></li>';
+    }
+    function hmHtml(est) {
+        var num = est === 'pronto' || est === 'vazio' ? hmNumeros() : null, mapa, nums;
+        if (est === 'pronto') {
+            mapa = '<div id="hm-mapa" class="adm-mapa-escuro hm-mapa hm-parado" role="region" aria-label="Mapa dos clientes; cada pino é um cliente"></div>';
+        } else {
+            var msg = est === 'carregando' ? icoFa('fa-map-location-dot') + '<span>Carregando o mapa de clientes…</span>'
+                : est === 'ausente' ? icoFa('fa-map') + '<span>O mapa de clientes ainda não está instalado neste banco.</span>'
+                : est === 'erro' ? icoFa('fa-triangle-exclamation') + '<span>Não foi possível carregar o mapa agora. O resto da página segue normal.</span>' +
+                    '<button type="button" class="adm-botao-fantasma" data-hm-tentar="1">' + icoFa('fa-rotate') + ' Tentar de novo</button>'
+                : icoFa('fa-map-pin') + '<span>Ainda não há clientes com posição no mapa. Abra o mapa completo para localizar os endereços.</span>';
+            mapa = '<div class="hm-mapa hm-aviso"' + (est === 'carregando' ? ' role="status"' : '') + '>' + msg + '</div>';
+        }
+        if (num) {
+            var sub;
+            if (num.ant == null) sub = 'mês em andamento';
+            else {
+                var dif = num.novos - num.ant, ic = dif > 0 ? 'fa-arrow-up' : dif < 0 ? 'fa-arrow-down' : 'fa-equals', cl = dif > 0 ? 'is-sobe' : dif < 0 ? 'is-desce' : '';
+                sub = '<span class="hm-var ' + cl + '">' + icoFa(ic) + (dif > 0 ? 'acima' : dif < 0 ? 'abaixo' : 'igual') + '</span> do mês anterior (' + NUM.format(num.ant) + ') · mês em andamento';
+            }
+            nums = hmNumHtml('fa-store', NUM.format(num.ativos), 'clientes ativos', 'compraram nos últimos 12 meses e seguem comprando') +
+                hmNumHtml('fa-user-plus', NUM.format(num.novos), 'novos clientes em ' + esc(gmapMesRot(num.mAt)), sub) +
+                hmNumHtml('fa-city', NUM.format(num.cidades), 'cidades atendidas', 'com pelo menos um cliente ativo');
+        } else {
+            var tra = '<span aria-hidden="true">—</span><span class="sr-only">sem dado</span>';
+            nums = hmNumHtml('fa-store', tra, 'clientes ativos', '') + hmNumHtml('fa-user-plus', tra, 'novos clientes no mês', '') + hmNumHtml('fa-city', tra, 'cidades atendidas', '');
+        }
+        var leg = '<div class="adm-leg hm-leg" role="group" aria-label="Legenda do mapa">' +
+            '<span>' + gmapGotaSvg('alta', false) + '<span>Compra alta</span></span><span>' + gmapGotaSvg('media', false) + '<span>média</span></span>' +
+            '<span>' + gmapGotaSvg('baixa', false) + '<span>baixa</span></span><span>' + gmapGotaSvg('parou', false) + '<span>Parou de comprar</span></span>' +
+            '<span>' + gmapGotaSvg('inativo', false) + '<span>Sem compra em 12 meses</span></span></div>';
+        return '<div class="adm-card p-5 hm-cartao" role="group" aria-labelledby="hm-titulo">' +
+            '<div class="flex items-start justify-between gap-3 flex-wrap mb-4"><div><p class="font-bold text-lg" id="hm-titulo">' + icoFa('fa-earth-americas') + ' Crescimento da marca</p>' +
+                '<p class="text-xs" style="color:var(--adm-tinta-3)">Cada pino é um cliente, na ordem da 1ª compra. ' + SELO_ERP + '</p></div>' +
+                '<button type="button" class="adm-botao-fantasma" data-ir-aba="regioes">' + icoFa('fa-up-right-from-square') + ' Abrir mapa completo</button></div>' +
+            '<div class="hm-grade">' + mapa + '<ul class="hm-numeros">' + nums + '</ul></div>' + leg + '</div>';
+    }
+    function hmAtualizar() {
+        var alvo = $('#hoje-mapa');
+        if (!alvo || papel !== 'admin') return;
+        var est = hmEstado();
+        if (est === 'pronto' && hm.estado === 'pronto' && hm.linhas === gmap.linhas && hm.mapa && alvo.contains(hm.mapa.getContainer())) return;
+        if (est !== 'pronto' && hm.estado === est && alvo.firstChild) return;
+        hmDestruir();
+        alvo.innerHTML = hmHtml(est);
+        hm.estado = est; hm.linhas = gmap.linhas;
+        if (est === 'pronto') hmCriarMapa();
+    }
+    function hmCriarMapa() {
+        var el = $('#hm-mapa');
+        if (!el) return;
+        if (typeof L === 'undefined') { el.classList.add('hm-aviso'); el.classList.remove('hm-parado'); el.innerHTML = icoFa('fa-map') + '<span>Mapa indisponível (a biblioteca não carregou).</span>'; return; }
+        hm.mapa = L.map(el, { scrollWheelZoom: false }).setView([-22.92, -43.35], 10);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 18 }).addTo(hm.mapa);
+        var pinos = hmPinos(), pts = [], anim = !gmapReduzMov() && !hm.animou, passo = Math.min(HM_PASSO_MAX_MS, HM_ANIM_TOTAL_MS / Math.max(1, pinos.length));
+        pinos.forEach(function (l, i) {
+            var lat = Number(l.lat), lng = Number(l.lng);
+            var mk = L.marker([lat, lng], { icon: gmapIcone(l), keyboard: true, riseOnHover: true, zIndexOffset: l._cat === 'parou' ? 300 : l._cat === 'alta' ? 200 : l._cat === 'media' ? 100 : 0,
+                title: (l.nome || '(sem nome)') + ' — ' + (GMAP_CAT_ROT[l._cat] || '') });
+            mk.bindPopup(function () { return gmapPopup(l); });
+            mk.addTo(hm.mapa);
+            if (anim) { var s = mk.getElement() && mk.getElement().firstChild; if (s && s.classList) { s.classList.add('is-cai'); s.style.animationDelay = Math.round(i * passo) + 'ms'; } }
+            pts.push([lat, lng]);
+        });
+        hm.pts = gmapPtsPrincipais(pts);
+        if (typeof ResizeObserver === 'undefined') {
+            el.classList.remove('hm-parado'); hm.animou = true;
+            hm.mapa.invalidateSize(); hm.mapa.fitBounds(hm.pts, { padding: [30, 30], maxZoom: 12, animate: false });
+            return;
+        }
+        var agenda = 0;
+        hm.ro = new ResizeObserver(function () {
+            if (agenda) cancelAnimationFrame(agenda);
+            agenda = requestAnimationFrame(function () {
+                agenda = 0;
+                if (!hm.mapa || !el.clientWidth || !el.clientHeight) return;   // escondido (outra aba): espera aparecer
+                hm.mapa.invalidateSize({ animate: false });
+                if (hm.pts) { var p = hm.pts; hm.pts = null; hm.mapa.fitBounds(p, { padding: [30, 30], maxZoom: 12, animate: false }); }
+                else hm.mapa.setView(hm.mapa.getCenter(), hm.mapa.getZoom(), { animate: false });
+                if (el.classList.contains('hm-parado')) { el.classList.remove('hm-parado'); if (anim) hm.animou = true; }   // a queda dos pinos começa agora, já visível
+            });
+        });
+        hm.ro.observe(el);
+    }
+
 
     function dashAtualizarResumo() {
         if (secaoVisivel('dashboard') && $('#hoje')) desenharHoje();
@@ -5740,7 +5993,8 @@
 
     function desenharDashboard() {
         var alvo = $('#painel-dashboard');
-        alvo.innerHTML = '<section id="hoje"></section>' +
+        hmDestruir();   // o HTML abaixo substitui o container do mapa: solta a instância antiga
+        alvo.innerHTML = (papel === 'admin' ? '<section id="hoje-mapa" class="mb-8"></section>' : '') + '<section id="hoje"></section>' +
             '<section class="mt-12 pt-8" style="border-top:1px solid var(--adm-borda)"><div class="mb-4"><p class="font-bold text-lg">Detalhe do site</p>' +
             '<p class="text-xs" style="color:var(--adm-tinta-3)">Faturamento, pedidos e receita por período — pedidos feitos pelo site.</p></div><div id="dash-site-corpo"></div></section>';
         alvo.querySelector('#hoje').addEventListener('click', function (ev) {
@@ -5749,6 +6003,14 @@
             var t = ev.target.closest('[data-res-tentar]');
             if (t) { var f = RES_CARREGADORES[t.getAttribute('data-res-tentar')]; if (f) f(); }
         });
+        if (papel === 'admin') {
+            alvo.querySelector('#hoje-mapa').addEventListener('click', function (ev) {
+                var ir = ev.target.closest('[data-ir-aba]');
+                if (ir) { trocarAba(ir.getAttribute('data-ir-aba'), true); window.scrollTo(0, 0); return; }
+                if (ev.target.closest('[data-hm-tentar]')) { gmap.erro = null; gmap.ausente = false; carregarMapaClientes(); }
+            });
+            hmAtualizar(); hmPedirCarga();
+        }
         desenharHoje();
         desenharDashboardBase();
         if (!dash.iniciado) { dash.iniciado = true; dashCarregarProgressivo(false); }
@@ -6038,13 +6300,51 @@
     /* Pedidos do ERP por etapa do WMS (035) — SOMENTE LEITURA. Lê solidcon_pedidos_erp (sem a coluna documento: nada de CPF/CNPJ
        chega ao navegador) e o frescor em solidcon_pedidos_erp_sync. Sem arrastar, sem botões de ação. */
     var PE_COLUNAS = [
-        { id: 'aberto', titulo: 'Aberto', etapas: ['aberto'], data: 'dt_pedido' },
-        { id: 'na_carga', titulo: 'Na carga', etapas: ['na_carga'], data: 'dt_carga' },
-        { id: 'separando', titulo: 'Separando', etapas: ['separando'], data: 'dt_sep_inicio' },
-        { id: 'separado', titulo: 'Separado', etapas: ['separado'], data: 'dt_sep_fim' },
-        { id: 'conferido', titulo: 'Conferido', etapas: ['conferido'], data: 'dt_conferencia' },
-        { id: 'saiu', titulo: 'Saiu / atendido', etapas: ['saiu', 'atendido'], data: null }
+        { id: 'aberto', titulo: 'Aberto', etapas: ['aberto'], data: 'dt_pedido', icone: 'fa-inbox', cor: 'aberto', dica: 'Pedido recebido, ainda não foi separado.', vazio: 'Nenhum pedido esperando.' },
+        { id: 'na_carga', titulo: 'Na carga', etapas: ['na_carga'], data: 'dt_carga', icone: 'fa-truck-ramp-box', cor: 'carga', dica: 'Já entrou numa carga de entrega; falta separar.', vazio: 'Nenhum pedido aguardando separação na carga.' },
+        { id: 'separando', titulo: 'Separando', etapas: ['separando'], data: 'dt_sep_inicio', icone: 'fa-boxes-packing', cor: 'separando', dica: 'O estoque está pegando os produtos agora.', vazio: 'Ninguém separando no momento.' },
+        { id: 'separado', titulo: 'Separado', etapas: ['separado'], data: 'dt_sep_fim', icone: 'fa-box', cor: 'separado', dica: 'Produtos separados; falta conferir.', vazio: 'Nada separado esperando conferência.' },
+        { id: 'conferido', titulo: 'Conferido', etapas: ['conferido'], data: 'dt_conferencia', icone: 'fa-clipboard-check', cor: 'conferido', dica: 'Conferido e pronto para sair.', vazio: 'Nada conferido esperando saída.' },
+        { id: 'saiu', titulo: 'Saiu / atendido', etapas: ['saiu', 'atendido'], data: null, icone: 'fa-circle-check', cor: 'saiu', dica: 'Já saiu para o cliente. Etapa concluída.', vazio: 'Nenhum pedido concluído por aqui.' }
     ];
+    // Coluna visual de cada etapa do pedido (a coluna "Saiu / atendido" junta duas etapas).
+    var PE_VISUAL = { aberto: 0, na_carga: 1, separando: 2, separado: 3, conferido: 4, saiu: 5, atendido: 5 };
+    // Selo de atraso (só apresentação; pedidos concluídos não recebem). Idade = dias na etapa atual (data da etapa; no Aberto, a do pedido).
+    var PE_ATRASO_ATENCAO_DIAS = 3;   // 3 a 7 dias: âmbar ("atenção")
+    var PE_ATRASO_CRITICO_DIAS = 7;   // acima de 7 dias (8+): vermelho ("parado")
+    function icoFa(c) { return '<i class="fa-solid ' + c + '" aria-hidden="true"></i>'; }
+    function seloAtraso(iso, parado) {
+        var t = Date.parse(iso);
+        if (!isFinite(t)) return '';
+        var d = Math.max(0, Math.floor((Date.now() - t) / 86400000));
+        if (d > PE_ATRASO_CRITICO_DIAS) return '<span class="adm-atraso is-critico">' + icoFa('fa-triangle-exclamation') + (parado || 'Parado') + ' há ' + d + ' d</span>';
+        if (d >= PE_ATRASO_ATENCAO_DIAS) return '<span class="adm-atraso is-atencao">' + icoFa('fa-hourglass-half') + 'Atenção · há ' + d + ' d</span>';
+        return '<span class="adm-atraso is-ok">' + icoFa('fa-circle-check') + 'Em dia · ' + (d < 1 ? 'hoje' : 'há ' + d + ' d') + '</span>';
+    }
+    var legendaKanbanAberta = !celular();   // celular: começa recolhida para não empurrar o quadro
+    // Não renderiza o <p> do selo quando não há selo (data inválida).
+    function selosAtraso(html, extra) { return html ? '<p class="adm-kc-selo' + (extra ? ' ' + extra : '') + '">' + html + '</p>' : ''; }
+    function legendaKanban(site) {
+        return '<details class="adm-legenda-kanban"' + (legendaKanbanAberta ? ' open' : '') + '><summary>' + icoFa('fa-circle-info') + ' Como ler este quadro</summary>' +
+            '<p>' + (site ? 'Cada coluna é a situação do pedido; cor e ícone repetem o andamento: amarelo = esperando, laranja = confirmado, verde = entregue, vermelho = cancelado.'
+                : 'Cada coluna é uma etapa, da esquerda para a direita. Cor e ícone mostram o andamento: cinza = começo, amarelo e laranja = em andamento, verde = concluído.') + '</p>' +
+            '<p class="adm-legenda-selos">' +
+                '<span class="adm-atraso is-ok">' + icoFa('fa-circle-check') + 'Em dia: até ' + (PE_ATRASO_ATENCAO_DIAS - 1) + ' dias</span>' +
+                '<span class="adm-atraso is-atencao">' + icoFa('fa-hourglass-half') + 'Atenção: ' + PE_ATRASO_ATENCAO_DIAS + ' a ' + PE_ATRASO_CRITICO_DIAS + ' dias</span>' +
+                '<span class="adm-atraso is-critico">' + icoFa('fa-triangle-exclamation') + 'Parado: mais de ' + PE_ATRASO_CRITICO_DIAS + ' dias</span>' +
+            '</p></details>';
+    }
+    function ligarLegendaKanban(raiz) {
+        var d = raiz.querySelector('.adm-legenda-kanban');
+        if (d) d.addEventListener('toggle', function () { legendaKanbanAberta = d.open; });
+    }
+    function cabecalhoKanban(c, n) {
+        return '<div class="adm-kanban-topo"><div class="adm-kanban-cabecalho"><span class="adm-kanban-titulo"><span class="adm-kanban-ico">' + icoFa(c.icone) + '</span>' + esc(c.titulo) +
+            '</span><span class="adm-kanban-contagem">' + n + '</span></div><p class="adm-kanban-dica">' + esc(c.dica) + '</p></div>';
+    }
+    function colunaVazia(icone, texto) {
+        return '<div class="adm-kanban-vazio">' + icoFa(icone) + '<span>' + esc(texto) + '</span></div>';
+    }
     var PE_DATA_ETAPA = { aberto: 'dt_pedido', na_carga: 'dt_carga', separando: 'dt_sep_inicio', separado: 'dt_sep_fim', conferido: 'dt_conferencia', saiu: 'dt_saida', atendido: 'dt_atendido' };
     var PE_ROTULO_ETAPA = { aberto: 'Aberto', na_carga: 'Na carga', separando: 'Separando', separado: 'Separado', conferido: 'Conferido', saiu: 'Saiu', atendido: 'Atendido' };
     var PE_COLS = 'cd_pedido,dt_pedido,etapa,dt_carga,dt_sep_inicio,dt_sep_fim,dt_conferencia,dt_saida,dt_atendido,cliente_tipo,cliente_nome,nr_carga,valor_centavos';
@@ -6084,7 +6384,7 @@
         var t = Date.parse(iso);
         if (!isFinite(t)) return '';
         var m = Math.max(0, Math.round((Date.now() - t) / 60000));
-        return m < 60 ? 'há ' + m + ' min' : m < 2880 ? 'há ' + Math.round(m / 60) + ' h' : 'há ' + Math.round(m / 1440) + ' d';
+        return m < 60 ? 'há ' + m + ' min' : m < 2880 ? 'há ' + Math.round(m / 60) + ' h' : 'há ' + Math.floor(m / 1440) + ' d';
     }
     function peHora(iso) {
         var d = new Date(iso);
@@ -6106,13 +6406,17 @@
     function peCartao(x) {
         var nome = String(x.cliente_tipo) === 'cnpj' && x.cliente_nome ? x.cliente_nome : 'Consumidor final';
         var dEtapa = x[PE_DATA_ETAPA[x.etapa]];
-        return '<div class="adm-kanban-erpcartao">' +
-            '<p class="text-sm font-bold adm-nome-2l" title="' + esc(nome) + '">' + esc(nome) + '</p>' +
-            '<p class="text-xs mt-0.5" style="color:var(--adm-tinta-3)">Pedido ' + esc(String(x.cd_pedido)) +
-                (x.nr_carga ? ' · carga ' + esc(String(x.nr_carga)) : '') + '</p>' +
-            (peTemValor(x) ? '<p class="text-sm font-bold mt-1">' + esc(brl(Number(x.valor_centavos))) + '</p>' : '') +
-            '<p class="text-xs mt-1" style="color:var(--adm-tinta-3)">Feito ' + esc(peHora(x.dt_pedido)) + ' · <strong>' + esc(peHa(x.dt_pedido)) + '</strong></p>' +
-            (dEtapa && x.etapa !== 'aberto' ? '<p class="text-xs mt-0.5" style="color:var(--adm-tinta-3)">' + esc(PE_ROTULO_ETAPA[x.etapa] || x.etapa) + ' ' + esc(peHora(dEtapa)) + '</p>' : '') +
+        var col = PE_COLUNAS[PE_VISUAL[x.etapa]] || PE_COLUNAS[0];
+        var ref = x.etapa === 'aberto' ? x.dt_pedido : (dEtapa || x.dt_pedido);
+        var linha = function (ic, html) { return '<p class="adm-kc-linha">' + icoFa(ic) + '<span>' + html + '</span></p>'; };
+        return '<div class="adm-kanban-erpcartao" data-cor="' + col.cor + '">' +
+            '<p class="text-sm font-bold adm-kc-nome" title="' + esc(nome) + '">' + icoFa('fa-store') + '<span class="adm-nome-2l">' + esc(nome) + '</span></p>' +
+            linha('fa-hashtag', 'Pedido ' + esc(String(x.cd_pedido))) +
+            (x.nr_carga ? linha('fa-truck', 'Carga ' + esc(String(x.nr_carga))) : '') +
+            (peTemValor(x) ? '<p class="adm-kc-valor">' + icoFa('fa-sack-dollar') + '<span>' + esc(brl(Number(x.valor_centavos))) + '</span></p>' : '') +
+            linha('fa-clock', 'Feito ' + esc(peHora(x.dt_pedido)) + ' · <strong>' + esc(peHa(x.dt_pedido)) + '</strong>') +
+            (dEtapa && x.etapa !== 'aberto' ? linha('fa-calendar-check', esc(PE_ROTULO_ETAPA[x.etapa] || x.etapa) + ' ' + esc(peHora(dEtapa))) : '') +
+            (col.id === 'saiu' ? '' : selosAtraso(seloAtraso(ref), '')) +
         '</div>';
     }
     function peItensDa(col) {
@@ -6136,17 +6440,17 @@
         if (pe.erro) return cartaoVazio('Pedidos do ERP indisponíveis agora', 'Tente Atualizar em instantes.', 'erp');
         if (!pe.carregado) return '';
         var cols = PE_COLUNAS.map(function (c) { return { c: c, l: peItensDa(c) }; });
-        return peFrescor() +
+        return peFrescor() + legendaKanban(false) +
             '<div class="adm-kanban-segmentos" role="tablist" aria-label="Etapas dos pedidos do ERP">' +
                 cols.map(function (x) {
-                    return '<button type="button" role="tab" class="adm-chip' + (peSegmento === x.c.id ? ' is-ativo' : '') + '" data-pe-seg="' + x.c.id +
-                        '" aria-selected="' + (peSegmento === x.c.id) + '">' + esc(x.c.titulo) + ' <span class="adm-kanban-contagem">' + x.l.length + '</span></button>';
+                    return '<button type="button" role="tab" class="adm-chip adm-chip-etapa' + (peSegmento === x.c.id ? ' is-ativo' : '') + '" data-cor="' + x.c.cor + '" data-pe-seg="' + x.c.id +
+                        '" aria-selected="' + (peSegmento === x.c.id) + '">' + icoFa(x.c.icone) + '<span class="adm-chip-txt">' + esc(x.c.titulo) + '</span> <span class="adm-kanban-contagem">' + x.l.length + '</span></button>';
                 }).join('') + '</div>' +
             '<div class="adm-kanban adm-kanban-pe">' +
                 cols.map(function (x) {
-                    return '<div class="adm-kanban-coluna' + (peSegmento === x.c.id ? ' is-seg-ativa' : '') + '" data-pe-col="' + x.c.id + '">' +
-                        '<div class="adm-kanban-cabecalho"><span class="adm-kanban-titulo">' + esc(x.c.titulo) + '</span><span class="adm-kanban-contagem">' + x.l.length + '</span></div>' + peTotalHtml(x.l) +
-                        '<div class="adm-kanban-corpo-erp">' + (x.l.length ? x.l.map(peCartao).join('') : cartaoVazio('Nenhum pedido', '', 'erp')) + '</div>' +
+                    return '<div class="adm-kanban-coluna' + (peSegmento === x.c.id ? ' is-seg-ativa' : '') + '" data-cor="' + x.c.cor + '" data-pe-col="' + x.c.id + '">' +
+                        cabecalhoKanban(x.c, x.l.length) + peTotalHtml(x.l) +
+                        '<div class="adm-kanban-corpo-erp">' + (x.l.length ? x.l.map(peCartao).join('') : colunaVazia(x.c.icone, x.c.vazio)) + '</div>' +
                     '</div>';
                 }).join('') +
             '</div>';
@@ -6165,10 +6469,10 @@
     }
     var kanbanSegmento = 'aguardando'; // celular: uma coluna por vez
     var COLUNAS_KANBAN = [
-        { status: 'aguardando', titulo: 'Aguardando' },
-        { status: 'confirmado', titulo: 'Confirmado' },
-        { status: 'entregue',   titulo: 'Entregue' },
-        { status: 'cancelado',  titulo: 'Cancelado' }
+        { status: 'aguardando', titulo: 'Aguardando', icone: 'fa-hourglass-start', cor: 'carga', dica: 'Pedido novo, esperando confirmação.', vazio: 'Nenhum pedido esperando confirmação.' },
+        { status: 'confirmado', titulo: 'Confirmado', icone: 'fa-clipboard-check', cor: 'separado', dica: 'Confirmado com o cliente; falta entregar.', vazio: 'Nenhum pedido confirmado esperando entrega.' },
+        { status: 'entregue',   titulo: 'Entregue', icone: 'fa-truck-fast', cor: 'saiu', dica: 'Pedido entregue. Etapa concluída.', vazio: 'Nenhuma entrega registrada.' },
+        { status: 'cancelado',  titulo: 'Cancelado', icone: 'fa-ban', cor: 'cancelado', dica: 'Pedido cancelado; nada a fazer.', vazio: 'Nenhum pedido cancelado.' }
     ];
 
     function desenharPedidosBase() {
@@ -6181,7 +6485,7 @@
             '<button type="button" class="adm-chip' + (origem === 'erp' ? ' is-ativo' : '') + '" data-origem-pedidos="erp" aria-pressed="' + (origem === 'erp') + '">Pedidos do ERP</button></div>';
         if (origem === 'erp') {
             alvo.innerHTML = '<div class="flex items-center justify-between flex-wrap gap-3 mb-5">' + seletor + SELO_ERP + '</div>' + peHtml();
-            ligarOrigemPedidos(alvo);
+            ligarOrigemPedidos(alvo); ligarLegendaKanban(alvo);
             return;
         }
         var cabecalho =
@@ -6214,9 +6518,10 @@
                   ' cliente(s) com vendas demais no período ficaram fora do casamento (aparecem como sempre).' : '') + '</p>'
             : erpv.erro ? '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">Vendas do ERP indisponíveis agora: os pedidos aparecem como sempre.</p>' : '';
         alvo.innerHTML = cabecalho + notaErp +
-            (pedidosVista === 'kanban' ? htmlKanban(filtrados) : htmlTabelaPedidos(filtrados));
+            (pedidosVista === 'kanban' ? legendaKanban(true) + htmlKanban(filtrados) : htmlTabelaPedidos(filtrados));
 
         if (pedidosVista === 'kanban') {
+            ligarLegendaKanban(alvo);
             ligarAcoesDeStatus(alvo); ligarDragDrop(alvo);
             alvo.querySelectorAll('[data-kanban-seg]').forEach(function (b) {
                 b.addEventListener('click', function () {
@@ -6282,8 +6587,8 @@
         return '<div class="adm-kanban-segmentos" role="tablist" aria-label="Status dos pedidos">' +
             COLUNAS_KANBAN.map(function (col) {
                 var n = lista.filter(function (p) { return p.status === col.status; }).length;
-                return '<button type="button" role="tab" class="adm-chip' + (kanbanSegmento === col.status ? ' is-ativo' : '') + '" data-kanban-seg="' + col.status +
-                    '" aria-selected="' + (kanbanSegmento === col.status) + '">' + esc(col.titulo) + ' <span class="adm-kanban-contagem">' + n + '</span></button>';
+                return '<button type="button" role="tab" class="adm-chip adm-chip-etapa' + (kanbanSegmento === col.status ? ' is-ativo' : '') + '" data-cor="' + col.cor + '" data-kanban-seg="' + col.status +
+                    '" aria-selected="' + (kanbanSegmento === col.status) + '">' + icoFa(col.icone) + '<span class="adm-chip-txt">' + esc(col.titulo) + '</span> <span class="adm-kanban-contagem">' + n + '</span></button>';
             }).join('') +
             '<button type="button" role="tab" class="adm-chip' + (kanbanSegmento === 'erp' ? ' is-ativo' : '') + '" data-kanban-seg="erp" aria-selected="' + (kanbanSegmento === 'erp') +
                 '">Vendas do ERP <span class="adm-kanban-contagem">' + (kv.carregado ? kvLista().length : '–') + '</span></button>' +
@@ -6293,12 +6598,10 @@
                 var itens = lista.filter(function (p) { return p.status === col.status; });
                 // Aguardando: já faturados no ERP primeiro (ordem estável: o resto mantém a ordem de chegada).
                 if (col.status === 'aguardando') itens = itens.filter(erpCasado).concat(itens.filter(function (p) { return !erpCasado(p); }));
-                return '<div class="adm-kanban-coluna' + (kanbanSegmento === col.status ? ' is-seg-ativa' : '') + '" data-kanban-col="' + col.status + '">' +
-                    '<div class="adm-kanban-cabecalho">' +
-                        '<span class="adm-kanban-titulo">' + esc(col.titulo) + '</span>' +
-                        '<span class="adm-kanban-contagem">' + itens.length + '</span>' +
-                    '</div>' +
+                return '<div class="adm-kanban-coluna' + (kanbanSegmento === col.status ? ' is-seg-ativa' : '') + '" data-cor="' + col.cor + '" data-kanban-col="' + col.status + '">' +
+                    cabecalhoKanban(col, itens.length) +
                     '<div class="adm-kanban-corpo" data-coluna="' + col.status + '">' +
+                        (itens.length ? '' : colunaVazia(col.icone, col.vazio)) +
                         itens.map(function (p) { return cartaoKanban(p, marcaKanban[p.id] || ''); }).join('') +
                     '</div>' +
                 '</div>';
@@ -6313,22 +6616,23 @@
 
     function cartaoKanban(p, extra) {
         var destaque = p.status === 'aguardando' && erpCasado(p) ? ' adm-kanban-faturado' : '';
-        return '<div class="adm-kanban-cartao' + destaque + (extra || '') + '" draggable="true" data-id="' + esc(p.id) +
+        var corCol = (COLUNAS_KANBAN.filter(function (c) { return c.status === p.status; })[0] || {}).cor || 'aberto';
+        return '<div class="adm-kanban-cartao' + destaque + (extra || '') + '" data-cor="' + corCol + '" draggable="true" data-id="' + esc(p.id) +
                 '" data-status-atual="' + esc(p.status) + '">' +
             '<div class="flex items-start justify-between gap-2">' +
-                '<p class="text-sm font-bold truncate">' + esc(p.razao_social) + '</p>' +
+                '<p class="text-sm font-bold truncate adm-kc-nome">' + icoFa('fa-store') + '<span class="truncate">' + esc(p.razao_social) + '</span></p>' +
                 '<button type="button" class="shrink-0" data-ver-pedido="' + esc(p.id) + '" ' +
                     'style="color:var(--adm-tinta-3)" title="Ver detalhes" aria-label="Ver detalhes do pedido de ' + esc(p.razao_social) + '"><i class="fa-regular fa-eye" aria-hidden="true"></i></button>' +
             '</div>' +
-            '<p class="text-xs mt-0.5 truncate" style="color:var(--adm-tinta-3)">' +
-                esc((p.cidade || '') + '/' + (p.uf || '')) + '</p>' +
+            '<p class="adm-kc-linha">' + icoFa('fa-location-dot') + '<span class="truncate">' + esc((p.cidade || '') + '/' + (p.uf || '')) + '</span></p>' +
             '<div class="flex items-center justify-between mt-2">' +
-                '<span class="text-sm font-bold">' + esc(brl(p.valor_centavos)) + '</span>' +
+                '<span class="adm-kc-valor">' + icoFa('fa-sack-dollar') + '<span>' + esc(brl(p.valor_centavos)) + '</span></span>' +
                 (p.enviado_whatsapp
                     ? '<i class="fa-brands fa-whatsapp" style="color:var(--adm-bom)" title="Mensagem já enviada"></i>'
                     : '') +
             '</div>' +
-            '<p class="text-xs mt-1 mb-2" style="color:var(--adm-tinta-3)">' + esc(dataHora(p.criado_em)) + '</p>' +
+            '<p class="adm-kc-linha mb-2">' + icoFa('fa-clock') + '<span>' + esc(dataHora(p.criado_em)) + '</span></p>' +
+            (p.status === 'aguardando' ? selosAtraso(seloAtraso(p.criado_em, 'Sem resposta'), 'mb-2') : '') +
             (seloErpPedido(p) || seloCadastroErp(p) ? '<div class="mb-2 flex flex-wrap gap-1">' + seloErpPedido(p) + seloCadastroErp(p) + '</div>' : '') +
             '<div class="flex items-center gap-1 flex-wrap pt-2" style="border-top:1px solid var(--adm-borda)">' +
                 acoesDeStatus(p) +
@@ -8881,6 +9185,8 @@
     window.addEventListener('resize', function () {
         clearTimeout(timerResize);
         timerResize = setTimeout(function () {
+            // Resize causado pela tela cheia do mapa (entrar/sair): não redesenha nada; o mapa se ajusta pelo ResizeObserver.
+            if (gmapResizeDaTelaCheia()) return;
             if (usuario) { desenharTudo(); setTimeout(ajustarSvgCelular, 60); } // também sem pedidos do site: há dados do ERP nos gráficos
         }, 200);
     });

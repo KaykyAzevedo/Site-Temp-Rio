@@ -927,14 +927,22 @@ body.admin {
 /* ===================== Mapa de expansão: pinos em gota, legenda, tela cheia ===================== */
 .adm-gota { background: none; border: 0; }   /* divIcon do Leaflet: sem a caixa branca padrão */
 .adm-gota-svg { display: block; width: 30px; height: 36px; overflow: visible; transform-origin: 13px 34px; filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.55)); }
+/* Cores dos pinos (contraste sobre o mapa escuro #181c22..#3a4049): verde 5.9-9.6, laranja 4.4-7.3, amarelo 7.4-12.1,
+   vermelho 3.2-5.2, cinza 4.2-6.8, violeta 4.1-6.7 (todas >= 3:1). Cor nunca é a única pista: "!" no parou, furo vazado
+   no inativo, anel oco no interessado; legenda com texto e popup com a categoria. */
+.adm-gota-svg, .adm-anel, .adm-chip-amostra {
+    --gota-alta: #3ddc84; --gota-media: #f0915a; --gota-baixa: #f7d84a; --gota-parou: #ff4d4d; --gota-inativo: #9aa5b1; --gota-int: #b98cff;
+}
 .adm-gota-corpo { stroke: var(--adm-fundo); stroke-width: 1.5; }
-.adm-gota-alta .adm-gota-corpo { fill: var(--adm-acao); }      /* 20% que mais compraram em 12 meses */
-.adm-gota-media .adm-gota-corpo { fill: var(--adm-atencao); }  /* 50% do meio */
-.adm-gota-base .adm-gota-corpo { fill: var(--adm-azul); }      /* 30% de baixo + quem não comprou em 12 meses */
+.adm-gota-alta .adm-gota-corpo { fill: var(--gota-alta); }        /* terço de cima (valor 12 meses) */
+.adm-gota-media .adm-gota-corpo { fill: var(--gota-media); }      /* terço do meio */
+.adm-gota-baixa .adm-gota-corpo { fill: var(--gota-baixa); }      /* terço de baixo */
+.adm-gota-inativo .adm-gota-corpo { fill: var(--gota-inativo); }  /* sem compra em 12 meses */
+.adm-gota-parou .adm-gota-corpo { fill: var(--gota-parou); }      /* parou de comprar: vermelho + "!" */
 .adm-gota-furo { fill: var(--adm-fundo); }
-.adm-gota-aprox .adm-gota-corpo { fill-opacity: 0.6; stroke: var(--adm-tinta-2); stroke-dasharray: 3 2; }   /* posição aproximada: tracejado + mais claro */
-.adm-gota-alerta { fill: var(--adm-ruim); stroke: var(--adm-fundo); stroke-width: 1.5; }                    /* "parou de comprar": selo com ! (não só cor) */
-.adm-gota-alerta-marca { fill: none; stroke: var(--adm-fundo); stroke-width: 2; stroke-linecap: round; }
+.adm-gota-inativo .adm-gota-furo { fill: none; stroke: var(--adm-fundo); stroke-width: 2; }
+.adm-gota-exclama { fill: none; stroke: var(--adm-fundo); stroke-width: 3; stroke-linecap: round; }
+.adm-gota-aprox .adm-gota-corpo { fill-opacity: 0.75; stroke: var(--adm-tinta-2); stroke-dasharray: 3 2; }   /* posição aproximada: tracejado + mais claro */
 .leaflet-marker-icon.adm-gota:focus-visible { outline: none; }
 .leaflet-marker-icon.adm-gota:focus-visible .adm-gota-svg { outline: 2px solid var(--adm-tinta); outline-offset: 2px; border-radius: 6px; }
 @keyframes adm-gota-cai {
@@ -951,10 +959,16 @@ body.admin {
 
 .adm-leg { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; font-size: 0.8125rem; color: var(--adm-tinta-2); margin-top: 0.75rem; }
 .adm-leg > span { display: inline-flex; align-items: center; gap: 0.4rem; }
-.adm-leg .adm-gota-svg { width: 20px; height: 24px; filter: none; }
-/* Interessados (não compraram): anel OCO em cinza-claro neutro. Quanto menos preciso (CEP < bairro < cidade), maior, mais fraco e mais tracejado. */
+.adm-leg .adm-gota-svg { width: 20px; height: 24px; flex: none; filter: none; }
+.adm-leg .adm-anel { width: 20px; height: 20px; flex: none; }
+.adm-leg-n { color: var(--adm-tinta-3); }
+.adm-leg-nota { flex-basis: 100%; font-size: 0.75rem; color: var(--adm-tinta-3); }
+.adm-chip-amostra { display: inline-flex; align-items: center; gap: 1px; margin-right: 0.35rem; vertical-align: middle; }
+.adm-chip-amostra .adm-gota-svg { width: 12px; height: 15px; filter: none; }
+.adm-chip-amostra .adm-anel { width: 14px; height: 14px; filter: none; }
+/* Interessados (não compraram): anel OCO violeta. Quanto menos preciso (CEP < bairro < cidade), maior, mais fraco e mais tracejado. */
 .adm-anel { display: block; overflow: visible; filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.6)); }
-.adm-anel circle { fill: rgba(233, 238, 244, 0.06); stroke: var(--adm-tinta); }
+.adm-anel circle { fill: rgba(185, 140, 255, 0.12); stroke: var(--gota-int); }
 .adm-anel text { fill: var(--adm-tinta); font: 700 11px/1 system-ui, sans-serif; }
 .adm-anel-cep circle { stroke-width: 2.5; }
 .adm-anel-bairro { opacity: 0.75; }
@@ -972,3 +986,87 @@ body.admin {
 .is-tela-cheia { background: var(--adm-fundo) !important; border-radius: 0 !important; margin: 0 !important; padding: 1rem !important; overflow: auto; display: flex; flex-direction: column; }
 .is-tela-cheia.is-sobreposto { position: fixed; inset: 0; z-index: 2000; }
 .is-tela-cheia #mapa-clientes { height: auto !important; flex: 1 1 60vh; min-height: 18rem; }
+
+/* ===================== Kanban de pedidos: etapas com cor + ícone (identificação rápida) =====================
+   Cor = andamento (cinza -> amarelo -> laranja -> verde); NUNCA é a única pista: sempre há ícone + texto.
+   Todas as cores abaixo têm contraste >= 7:1 sobre --adm-superficie / --adm-superficie-2. */
+[data-cor] { --etapa: var(--adm-tinta-3); }
+[data-cor="aberto"]     { --etapa: #aab6c4; }
+[data-cor="carga"]      { --etapa: #e8c25a; }
+[data-cor="separando"]  { --etapa: #f2a14a; }
+[data-cor="separado"]   { --etapa: #f4825a; }
+[data-cor="conferido"]  { --etapa: #a6d86f; }
+[data-cor="saiu"]       { --etapa: #5fc28a; }
+[data-cor="cancelado"]  { --etapa: #f08a80; }
+
+.adm-kanban-coluna[data-cor] { border-top: 3px solid var(--etapa); }
+.adm-kanban-topo { border-bottom: 1px solid var(--adm-borda); }
+.adm-kanban-topo .adm-kanban-cabecalho { border-bottom: 0; padding-bottom: 0.2rem; }
+.adm-kanban-titulo { display: inline-flex; align-items: center; gap: 0.45rem; min-width: 0; }
+.adm-kanban-ico { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 1.7rem; height: 1.7rem; border-radius: 999px; background: var(--adm-neutro-fundo-2); color: var(--etapa); font-size: 0.85rem; }
+.adm-kanban-dica { margin: 0; padding: 0 1rem 0.65rem; font-size: 0.75rem; line-height: 1.3; color: var(--adm-tinta-2); }
+@media (min-width: 901px) { .adm-kanban-dica { padding: 0 0.7rem 0.6rem; } }
+
+/* Cartões: faixa lateral na cor da etapa */
+.adm-kanban-erpcartao[data-cor] { box-shadow: inset 4px 0 0 var(--etapa); padding-left: 0.85rem; }
+.adm-kanban-cartao[data-cor]:not(.adm-kanban-faturado) { box-shadow: inset 4px 0 0 var(--etapa); }
+
+/* Linhas do cartão: ícone fixo + texto */
+.adm-kc-linha, .adm-kc-nome, .adm-kc-valor { display: flex; align-items: baseline; gap: 0.45rem; margin: 0.2rem 0 0; min-width: 0; }
+.adm-kc-linha { font-size: 0.75rem; color: var(--adm-tinta-2); }
+.adm-kc-linha > i, .adm-kc-nome > i, .adm-kc-valor > i { flex: none; width: 1rem; text-align: center; color: var(--etapa, var(--adm-tinta-3)); font-size: 0.8em; }
+.adm-kc-linha > span, .adm-kc-nome > span, .adm-kc-valor > span { min-width: 0; }
+.adm-kc-nome { margin-top: 0; }
+.adm-kc-valor { font-size: 1.05rem; font-weight: 800; color: var(--adm-tinta); margin-top: 0.35rem; }
+.adm-kc-valor > i { font-size: 0.9rem; }
+.adm-kc-selo { margin: 0.45rem 0 0; }
+
+/* Selo de atraso: ícone + texto + cor */
+.adm-atraso { display: inline-flex; align-items: center; gap: 0.35rem; max-width: 100%; padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700; line-height: 1.25; border: 1px solid transparent; }
+.adm-atraso.is-ok { color: var(--adm-ok); background: var(--adm-ok-fundo); }
+.adm-atraso.is-atencao { color: var(--adm-atencao); background: var(--adm-atencao-fundo); border-color: var(--adm-atencao-borda); }
+.adm-atraso.is-critico { color: var(--adm-ruim); background: var(--adm-ruim-fundo); border-color: var(--adm-ruim-borda); }
+
+/* Coluna vazia: ícone + frase amigável */
+.adm-kanban-vazio { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; padding: 1.25rem 0.75rem; text-align: center; font-size: 0.8rem; color: var(--adm-tinta-2); border: 1px dashed var(--adm-borda-forte); border-radius: 0.6rem; }
+.adm-kanban-vazio > i { font-size: 1.5rem; color: var(--etapa, var(--adm-tinta-3)); opacity: 0.85; }
+
+/* Legenda recolhível */
+.adm-legenda-kanban { margin: 0 0 0.85rem; padding: 0.5rem 0.85rem; background: var(--adm-superficie); border: 1px solid var(--adm-borda); border-radius: 0.6rem; font-size: 0.8rem; color: var(--adm-tinta-2); }
+.adm-legenda-kanban summary { cursor: pointer; font-weight: 700; color: var(--adm-tinta); }
+.adm-legenda-kanban p { margin: 0.45rem 0 0; }
+.adm-legenda-selos { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+
+/* Chips de etapa (celular): ícone na cor da etapa */
+.adm-chip-etapa > i { color: var(--etapa); }
+@media (max-width: 900px) {
+    .adm-kanban-segmentos .adm-chip-etapa { flex-direction: column; align-items: center; justify-content: flex-start; text-align: center; gap: 0.15rem; flex: 1 0 3.4rem; padding: 0.3rem 0.1rem; }
+    .adm-kanban-segmentos .adm-chip-etapa .adm-chip-txt { overflow-wrap: normal; word-break: normal; hyphens: none; }
+}
+
+/* ===================== Hoje: cartão "Crescimento da marca" (mapa + 3 números) ===================== */
+.hm-grade { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+@media (min-width: 1024px) { .hm-grade { grid-template-columns: minmax(0, 1fr) 20rem; } }
+.hm-mapa { height: 300px; border-radius: 0.75rem; overflow: hidden; min-width: 0; }
+@media (min-width: 1024px) { .hm-mapa { height: 400px; } }
+.hm-aviso { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.75rem; padding: 1.5rem; text-align: center; font-size: 0.875rem; color: var(--adm-tinta-2); background: var(--adm-superficie-2); border: 1px dashed var(--adm-borda-forte); }
+.hm-aviso > i { font-size: 2rem; color: var(--adm-acao); }
+.hm-numeros { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.75rem; grid-template-columns: minmax(0, 1fr); align-content: stretch; }
+@media (min-width: 640px) and (max-width: 1023px) { .hm-numeros { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.hm-num { display: flex; align-items: center; gap: 0.85rem; padding: 0.9rem 1rem; background: var(--adm-superficie-2); border: 1px solid var(--adm-borda); border-radius: 0.75rem; min-width: 0; }
+.hm-num-ico { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 2.75rem; height: 2.75rem; border-radius: 999px; background: var(--adm-acao-fundo); color: var(--adm-acao); font-size: 1.15rem; }
+.hm-num-corpo { display: flex; flex-direction: column; min-width: 0; }
+.hm-num-valor { font-size: 2.1rem; font-weight: 800; line-height: 1.05; color: var(--adm-tinta); font-variant-numeric: tabular-nums; }
+.hm-num-rot { font-size: 0.8rem; font-weight: 700; color: var(--adm-tinta-2); }
+.hm-num-sub { font-size: 0.72rem; line-height: 1.3; color: var(--adm-tinta-3); margin-top: 0.15rem; }
+.hm-var { display: inline-flex; align-items: center; gap: 0.25rem; font-weight: 700; color: var(--adm-tinta-2); }
+.hm-var.is-sobe { color: var(--adm-ok); }
+.hm-var.is-desce { color: var(--adm-atencao); }
+.hm-leg { margin-top: 0.85rem; }
+/* Os pinos só começam a cair quando o mapa está visível (aba Hoje aberta) */
+.hm-parado .adm-gota-svg.is-cai { animation-play-state: paused; }
+
+/* Piso de texto 13px em telas < 1024px (mesma regra do projeto) */
+@media (max-width: 1023px) {
+    .adm-kanban-dica, .adm-kc-linha, .adm-atraso, .adm-chip-etapa { font-size: 0.8125rem; }
+}
