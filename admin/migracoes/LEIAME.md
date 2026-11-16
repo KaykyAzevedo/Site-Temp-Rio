@@ -1487,7 +1487,7 @@ Arquivo: `040_rota_config.sql`. Requer `eh_admin()`/`eh_equipe()` (014). Indepen
 - Testada em PG 18 local (aplicada 2x): admin grava e a normalização confere (`Irajá`, `  irajá ` → `IRAJA`; `Pavuna ª` → `PAVUNA`; datas fora de 2020..2100 descartadas); vendedor lê e update/delete afetam 0 linhas, insert é recusado pela RLS; logado fora da equipe vê 0 linhas; anon = permission denied; `corte_hora = 24`, documento/veículo inválidos e segunda linha são recusados.
 - Rollback: `drop table public.rota_cliente_veiculo, public.rota_config; drop function public.rota_040_config_normalizar(), public.rota_040_veiculo_carimbar();` (o painel volta aos padrões sozinho).
 
-## 041 — fornecedor não é cliente — NÃO aplicada
+## 041 — fornecedor não é cliente — APLICADA em 2026-11-16
 
 Arquivo: `041_fornecedores.sql`. Requer 033 e 037 e `eh_admin()/eh_equipe()`. Independente de 038–040. Idempotente, `lock_timeout 5s`.
 

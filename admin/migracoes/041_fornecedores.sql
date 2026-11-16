@@ -1,5 +1,5 @@
 -- 041: FORNECEDOR nao e cliente (decisao do dono com o Marcio, 2026-11-16).
--- NAO APLICADA. Instalacao manual no SQL Editor (papel postgres). Idempotente: pode rodar de novo.
+-- APLICADA em 2026-11-16 (sem erro; 41 fornecedores marcados pelo SQL Editor, fora do repositorio). Instalacao manual no SQL Editor (papel postgres). Idempotente.
 -- O ERP mistura clientes e fornecedores no mesmo cadastro (solidcon_clientes) e e SO LEITURA. Aqui fica a
 -- marcacao do lado do painel: documento marcado = fornecedor = some do mapa, das listas e das contagens de clientes.
 -- Os documentos NAO estao neste arquivo (repositorio publico): o Tech Lead insere pelo SQL Editor ou o admin marca no painel.
