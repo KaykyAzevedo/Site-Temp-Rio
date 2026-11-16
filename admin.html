@@ -104,16 +104,16 @@
             <button type="button" id="btn-fixar-menu" class="adm-fixar-menu" aria-pressed="false" title="Fixar menu aberto"><i class="fa-solid fa-thumbtack"></i><span>Fixar menu</span></button>
             <button type="button" class="adm-aba is-ativa" data-aba="hoje"><i class="fa-solid fa-house"></i><span>Hoje</span></button>
             <button type="button" class="adm-aba" data-aba="pedidos"><i class="fa-solid fa-clipboard-list"></i><span>Pedidos</span></button>
+            <!-- Site: tudo que vem do site (pedidos, clientes, produtos, vendas, visitas, leads, lista de espera, vitrines). -->
+            <button type="button" class="adm-aba adm-so-desktop" data-aba="site"><i class="fa-solid fa-globe"></i><span>Site</span></button>
             <button type="button" class="adm-aba" data-aba="clientes"><i class="fa-solid fa-users"></i><span>Clientes</span></button>
             <button type="button" class="adm-aba" data-aba="estoque"><i class="fa-solid fa-boxes-stacked"></i><span>Estoque</span></button>
             <button type="button" class="adm-aba adm-so-desktop" data-aba="vendas"><i class="fa-solid fa-chart-line"></i><span>Vendas</span></button>
-            <button type="button" class="adm-aba adm-so-desktop" data-aba="demanda"><i class="fa-solid fa-hourglass-half"></i><span>Demanda</span></button>
             <div id="grupo-mais" class="adm-grupo-mais">
                 <button type="button" id="btn-mais" class="adm-aba adm-aba-mais" aria-expanded="false" aria-controls="menu-mais"><i class="fa-solid fa-ellipsis"></i><span>Mais</span><i class="fa-solid fa-chevron-down adm-mais-seta"></i></button>
                 <div id="menu-mais" class="adm-menu-mais">
+                    <button type="button" class="adm-aba adm-so-mobile" data-aba="site"><i class="fa-solid fa-globe"></i><span>Site</span></button>
                     <button type="button" class="adm-aba adm-so-mobile" data-aba="vendas"><i class="fa-solid fa-chart-line"></i><span>Vendas</span></button>
-                    <button type="button" class="adm-aba adm-so-mobile" data-aba="demanda"><i class="fa-solid fa-hourglass-half"></i><span>Demanda</span></button>
-                    <button type="button" class="adm-aba" data-aba="lojistas"><i class="fa-solid fa-store"></i><span>Vitrines de lojistas</span></button>
                     <button type="button" class="adm-aba" data-aba="regioes"><i class="fa-solid fa-map-location-dot"></i><span>Regiões</span></button>
                     <button type="button" class="adm-aba" data-aba="solidcon"><i class="fa-solid fa-plug"></i><span>Integração</span></button>
                     <button type="button" class="adm-aba" data-aba="lgpd"><i class="fa-solid fa-shield-halved"></i><span>LGPD</span></button>
@@ -200,21 +200,35 @@
             </div>
 
             <section id="painel-dashboard"></section>
+            <!-- Aba Pedidos: só o ERP (Kanban por etapa do WMS + vendas registradas no SOLIDCON). -->
+            <section id="painel-pedidoserp" class="hidden"></section>
+            <!-- Aba Site: seções na ordem abaixo (cabeçalho cab-<seção> aparece quando a aba mostra mais de uma). -->
+            <h2 class="adm-secao-cab hidden" id="cab-pedidos">Pedidos do site</h2>
             <section id="painel-pedidos" class="hidden"></section>
-            <section id="painel-clientes" class="hidden"></section>
-            <h2 class="adm-secao-cab hidden" id="cab-historico">Histórico — pedidos encerrados</h2>
+            <h2 class="adm-secao-cab hidden" id="cab-historico">Pedidos do site — encerrados (histórico)</h2>
             <section id="painel-historico" class="hidden"></section>
-            <section id="painel-vendas" class="hidden"></section>
+            <h2 class="adm-secao-cab hidden" id="cab-siteclientes">Clientes do site</h2>
+            <section id="painel-siteclientes" class="hidden"></section>
+            <h2 class="adm-secao-cab hidden" id="cab-siteprodutos">Produtos do site</h2>
+            <section id="painel-siteprodutos" class="hidden"></section>
+            <h2 class="adm-secao-cab hidden" id="cab-sitedash">Vendas do site — resumo</h2>
+            <section id="painel-sitedash" class="hidden"></section>
+            <h2 class="adm-secao-cab hidden" id="cab-sitevendas">Vendas do site — por período</h2>
+            <section id="painel-sitevendas" class="hidden"></section>
+            <h2 class="adm-secao-cab hidden" id="cab-visitas">Visitas ao site</h2>
+            <section id="painel-visitas" class="hidden"></section>
             <h2 class="adm-secao-cab hidden" id="cab-leads">Leads (pré-registro)</h2>
             <section id="painel-leads" class="hidden"></section>
             <h2 class="adm-secao-cab hidden" id="cab-espera">Lista de espera (regiões sem entrega)</h2>
             <section id="painel-espera" class="hidden"></section>
+            <h2 class="adm-secao-cab hidden" id="cab-lojistas">Vitrines de lojistas</h2>
+            <section id="painel-lojistas" class="hidden"></section>
+            <!-- Demais abas (ERP / configuração). -->
+            <section id="painel-clientes" class="hidden"></section>
+            <section id="painel-vendas" class="hidden"></section>
             <section id="painel-vitrine" class="hidden"></section>
             <section id="painel-regioes" class="hidden"></section>
-            <h2 class="adm-secao-cab hidden" id="cab-visitas">Visitas ao site</h2>
-            <section id="painel-visitas" class="hidden"></section>
             <section id="painel-solidcon" class="hidden"></section>
-            <section id="painel-lojistas" class="hidden"></section>
             <section id="painel-lgpd" class="hidden"></section>
         </main>
         </div>

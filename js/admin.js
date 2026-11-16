@@ -362,29 +362,38 @@
                   solicitacoesLgpd: [] };
 
     // Seções = painéis (#painel-<seção>) com seus desenhistas; o menu agrupa seções em itens (NAV).
-    var ABAS = ['dashboard', 'pedidos', 'clientes', 'historico', 'vendas',
-                'espera', 'vitrine', 'regioes', 'visitas', 'solidcon', 'leads', 'lgpd', 'lojistas'];
+    // 'pedidos' = pedidos DO SITE (seção da aba Site; o nome ficou para não mexer em realtime/sino/redesenhos);
+    // 'pedidoserp' = Kanban do ERP + vendas do SOLIDCON (aba Pedidos). site* = blocos do site que saíram de abas mistas.
+    var ABAS = ['dashboard', 'pedidoserp', 'pedidos', 'clientes', 'historico', 'vendas',
+                'espera', 'vitrine', 'regioes', 'visitas', 'solidcon', 'leads', 'lgpd', 'lojistas',
+                'siteclientes', 'siteprodutos', 'sitedash', 'sitevendas'];
 
-    // Menu: item -> seções que ele mostra. restrito = só admin (mesmo conjunto de antes: vendas, espera, vitrine, regioes,
-    // visitas, leads, lgpd e a nova 'lojistas', que saiu da Vitrine). Histórico agora é a vista "Encerrados" de Pedidos.
+    // Menu: item -> seções que ele mostra. restrito = item inteiro só admin. Na aba Site (mista), o que é só admin sai
+    // seção a seção (SECOES_SO_ADMIN, em secoesDe). Histórico = vista "Encerrados" dos pedidos do site.
     var NAV = {
         hoje:     { secoes: ['dashboard'], restrito: false },
-        pedidos:  { secoes: ['pedidos'],   restrito: false },
+        pedidos:  { secoes: ['pedidoserp'], restrito: false },
+        site:     { secoes: ['pedidos', 'siteclientes', 'siteprodutos', 'sitedash', 'sitevendas', 'visitas', 'leads', 'espera', 'lojistas'], restrito: false },
         clientes: { secoes: ['clientes'],  restrito: false },
         estoque:  { secoes: ['vitrine'],   restrito: true },
-        vendas:   { secoes: ['vendas', 'visitas'], restrito: true },
-        demanda:  { secoes: ['leads', 'espera'],   restrito: true },
-        lojistas: { secoes: ['lojistas'],  restrito: true },
+        vendas:   { secoes: ['vendas'],    restrito: true },
         regioes:  { secoes: ['regioes'],   restrito: true },
         solidcon: { secoes: ['solidcon'],  restrito: false },
         lgpd:     { secoes: ['lgpd'],      restrito: true }
     };
-    // Nomes antigos de aba (links, atalhos, estado antigo) caem no item novo correspondente.
-    var ALIAS_ABA = { dashboard: 'hoje', historico: 'pedidos', vitrine: 'estoque', espera: 'demanda', leads: 'demanda', visitas: 'vendas' };
-    var vistaPedidos = 'andamento'; // 'andamento' | 'encerrados' (antigo Histórico)
+    // Nomes antigos de aba (links, atalhos, estado antigo) caem no item novo correspondente; desconhecido cai em "hoje".
+    var ALIAS_ABA = { dashboard: 'hoje', historico: 'site', vitrine: 'estoque', espera: 'site', leads: 'site', visitas: 'site',
+                      demanda: 'site', lojistas: 'site', pedidoserp: 'pedidos' };
+    var vistaPedidos = 'andamento'; // 'andamento' | 'encerrados' (pedidos do site encerrados = antigo Histórico)
+    // Seções da aba Site que o vendedor não vê (antes estavam em itens restritos: Vendas, Demanda, Vitrines, Estoque).
+    var SECOES_SO_ADMIN = ['siteprodutos', 'sitevendas', 'visitas', 'leads', 'espera', 'lojistas'];
     function secoesDe(nav) {
-        if (nav === 'pedidos' && vistaPedidos === 'encerrados') return ['historico'];
-        return (NAV[nav] || NAV.hoje).secoes;
+        var s = (NAV[nav] || NAV.hoje).secoes;
+        if (nav === 'site') {
+            if (vistaPedidos === 'encerrados') s = s.map(function (x) { return x === 'pedidos' ? 'historico' : x; });
+            if (papel === 'vendedor') s = s.filter(function (x) { return SECOES_SO_ADMIN.indexOf(x) < 0; });
+        }
+        return s;
     }
     function secaoVisivel(s) { return secoesDe(abaAtual).indexOf(s) >= 0; }
 
@@ -459,7 +468,7 @@
                 vistaPedidos = b.getAttribute('data-vista-pedidos') === 'encerrados' ? 'encerrados' : 'andamento';
                 abasParaRedesenhar.pedidos = true; abasParaRedesenhar.historico = true;
                 mostrarSecoes();
-                desenharAbaSeSuja('pedidos');
+                desenharAbaSeSuja('site');
             });
         });
         var btnMais = document.getElementById('btn-mais'), menuMais = document.getElementById('menu-mais');
@@ -496,7 +505,7 @@
         ligarMenuFixo();
         $('#btn-sino').addEventListener('click', function () {
             marcarNotificacoesLidas();
-            trocarAba('pedidos', true);
+            trocarAba('site', true);   // sino = pedidos do site
         });
         $('#btn-fechar-modal').addEventListener('click', fecharModal);
         $('#modal-detalhe').addEventListener('click', function (ev) {
@@ -705,7 +714,7 @@
         // marcadas e são redesenhadas quando a pessoa clicar nelas (mesma
         // ideia de desenharAbaSeSuja, para não travar o painel a cada
         // mudança de filtro).
-        ['pedidos', 'clientes', 'vendas'].forEach(function (a) { abasParaRedesenhar[a] = true; });
+        ['pedidos', 'clientes', 'siteclientes', 'vendas', 'sitevendas'].forEach(function (a) { abasParaRedesenhar[a] = true; });
         desenharAbaSeSuja(abaAtual);
 
         // O card de Receita, no modo "Personalizado", lê filtros.de/ate —
@@ -801,7 +810,7 @@
         var mais = document.getElementById('grupo-mais');
         if (mais) mais.classList.toggle('hidden', !document.querySelector('#menu-mais .adm-aba:not(.hidden)'));
         if (restrito && NAV[abaAtual] && NAV[abaAtual].restrito) {
-            trocarAba('pedidos');
+            trocarAba('site');
         }
     }
 
@@ -904,7 +913,7 @@
         });
         var barra = document.getElementById('barra-pedidos');
         if (barra) {
-            barra.classList.toggle('hidden', abaAtual !== 'pedidos');
+            barra.classList.toggle('hidden', abaAtual !== 'site');
             barra.querySelectorAll('[data-vista-pedidos]').forEach(function (b) {
                 b.classList.toggle('is-ativo', b.getAttribute('data-vista-pedidos') === vistaPedidos);
             });
@@ -921,16 +930,16 @@
         var ativo = !!(filtros.de || filtros.ate || filtros.busca || filtros.regioes.length || filtros.status.length ||
             filtros.tipoCliente !== 'todos' || (per && String(per.value) !== '12'));
         var util = dados.pedidos.length > 0 || ativo;
-        c.classList.toggle('hidden', (abaAtual !== 'pedidos' && abaAtual !== 'clientes') || !util);
+        c.classList.toggle('hidden', abaAtual !== 'site' || !util);   // filtros valem para pedidos e clientes do site
     }
 
     // forcarAndamento: atalhos para AGIR (sino, itens do Hoje) abrem Pedidos em andamento, não na vista "Encerrados" lembrada.
     function trocarAba(qual, forcarAndamento) {
         if (qual === 'historico') vistaPedidos = 'encerrados';
-        else if (forcarAndamento && (ALIAS_ABA[qual] || qual) === 'pedidos') vistaPedidos = 'andamento';
+        else if (forcarAndamento && (ALIAS_ABA[qual] || qual) === 'site') vistaPedidos = 'andamento';
         qual = ALIAS_ABA[qual] || qual;
         if (!NAV[qual]) qual = 'hoje';
-        if (papel === 'vendedor' && NAV[qual].restrito) qual = 'pedidos';
+        if (papel === 'vendedor' && NAV[qual].restrito) qual = 'site';
         if (abaAtual !== qual && secoesDe(abaAtual).indexOf('regioes') >= 0 && secoesDe(qual).indexOf('regioes') < 0) { gmapEncerrar(false); gmapTelaCheiaFim(); }
         abaAtual = qual;
         document.querySelectorAll('.adm-aba').forEach(function (b) {
@@ -994,7 +1003,12 @@
         leads: desenharLeads,
         lgpd: desenharLgpd,
         solidcon: desenharSolidcon,
-        lojistas: desenharLojistas
+        lojistas: desenharLojistas,
+        pedidoserp: desenharPedidosErpAba,
+        siteclientes: desenharSiteClientes,
+        siteprodutos: desenharSiteProdutos,
+        sitedash: desenharSiteDash,
+        sitevendas: desenharSiteVendas
     };
 
     // aba = item do menu: redesenha, entre as seções dele, só as que estão "sujas".
@@ -1073,6 +1087,7 @@
         dashAtualizarResumo();
         abasParaRedesenhar.solidcon = true;
         abasParaRedesenhar.vitrine = true;
+        abasParaRedesenhar.siteprodutos = true;   // produtos do site x estoque do ERP + vínculo
         abasParaRedesenhar.vendas = true; // nomes na margem por produto
         desenharAbaSeSuja(abaAtual);
     }
@@ -1274,7 +1289,7 @@
             '<div class="adm-card p-5 mb-5"><p class="font-bold mb-1">Sincronização de vendas</p>' +
                 '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">Saúde da rotina. Os valores vendidos ficam em Pedidos e no Dashboard de vendas.</p>' + vendaSaude + '</div>' +
             (solid.extra ? solidBlocoEventos() + '<div class="adm-card p-5 mt-5">' + solidControleLimite() + '</div>' : '') +
-            '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">Somente leitura. O preço do ERP é apenas referência — não altera o preço do site.</p>';
+            '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">Somente leitura. O preço do ERP é apenas referência — não altera o preço de venda online.</p>';
 
         alvo.querySelectorAll('[data-solid-tipo]').forEach(function (b) {
             b.addEventListener('click', function () { solid.tipoEvento = b.getAttribute('data-solid-tipo'); desenharSolidcon(); });
@@ -1422,13 +1437,11 @@
                        '" ' + attr + '="' + i[0] + '">' + i[1] + '</button>';
             }).join('');
         }
+        // "Vincular produtos do site" e "Produtos do site e estoque correspondente" foram para a aba Site (desenharSiteProdutos).
         alvo.innerHTML = cab + solidCabecalho() + solidBlocoAtencao() +
-            '<div id="vitrine-vinculo"></div>' +
             '<div id="vitrine-giro"></div>' +
             '<div id="vitrine-entradas"></div>' +
             '<div id="vitrine-insumos"></div>' +
-            '<div class="adm-card p-5 mb-5"><p class="font-bold mb-3">Produtos do site e estoque correspondente</p>' + solidTabelaPorProduto() +
-            '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">O vínculo usa só o código ERP confirmado (família de 12 dígitos, id ou EAN). Estoque em caixas; o total soma as caixas convertidas em potes.</p></div>' +
             '<details class="mb-2"' + (solid.listaAberta ? ' open' : '') + '><summary class="text-sm font-bold cursor-pointer mb-3">Todos os produtos do ERP (' + NUM.format(solid.produtos.length) + ')</summary>' +
             solidContadores() +
             '<div class="flex items-center flex-wrap gap-3 mb-4">' +
@@ -1441,7 +1454,7 @@
                     chips('data-solid-cx', solid.caixa, [['todas', 'Todas as caixas'], ['24', 'CX 24'], ['48', 'CX 48']]) +
                 '</div>' +
             '</div><div id="solid-lista"></div>' +
-            '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">Somente leitura. O preço do ERP é apenas referência — não altera o preço do site.</p></details>';
+            '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">Somente leitura. O preço do ERP é apenas referência — não altera o preço de venda online.</p></details>';
 
         var det = alvo.querySelector('details');
         det.addEventListener('toggle', function () { solid.listaAberta = det.open; });
@@ -1453,7 +1466,6 @@
             b.addEventListener('click', function () { solid.caixa = b.getAttribute('data-solid-cx'); solid.listaAberta = true; desenharVitrineErp(); });
         });
         desenharSolidLista();
-        desenharVinculo();
         desenharGiro();
         desenharEntradas();
         desenharInsumos();
@@ -1523,7 +1535,7 @@
             vinc.ocupado = false;
             vinc.linhaMsg = {};
             if (!r.ok) vinc.linhaMsg[prodId] = r.msg;
-            desenharVitrineErp();
+            vincRedesenhar();
         });
     }
 
@@ -1561,8 +1573,39 @@
         }, Promise.resolve()).then(function () {
             vinc.ocupado = false; vinc.confirmarTodas = false; vinc.linhaMsg = {};
             vinc.msg = NUM.format(ok) + ' vínculo(s) gravado(s)' + (falhas.length ? '; ' + falhas.length + ' falhou: ' + falhas.slice(0, 3).join(' | ') : '.');
-            desenharVitrineErp();
+            vincRedesenhar();
         });
+    }
+
+    // Vínculo mudou: refaz o bloco do site (onde ele fica agora) e marca o Estoque (giro/alertas usam o catálogo casado).
+    function vincRedesenhar() {
+        abasParaRedesenhar.vitrine = true;
+        if (secaoVisivel('siteprodutos')) desenharSiteProdutos(); else abasParaRedesenhar.siteprodutos = true;
+        desenharAbaSeSuja(abaAtual);
+    }
+
+    // Aba Site › Produtos do site (admin): vínculo com o SOLIDCON + estoque do ERP de cada produto do site.
+    // Mesmo conteúdo que ficava dentro de Estoque (desenharVitrineErp); só mudou o contêiner.
+    function desenharSiteProdutos() {
+        var alvo = $('#painel-siteprodutos');
+        if (!alvo) return;
+        var cab = '<div class="flex items-center gap-2 mb-4">' + SELO_SITE + '<span class="adm-selo adm-selo-erp">ERP SOLIDCON</span>' +
+                  '<p class="font-bold">Produtos do site e estoque no ERP</p></div>';
+        if (solid.ausente) { alvo.innerHTML = cab + cartaoVazio('Estoque do ERP ainda não instalado', 'As tabelas solidcon_produtos e solidcon_sync não existem neste banco.'); return; }
+        if (solid.erro) {
+            alvo.innerHTML = cab + '<div class="adm-card p-6"><p class="text-sm mb-3" style="color:var(--adm-tinta-2)">Não foi possível carregar o estoque: ' + esc(solid.erro) + '</p>' +
+                '<button type="button" class="adm-botao-fantasma" id="siteprod-tentar">Tentar de novo</button></div>';
+            alvo.querySelector('#siteprod-tentar').addEventListener('click', carregarSolidcon);
+            return;
+        }
+        if (!solid.carregado) {
+            alvo.innerHTML = cab + '<div class="adm-card p-6 text-center text-sm" style="color:var(--adm-tinta-2)"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando estoque do ERP…</div>';
+            return;
+        }
+        alvo.innerHTML = cab + '<div id="vitrine-vinculo"></div>' +
+            '<div class="adm-card p-5 mb-5"><p class="font-bold mb-3">Produtos do site e estoque correspondente</p>' + solidTabelaPorProduto() +
+            '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">O vínculo usa só o código ERP confirmado (família de 12 dígitos, id ou EAN). Estoque em caixas; o total soma as caixas convertidas em potes.</p></div>';
+        desenharVinculo();
     }
 
     function desenharVinculo() {
@@ -2120,6 +2163,7 @@
     function vendRedesenhar() {
         dashAtualizarResumo();
         abasParaRedesenhar.pedidos = true;
+        abasParaRedesenhar.pedidoserp = true;   // resumo "Vendas registradas no SOLIDCON" da aba Pedidos
         abasParaRedesenhar.solidcon = true;
         if (secaoVisivel('vendas') && $('#vendas-erp')) desenharVendasErp();
         else abasParaRedesenhar.vendas = true;
@@ -2257,7 +2301,7 @@
     function vendCelulaPreco(potes, valor, site) {
         if (!(potes > 0)) return '<td class="num" style="color:var(--adm-tinta-3)">—</td>';
         var preco = valor / potes, baixo = preco < VEND_PRECO_MIN;
-        return '<td class="num" title="' + esc(NUM.format(Math.round(potes)) + ' potes · ' + vendPct((1 - preco / site) * 100) + '% de desconto sobre o site') + '"' +
+        return '<td class="num" title="' + esc(NUM.format(Math.round(potes)) + ' potes · ' + vendPct((1 - preco / site) * 100) + '% de desconto sobre o preço de tabela') + '"' +
                (baixo ? ' style="color:var(--adm-ruim);font-weight:700"' : '') + '>' +
                (baixo ? '<i class="fa-solid fa-triangle-exclamation mr-1" aria-hidden="true"></i>' : '') + esc(brl(Math.round(preco))) + '</td>';
     }
@@ -2315,7 +2359,7 @@
         return '<div class="adm-card p-5">' +
             '<p class="font-bold">Preço médio praticado por sabor</p>' +
             '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">Valor vendido ÷ potes (pote avulso, caixa 24 e caixa 48 convertidos), ' + cols.length +
-                ' meses (' + vendMesRotulo(cols[0]) + ' a ' + vendMesRotulo(cols[cols.length - 1]) + '; mês sem venda fica em branco). Site: ' + esc(brl(site)) + '/pote. Vermelho: abaixo de ' + esc(brl(VEND_PRECO_MIN)) + ' (mínimo definido).</p>' +
+                ' meses (' + vendMesRotulo(cols[0]) + ' a ' + vendMesRotulo(cols[cols.length - 1]) + '; mês sem venda fica em branco). Preço de tabela: ' + esc(brl(site)) + '/pote. Vermelho: abaixo de ' + esc(brl(VEND_PRECO_MIN)) + ' (mínimo definido).</p>' +
             (abaixo.length
                 ? '<div class="text-sm mb-3 p-3" role="status" style="border:1px solid var(--adm-ruim-borda);border-radius:.6rem"><i class="fa-solid fa-triangle-exclamation mr-2" style="color:var(--adm-ruim)"></i>' +
                   NUM.format(abaixo.length) + (abaixo.length === 1 ? ' sabor está' : ' sabores estão') + ' com preço médio abaixo do mínimo no período: ' +
@@ -2326,9 +2370,9 @@
                 '<th style="text-align:right">Período</th><th style="text-align:right">Desc. médio</th></tr></thead><tbody>' +
                 linhaTab(tot, true) + linhas.map(function (l) { return linhaTab(l, false); }).join('') +
             '</tbody></table></div>' +
-            '<p class="text-xs mt-2" style="color:var(--adm-tinta-3)">* mês parcial. Desconto médio = quanto o preço praticado fica abaixo do site.</p>' +
+            '<p class="text-xs mt-2" style="color:var(--adm-tinta-3)">* mês parcial. Desconto médio = quanto o preço praticado fica abaixo do preço de tabela.</p>' +
             '<p class="font-bold mt-5 mb-1">Preço no período — 12 sabores mais vendidos</p>' +
-            '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">Marca vermelha: ' + esc(brl(VEND_PRECO_MIN)) + ' · marca cinza: site (' + esc(brl(site)) + ')</p>' + grafico +
+            '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">Marca vermelha: ' + esc(brl(VEND_PRECO_MIN)) + ' · marca cinza: preço de tabela (' + esc(brl(site)) + ')</p>' + grafico +
             '</div>';
     }
 
@@ -2517,7 +2561,14 @@
         if ((qual === 'solidcon' || qual === 'pedidos' || qual === 'vendas') && precisa(vend)) carregarVendas();
         if ((qual === 'clientes' || qual === 'pedidos') && precisa(scli)) carregarSolidClientes();
         if (qual === 'pedidos' && precisa(kv)) carregarKanbanErp();
-        if (qual === 'pedidos' && precisa(pe)) carregarPedidosErp();
+        // Aba Pedidos (ERP): Kanban por etapa (pe) + resumo de vendas do SOLIDCON (vend).
+        if (qual === 'pedidoserp' && precisa(pe)) carregarPedidosErp();
+        if (qual === 'pedidoserp' && precisa(vend)) carregarVendas();
+        // Aba Site: clientes (cadastro ERP + compras + parcelas, como em Clientes) e produtos x estoque do ERP.
+        if (qual === 'siteclientes' && precisa(scli)) carregarSolidClientes();
+        if (qual === 'siteclientes' && precisa(cmp)) carregarCompras();
+        if (qual === 'siteclientes' && papel === 'admin' && precisa(rec)) carregarReceber();
+        if (qual === 'siteprodutos' && precisa(solid)) carregarSolidcon();
         if ((qual === 'clientes' || qual === 'regioes' || qual === 'vendas') && precisa(cmp)) carregarCompras();
         if (qual === 'regioes' && precisa(geo)) carregarGeoClientes();
         if (qual === 'regioes' && papel === 'admin' && precisa(gmap)) carregarMapaClientes();
@@ -2533,10 +2584,19 @@
     function recarregarErp() { secoesDe(abaAtual).forEach(function (s) { carregarErpDaAba(s, true); }); }
 
     // ---- Pedidos: vendas registradas no ERP (totais, não pedidos) ----
+    // Pedidos do site (seção 'pedidos', aba Site): Kanban/tabela do site, com a raia e o selo "Faturado no ERP".
     function desenharPedidos() {
-        var alvo = $('#painel-pedidos');
         desenharPedidosBase();
-        alvo.insertAdjacentHTML('beforeend', '<section id="pedidos-erp" class="mt-10"></section>');
+    }
+
+    // Aba Pedidos (seção 'pedidoserp'): só o ERP — Kanban por etapa do WMS (peHtml) + vendas registradas no SOLIDCON.
+    // Mesmo conteúdo que antes aparecia em Pedidos com o seletor "Pedidos do ERP" e no fim da aba; só mudou o contêiner.
+    function desenharPedidosErpAba() {
+        var alvo = $('#painel-pedidoserp');
+        if (!alvo) return;
+        alvo.innerHTML = '<div class="flex items-center justify-between flex-wrap gap-3 mb-5">' + SELO_ERP + '</div>' + peHtml() +
+            '<section id="pedidos-erp" class="mt-10"></section>';
+        ligarOrigemPedidos(alvo); ligarLegendaKanban(alvo);
         desenharPedidosErp();
     }
 
@@ -2544,8 +2604,7 @@
         var alvo = $('#pedidos-erp');
         if (!alvo) return;
         var cab = '<div class="flex items-center gap-2 mb-2">' + SELO_ERP + '<p class="font-bold">Vendas registradas no SOLIDCON</p></div>' +
-            '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Totais vendidos por dia e por produto no ERP; não se cruzam linha a linha com os pedidos do site acima. ' +
-            'O selo "Faturado no ERP" dos cartões vem das vendas por cliente (cupons).</p>';
+            '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Totais vendidos por dia e por produto no ERP (todas as vendas registradas no SOLIDCON).</p>';
         if (vend.carregando && !vend.carregado) {
             alvo.innerHTML = cab + '<div class="adm-card p-6 text-center text-sm" style="color:var(--adm-tinta-2)"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando vendas do SOLIDCON…</div>';
             return;
@@ -2605,18 +2664,16 @@
         if (ir) ir.addEventListener('click', function () { trocarAba('vendas'); });
     }
 
-    // ---- Dashboard de vendas: Site x ERP ----
+    // ---- Dashboard de vendas (ERP). "Vendas pelo site" foi para a aba Site (desenharSiteVendas). ----
     function desenharVendas() {
         var alvo = $('#painel-vendas');
         alvo.innerHTML =
-            '<section><div class="flex items-center gap-2 mb-4">' + SELO_SITE + '<p class="font-bold text-lg">Vendas pelo site</p></div><div id="vendas-site"></div></section>' +
-            '<section class="mt-12 pt-8" style="border-top:1px solid var(--adm-borda)"><div class="flex items-center gap-2 mb-1">' + SELO_ERP +
+            '<section><div class="flex items-center gap-2 mb-1">' + SELO_ERP +
                 '<p class="font-bold text-lg">Vendas no ERP</p></div>' +
-                '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Total de todas as vendas registradas no SOLIDCON (inclui o que não veio pelo site).</p><div id="vendas-erp"></div></section>' +
+                '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Total de todas as vendas registradas no SOLIDCON, de todos os canais.</p><div id="vendas-erp"></div></section>' +
             '<section id="vendas-clientes" class="mt-12 pt-8" style="border-top:1px solid var(--adm-borda)"></section>' +
             '<section id="vendas-pagamentos" class="mt-12 pt-8" style="border-top:1px solid var(--adm-borda)"></section>' +
             '<section id="vendas-margem" class="mt-12 pt-8" style="border-top:1px solid var(--adm-borda)"></section>';
-        desenharVendasBase();
         desenharVendasErp();
         desenharVendasClientes();
         desenharVendasPagamentos();
@@ -2678,6 +2735,7 @@
     function scliRedesenhar() {
         dashAtualizarResumo();
         abasParaRedesenhar.clientes = true;
+        abasParaRedesenhar.siteclientes = true;
         abasParaRedesenhar.pedidos = true;
         desenharAbaSeSuja(abaAtual);
     }
@@ -2688,13 +2746,20 @@
         return !!(scli.docs && d && scli.docs[d]);
     }
 
+    // Aba Clientes: só ERP (lista de clientes no escopo 'erp' + contas a receber + histórico de compras por cliente).
     function desenharClientes() {
         var alvo = $('#painel-clientes');
-        alvo.innerHTML = '<section id="clientes-lista"></section><section id="clientes-financeiro" class="mt-10"></section><section id="clientes-compras" class="mt-10"></section>';
+        alvo.innerHTML = '<section id="clientes-lista-erp"></section><section id="clientes-financeiro" class="mt-10"></section><section id="clientes-compras" class="mt-10"></section>';
         recLigar($('#clientes-financeiro'));
-        desenharClientesLista();
+        desenharClientesLista('erp');
         desenharClientesFinanceiro();
         desenharClientesCompras();
+    }
+
+    // Aba Site › Clientes do site: a mesma lista no escopo 'site' (só clientes do site, com selo do ERP se já existe lá).
+    function desenharSiteClientes() {
+        $('#painel-siteclientes').innerHTML = '<section id="clientes-lista"></section>';
+        desenharClientesLista('site');
     }
 
     // Endereço completo só de CNPJ (CPF nunca é exibido, mesmo que a coluna venha preenchida). Só texto: sem geocodificação.
@@ -2787,7 +2852,7 @@
 
     function cmpRedesenhar() {
         dashAtualizarResumo();
-        abasParaRedesenhar.clientes = true; abasParaRedesenhar.regioes = true; abasParaRedesenhar.vendas = true;
+        abasParaRedesenhar.clientes = true; abasParaRedesenhar.siteclientes = true; abasParaRedesenhar.regioes = true; abasParaRedesenhar.vendas = true;
         desenharAbaSeSuja(abaAtual);
     }
 
@@ -3766,6 +3831,7 @@
     function recRedesenhar() {
         dashAtualizarResumo(); // o Hoje usa as parcelas vencidas (início, fim e erro do carregamento)
         abasParaRedesenhar.clientes = true;
+        abasParaRedesenhar.siteclientes = true;   // coluna "Vencido" da lista de clientes
         desenharAbaSeSuja(abaAtual);
     }
 
@@ -4606,7 +4672,8 @@
         alvo.innerHTML = cab +
             '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Contagem de cadastros do ERP por bairro — sem nome, documento ou contato. ' +
             'A região vem do <strong>nome do bairro/cidade</strong> cadastrado em cada região (não há polígono): é uma aproximação. ' +
-            'As posições são buscadas no OpenStreetMap (Nominatim) enviando só “bairro, cidade, UF”, e ficam salvas neste navegador.</p>' +
+            'Posições: o OpenStreetMap (Nominatim) recebe só endereço sem identificação (rua e número, bairro, cidade, UF) e o ViaCEP recebe só o CEP — nunca nome, documento ou contato. ' +
+            'O mapa por bairro guarda as posições neste navegador; o mapa de clientes, no banco.</p>' +
             '<div class="adm-card p-5 mb-5" id="geo-cartao-mapa"><div id="geo-tl" class="mb-3">' + gmapControlesHtml() + '</div>' +
                 '<div class="flex items-center flex-wrap gap-3 mb-3' + (gmapAtivo() ? ' hidden' : '') + '" id="geo-barra-antiga">' +
                 '<button type="button" class="adm-botao" id="geo-localizar">Localizar bairros no mapa</button>' +
@@ -5112,7 +5179,7 @@
     // sem movimento reduzido). Marcadores são criados uma vez e só entram/saem da camada.
     function gmapPinosAtualizar(animar) {
         if (!gmapAtivo() || !mapaClientes || !gmap.camada) return;
-        var i = gmap.idx, n = 0, semPos = 0, total = 0, exib = 0, entram = [];
+        var i = gmap.idx, n = 0, semPos = 0, total = 0, exib = 0, entram = [], entramLn = [];
         gmap.linhas.forEach(function (l) {
             var vis = gmapVisivel(l);
             if (vis) { n++; total += l._ac[i]; }
@@ -5121,10 +5188,12 @@
             var mostra = vis && gmapPassaFiltro(l), tem = gmap.camada.hasLayer(mk);
             if (mostra) { exib++; if (!tem) { gmap.camada.addLayer(mk); entram.push(mk); } }
             else if (tem) gmap.camada.removeLayer(mk);
+            gmapRedeSync(l, mostra, entramLn);
         });
-        if (animar && !gmapReduzMov() && entram.length && entram.length <= 40) {
-            entram.forEach(function (mk) { var el = mk.getElement(), s = el && el.firstChild; if (s && s.classList) s.classList.add('is-cai'); });
-        }
+        // Entrada animada (rede): a linha da sede viaja até o cliente e o pino faz "pop" + onda; arrastar a barra / trocar filtro entra sem animar.
+        var anima = animar && !gmapReduzMov() && entram.length && entram.length <= 40;
+        entram.forEach(function (mk) { gmapPinoEntra(mk, anima); });
+        entramLn.forEach(function (ln) { if (ln._path) { ln._path.classList.remove('hm-entra'); if (anima) ln._path.classList.add('hm-entra'); } });
         var rot = $('#geo-tl-rotulo'), u = gmap.cur > 0 ? gmap.ordem[gmap.cur - 1] : null;
         gmapIntMostrar();
         if (rot && gmap.filtro === 'interessados') {
@@ -5139,10 +5208,27 @@
         if (!gmap.tocando || agora - gmap.tResumo > 500) { gmap.tResumo = agora; gmapResumoTempo(); }
     }
 
+    // Linha só existe no mapa enquanto o pino dela está visível (linha do tempo + filtro); Interessados (anel) não têm linha.
+    function gmapRedeSync(l, mostra, entraLn) {
+        var ln = gmap.rede && gmap.rede.linhas[l.documento];
+        if (!ln || !mapaClientes) return;
+        var tem = mapaClientes.hasLayer(ln);
+        if (mostra && !tem) { redeAdicionar(mapaClientes, ln); entraLn.push(ln); }
+        else if (!mostra && tem) mapaClientes.removeLayer(ln);
+    }
+    function gmapPinoEntra(mk, anima) {
+        var el = mk.getElement(), s = el && el.firstChild;
+        if (!el || !s || !s.classList) return;
+        s.classList.remove('is-cai', 'hm-pop'); el.classList.remove('hm-onda');
+        if (anima) { s.classList.add('hm-pop'); el.classList.add('hm-onda'); }
+    }
     function gmapCriarPinos() {
         if (!mapaClientes) return;
         if (gmap.camada) { try { mapaClientes.removeLayer(gmap.camada); } catch (e) { /* mapa novo */ } }
         gmap.camada = L.layerGroup().addTo(mapaClientes); gmap.marcadores = {};
+        // Rede sede -> cliente: uma linha por pino (criada aqui, só entra no mapa junto com o pino; ver gmapRedeSync)
+        if (gmap.rede) { Object.keys(gmap.rede.linhas).forEach(function (d) { try { mapaClientes.removeLayer(gmap.rede.linhas[d]); } catch (e) { /* mapa novo */ } }); if (gmap.rede.org) { try { mapaClientes.removeLayer(gmap.rede.org); } catch (e) { /* mapa novo */ } } }
+        gmap.rede = { rend: redeRenderer(mapaClientes), linhas: {}, org: HM_ORIGEM ? redeOrigem(mapaClientes, HM_ORIGEM) : null };
         var pts = [];
         gmap.linhas.forEach(function (l) {
             if (l.lat == null || l.lng == null || l.pino_desatualizado) return;
@@ -5152,6 +5238,7 @@
                 title: (l.nome || '(sem nome)') + ' — ' + (GMAP_CAT_ROT[l._cat] || '') });
             mk.bindPopup(function () { return gmapPopup(l); });
             gmap.marcadores[l.documento] = mk; pts.push([lat, lng]);
+            var lnr = HM_ORIGEM && redeLinha(gmap.rede.rend, HM_ORIGEM, lat, lng); if (lnr) gmap.rede.linhas[l.documento] = lnr;
         });
         if (gmap.int.carregado) { gmapIntCriar(); gmapIntMostrar(); }
         // Enquadra a região principal: clientes muito longe (outros estados) não podem esmagar o resto; seguem no mapa, é só dar zoom out.
@@ -5257,7 +5344,7 @@
         var t = $('#gmap-tentar'); if (t) t.addEventListener('click', carregarMapaClientes);
         var barra = $('#geo-tl-barra');
         if (barra) barra.addEventListener('input', function () {
-            gmapParar(); gmap.idx = Number(barra.value) || 0; gmap.cur = gmap.cumMes[gmap.idx] || 0; gmap.fixouIdx = true; gmapPinosAtualizar(true);
+            gmapParar(); gmap.idx = Number(barra.value) || 0; gmap.cur = gmap.cumMes[gmap.idx] || 0; gmap.fixouIdx = true; gmapPinosAtualizar(false);
         });
         var play = $('#geo-tl-play');
         if (play) play.addEventListener('click', function () { if (gmap.tocando) gmapParar(); else gmapTocar(); });
@@ -5462,7 +5549,36 @@
     // CEP que serve para localizar: 8 dígitos, sem dígitos repetidos e não genérico de cidade ("…000" cai no centro da cidade).
     function gmapCepUtil(cep) { return /^\d{8}$/.test(cep) && !/^(\d)\1{7}$/.test(cep) && !/000$/.test(cep); }
 
-    // Resolve: {lat,lng,address,name,bbox} | null (nada achado) | undefined (falha de rede: não grava, fica pendente)
+    // ---- anti-centroide (bug de 13/11: 121 pinos em -22.9110,-43.2094 = centro "Rio de Janeiro" que o Nominatim devolve
+    // quando não acha o CEP) ----
+    // Resultado com cara de CIDADE (boundary/administrative, addresstype city/town/..., place_rank < 17) nunca vale como
+    // rua/CEP/bairro; e qualquer resultado a ±0,0005° do centro do município (o ponto da consulta 'city', guardado por
+    // município na rodada) é tratado como "só a cidade". Nos dois casos o cliente cai para a etapa seguinte e, se nada
+    // sobrar, fica SEM pino (honesto) em vez de empilhado no centro.
+    var GMAP_TIPOS_CIDADE = /^(city|town|village|municipality|administrative|state|county|region|country|hamlet|province)$/;
+    var GMAP_CENTRO_TOL = 0.0005;
+    function gmapEhCidade(x) {
+        return x.categoria === 'boundary' || GMAP_TIPOS_CIDADE.test(x.tipo) || GMAP_TIPOS_CIDADE.test(x.addresstype) || (x.rank > 0 && x.rank < 17);
+    }
+    function gmapNoCentro(x, mun) {
+        return !!mun && mun.centro != null && Math.abs(x.lat - mun.centro[0]) <= GMAP_CENTRO_TOL && Math.abs(x.lng - mun.centro[1]) <= GMAP_CENTRO_TOL;
+    }
+    // Contador de rejeições da rodada (só contagens; aparece na mensagem final).
+    function gmapRejeita(motivo) { var R = gmap.run, r = R.rej || (R.rej = {}); r[motivo] = (r[motivo] || 0) + 1; return null; }
+    // Valida um resultado para uma etapa: município (caixa + nome da cidade), não-cidade, não-centro.
+    function gmapValido(p, x, mun) {
+        if (!gmapNoMunicipio(p, x, mun)) return gmapRejeita('municipio');
+        if (gmapEhCidade(x)) return gmapRejeita('so_cidade');
+        if (gmapNoCentro(x, mun)) return gmapRejeita('centro_da_cidade');
+        return x;
+    }
+
+    // Precisões gravadas: o banco (033) só aceita 'endereco' | 'cep' | 'bairro' | 'nao_encontrado'. A posição pela RUA
+    // do CEP vai como 'cep'; "só a cidade" vai como 'nao_encontrado' (sem pino; aparece em "Corrigir no ERP").
+    // Quando uma migração aceitar 'rua'/'cidade', basta trocar aqui.
+    var GMAP_PREC = { endereco: 'endereco', rua: 'cep', bairro: 'bairro', cidade: 'nao_encontrado' };
+
+    // Resolve: {lat,lng,address,name,bbox,categoria,tipo,addresstype,rank} | null (nada achado) | undefined (falha de rede: não grava, fica pendente)
     function gmapNominatim(params, sess) {
         var R = gmap.run;
         return geoEsperar(sess).then(function () {
@@ -5474,7 +5590,9 @@
             if (!geoCoordValida(lat, lng)) return null;
             var bb = Array.isArray(x.boundingbox) ? x.boundingbox.map(Number) : [];
             return { lat: lat, lng: lng, address: (x.address && typeof x.address === 'object') ? x.address : {}, name: x.name || '',
-                     bbox: bb.length === 4 && bb.every(isFinite) ? bb : null };
+                     bbox: bb.length === 4 && bb.every(isFinite) ? bb : null,
+                     categoria: String(x.category || x['class'] || ''), tipo: String(x.type || ''), addresstype: String(x.addresstype || ''),
+                     rank: Number(x.place_rank) || 0 };
         }, function (e) {
             if (e && e.cancelado) return undefined; // parado antes de consultar: não conta como falha
             var m = String(e && e.message || '');
@@ -5487,8 +5605,34 @@
     }
     function gmapEnc(s) { return encodeURIComponent(String(s == null ? '' : s).trim()); }
 
-    // Caixa do município: 1 consulta por cidade por rodada. null = cidade/UF não reconhecida (cliente fica sem localização
-    // e aparece em "Corrigir no ERP"); undefined = falha de rede.
+    // CEP -> logradouro/bairro/cidade pelo ViaCEP (só o CEP é enviado; mesma fonte que o site já usa no cadastro).
+    // 1 consulta por CEP por rodada (memo), em série com o resto. {logradouro,bairro,cidade,uf} | null (CEP inexistente) |
+    // undefined (falha de rede: o cliente fica pendente, não grava nada pior).
+    var GMAP_CEP_INTERVALO_MS = 350;
+    function gmapCepEndereco(cep, sess) {
+        var R = gmap.run, memo = R.ceps || (R.ceps = {});
+        if (cep in memo) return Promise.resolve(memo[cep]);
+        return new Promise(function (res) { setTimeout(res, GMAP_CEP_INTERVALO_MS); }).then(function () {
+            if (R.parar || sess !== gmap.sessao || !usuario || papel !== 'admin') { var c = new Error('cancelado'); c.cancelado = true; throw c; }
+            return geoBuscar('https://viacep.com.br/ws/' + cep + '/json/');
+        }).then(function (j) {
+            R.falhas = 0;
+            memo[cep] = j && !j.erro && j.localidade ? { logradouro: String(j.logradouro || '').trim(), bairro: String(j.bairro || '').trim(),
+                                                        cidade: String(j.localidade || '').trim(), uf: String(j.uf || '').toUpperCase() } : null;
+            return memo[cep];
+        }, function (e) {
+            if (e && e.cancelado) return undefined;
+            if (/HTTP 400/.test(String(e && e.message || ''))) { memo[cep] = null; return null; }   // CEP mal formado
+            if (R.parar) return undefined;
+            R.falhas++;
+            if (R.falhas >= 3) { var e2 = new Error('Busca de CEP interrompida por falhas de rede.'); e2.parada = true; throw e2; }
+            return undefined;
+        });
+    }
+
+    // Caixa e CENTRO do município: 1 consulta por cidade por rodada. null = cidade/UF não reconhecida (cliente fica sem
+    // localização e aparece em "Corrigir no ERP"); undefined = falha de rede. O centro é o ponto que o Nominatim devolve
+    // para a cidade: é exatamente o "lugar genérico" que não pode virar pino de cliente (gmapNoCentro).
     function gmapMunicipio(p, sess) {
         var R = gmap.run, uf = String(p.estado || '').toUpperCase(), estado = GMAP_UF_NOME[uf], k = geoNorm(p.cidade) + '|' + uf;
         if (!geoNorm(p.cidade) || !estado) return Promise.resolve(null);
@@ -5497,42 +5641,63 @@
         return gmapNominatim('city=' + gmapEnc(p.cidade) + '&state=' + gmapEnc(estado) + '&featureType=settlement', sess).then(function (x) {
             if (x === undefined) return undefined;
             var ok = x && x.bbox && gmapCidadeBate(p, x.address) && (!x.address.state || geoNorm(x.address.state) === geoNorm(estado));
-            memo[k] = ok ? { bbox: x.bbox, viewbox: [x.bbox[2], x.bbox[1], x.bbox[3], x.bbox[0]].join(',') } : null;
+            memo[k] = ok ? { bbox: x.bbox, viewbox: [x.bbox[2], x.bbox[1], x.bbox[3], x.bbox[0]].join(','), centro: [x.lat, x.lng] } : null;
             return memo[k];
         });
     }
 
-    // Precisão: 'endereco' = rua bate + cidade bate; 'cep' = CEP útil e o Nominatim devolve o MESMO CEP na cidade;
-    // 'bairro' = bairro bate na cidade. Nenhum: 'nao_encontrado' (o cliente vai para "Corrigir no ERP").
+    // Etapas, da mais precisa para a menos (cada uma só vale se passar em gmapValido):
+    //  1) rua+número do ERP (structured street/city/state)                      -> 'endereco' (rua do resultado = rua do ERP)
+    //  2) CEP -> logradouro (ViaCEP) -> structured street/city/state/country     -> 'rua' (gravado como 'cep'; rua bate)
+    //     CEP de outra cidade/UF que a do ERP: etapa ignorada (cadastro inconsistente).
+    //  3) bairro (do ERP; sem ele, o bairro do CEP) + cidade                       -> 'bairro' (aproximado)
+    //  4) nada: 'cidade' (gravado como 'nao_encontrado': sem pino, vai para "Corrigir no ERP").
+    // Tudo dentro da caixa do município (viewbox + bounded=1). Não há mais busca por postalcode: era ela que devolvia o
+    // centroide da cidade quando o OSM não conhecia o CEP.
     function gmapResolver(p, sess) {
         var R = gmap.run, base = { documento: p.documento, fonte: 'nominatim', chave_endereco: p.chave_endereco };
-        function achou(x, prec) { return { documento: base.documento, lat: Math.round(x.lat * 1e6) / 1e6, lng: Math.round(x.lng * 1e6) / 1e6, precisao: prec, fonte: 'nominatim', chave_endereco: base.chave_endereco }; }
+        function achou(x, prec) { return { documento: base.documento, lat: Math.round(x.lat * 1e6) / 1e6, lng: Math.round(x.lng * 1e6) / 1e6, precisao: GMAP_PREC[prec], fonte: 'nominatim', chave_endereco: base.chave_endereco }; }
         function naoAchou() { return { documento: base.documento, lat: null, lng: null, precisao: 'nao_encontrado', fonte: 'nominatim', chave_endereco: base.chave_endereco }; }
         var uf = String(p.estado || '').toUpperCase(), estado = GMAP_UF_NOME[uf] || '', cep = docDigitos(p.cep);
         return gmapMunicipio(p, sess).then(function (mun) {
             if (mun === undefined || R.parar) return null;   // falha de rede ou parado: segue sem gravar
             if (!mun) return naoAchou();
-            var caixa = '&viewbox=' + mun.viewbox + '&bounded=1', cidade = '&city=' + gmapEnc(p.cidade) + '&state=' + gmapEnc(estado) + caixa;
+            var caixa = '&viewbox=' + mun.viewbox + '&bounded=1', cidade = '&city=' + gmapEnc(p.cidade) + '&state=' + gmapEnc(estado) + '&country=Brasil' + caixa;
+            var viaCep = null;   // preenchido na etapa 2 (bairro do CEP serve de reserva na etapa 3)
             function etapa1() {
                 if (R.parar || !String(p.logradouro || '').trim()) return Promise.resolve(null);
                 var rua = (String(p.numero || '').trim() ? String(p.numero).trim() + ' ' : '') + String(p.logradouro).trim();
                 return gmapNominatim('street=' + gmapEnc(rua) + cidade, sess).then(function (x) {
-                    return x === undefined ? undefined : (x && gmapNoMunicipio(p, x, mun) && gmapRuaBate(p, x.address) ? achou(x, 'endereco') : null);
+                    if (x === undefined) return undefined;
+                    if (!x || !gmapValido(p, x, mun)) return null;   // município/cidade/centro primeiro (conta certo)
+                    return gmapRuaBate(p, x.address) ? achou(x, 'endereco') : gmapRejeita('rua_diferente');
                 });
             }
             function etapa2() {
                 if (R.parar || !gmapCepUtil(cep)) return Promise.resolve(null);
-                return gmapNominatim('postalcode=' + cep + cidade, sess).then(function (x) {
-                    return x === undefined ? undefined : (x && gmapNoMunicipio(p, x, mun) && docDigitos(x.address.postcode) === cep ? achou(x, 'cep') : null);
+                return gmapCepEndereco(cep, sess).then(function (c) {
+                    if (c === undefined) return undefined;
+                    if (!c) return gmapRejeita('cep_inexistente');
+                    if (geoNorm(c.cidade) !== geoNorm(p.cidade) || (uf && c.uf && c.uf !== uf)) return gmapRejeita('cep_de_outra_cidade');
+                    viaCep = c;
+                    if (!c.logradouro) return gmapRejeita('cep_sem_logradouro');   // CEP geral da cidade: não localiza rua
+                    var q = { logradouro: c.logradouro, cidade: p.cidade };
+                    return gmapNominatim('street=' + gmapEnc(c.logradouro) + cidade, sess).then(function (x) {
+                        if (x === undefined) return undefined;
+                        if (!x || !gmapValido(p, x, mun)) return null;
+                        return gmapRuaBate(q, x.address) ? achou(x, 'rua') : gmapRejeita('rua_diferente');
+                    });
                 });
             }
             function etapa3() {
-                if (R.parar || !String(p.bairro || '').trim()) return Promise.resolve(null);
-                var k = geoNorm(p.bairro) + '|' + geoNorm(p.cidade) + '|' + uf, memo = R.bairros || (R.bairros = {});
+                var bairro = String(p.bairro || '').trim() || (viaCep && viaCep.bairro) || '';
+                if (R.parar || !bairro) return Promise.resolve(null);
+                var pb = { bairro: bairro, cidade: p.cidade };
+                var k = geoNorm(bairro) + '|' + geoNorm(p.cidade) + '|' + uf, memo = R.bairros || (R.bairros = {});
                 if (k in memo) return Promise.resolve(memo[k] ? achou(memo[k], 'bairro') : null);
-                return gmapNominatim('q=' + gmapEnc([p.bairro, p.cidade, estado].filter(Boolean).join(', ')) + caixa, sess).then(function (x) {
+                return gmapNominatim('q=' + gmapEnc([bairro, p.cidade, estado].filter(Boolean).join(', ')) + caixa, sess).then(function (x) {
                     if (x === undefined) return undefined;
-                    memo[k] = x && gmapNoMunicipio(p, x, mun) && gmapBairroBate(p, x) ? x : null;
+                    memo[k] = x && gmapValido(p, x, mun) && gmapBairroBate(pb, x) ? x : null;
                     return memo[k] ? achou(memo[k], 'bairro') : null;
                 });
             }
@@ -5545,7 +5710,7 @@
                     return etapa3().then(function (r3) {
                         if (r3 === undefined) return null;
                         if (r3) return r3;
-                        return R.parar ? null : naoAchou();
+                        return R.parar ? null : naoAchou();   // 'cidade': sem pino (GMAP_PREC.cidade)
                     });
                 });
             });
@@ -5557,7 +5722,7 @@
         if (R.rodando || geo.rodando || papel !== 'admin') return;
         if (!geoTravaOk()) { R.msg = 'Este navegador não permite a trava entre abas (navigator.locks); por segurança a localização não roda aqui.'; gmapUI(); return; }
         var sess = gmap.sessao;
-        R.rodando = true; R.parar = false; R.feitos = 0; R.total = 0; R.gravados = 0; R.ignorados = 0; R.falhas = 0; R.msg = ''; R.descartar = false; R.municipios = {}; R.bairros = {};
+        R.rodando = true; R.parar = false; R.feitos = 0; R.total = 0; R.gravados = 0; R.ignorados = 0; R.falhas = 0; R.msg = ''; R.descartar = false; R.municipios = {}; R.bairros = {}; R.ceps = {}; R.rej = {};
         gmapUI();
         navigator.locks.request(GEO_TRAVA, { ifAvailable: true }, function (trava) {
             if (!trava) { R.rodando = false; R.msg = 'Outra aba (ou o mapa por bairro) já está localizando endereços.'; gmapUI(); return null; }
@@ -5596,7 +5761,9 @@
         }).then(function () {
             R.rodando = false;
             if (!viva()) { R.parar = false; return; }
-            if (!R.msg) R.msg = NUM.format(R.gravados) + ' endereço(s) gravado(s)' + (R.ignorados ? ', ' + NUM.format(R.ignorados) + ' ignorado(s) pelo banco' : '') + (R.parar ? ' (parado)' : '') + '.';
+            var rj = R.rej || {}, nRej = (rj.centro_da_cidade || 0) + (rj.so_cidade || 0);
+            if (!R.msg) R.msg = NUM.format(R.gravados) + ' endereço(s) gravado(s)' + (R.ignorados ? ', ' + NUM.format(R.ignorados) + ' ignorado(s) pelo banco' : '') +
+                (nRej ? ' · ' + NUM.format(nRej) + ' resposta(s) genérica(s) da cidade descartada(s)' : '') + (R.parar ? ' (parado)' : '') + '.';
             R.parar = false;
             carregarMapaClientes();
         });
@@ -5647,6 +5814,7 @@
     }
 
     function desenharCardReceita() {
+        if (!$('#receita-valor')) return;   // o cartão fica na aba Site (sitedash), desenhada só quando aberta
         var r = receitaRapida(receitaRapidaModo);
         var rotulos = { hoje: 'hoje', semana: 'nos últimos 7 dias', mes: 'este mês', personalizado: 'no período personalizado' };
         $('#receita-valor').textContent = brl(r.total);
@@ -5687,10 +5855,38 @@
      * Carrega depois do resto da aba (a RPC solidcon_mapa_clientes é a mesma de Regiões, uma vez por sessão). Pinos caem na ordem
      * da 1ª compra uma vez por carregamento (sem movimento se prefers-reduced-motion). Sem dado novo: tudo sai de gmap.linhas.
      * =================================================================== */
-    var HM_ATRASO_CARGA_MS = 500, HM_ANIM_TOTAL_MS = 3600, HM_PASSO_MAX_MS = 45;
-    var hm = { mapa: null, ro: null, animou: false, pediu: false, estado: '', linhas: null, pts: null };
+    var HM_ATRASO_CARGA_MS = 500;
+    // Sede da Temp Rio: [lat, lng] (origem das linhas). Se for null, cai no 1º cliente em ordem cronológica.
+    var HM_ORIGEM = [-23.0030, -43.3264];   // sede: Empório Hortifruti Barra da Tijuca (Rua Gildásio Amado), geocodificado por rua; NÃO usar o ponto salvo no banco desse cliente (errado)
+    // Linha do tempo da animação (s), independente do nº de clientes: o espalhamento de TODOS os clientes cabe em HM_T_ESPALHA.
+    var HM_T_INICIO = 0.5, HM_T_ESPALHA = 3.2, HM_T_TRACO = 0.9, HM_T_POP = 0.55;
+    var HM_T_TOTAL = HM_T_INICIO + HM_T_ESPALHA + HM_T_TRACO * 0.9 + HM_T_POP;   // ~5,1 s
+    var hm = { mapa: null, ro: null, animou: false, pediu: false, estado: '', linhas: null, pts: null, tFim: 0, raf: 0, animando: false, interrompida: false };
+
+    // Rede de linhas sede -> cliente, COMPARTILHADA pelo cartão da Hoje (hm*) e pelo mapa de Regiões (gmap*): pane próprio abaixo dos pinos,
+    // renderer SVG único por mapa, linha com pathLength=1 (o traço "viaja" por stroke-dashoffset em CSS) e marcador da sede com brilho.
+    function redeRenderer(mapa) {
+        if (!mapa._redeRend) { mapa.createPane('hm-rede'); mapa.getPane('hm-rede').style.zIndex = 450; mapa._redeRend = L.svg({ pane: 'hm-rede' }); }
+        return mapa._redeRend;
+    }
+    function redeLinha(rend, org, lat, lng) {
+        if (!org || (org[0] === lat && org[1] === lng)) return null;
+        return L.polyline([org, [lat, lng]], { renderer: rend, interactive: false, className: 'hm-linha', color: '#f5a474', weight: 1, opacity: 0.35 });
+    }
+    // O Leaflet recria o <path> a cada addTo: o pathLength (e o atraso, se houver) são aplicados sempre aqui.
+    function redeAdicionar(mapa, ln, atrasoS) {
+        ln.addTo(mapa);
+        if (ln._path) { ln._path.setAttribute('pathLength', '1'); if (atrasoS != null) ln._path.style.setProperty('--hm-d', atrasoS.toFixed(2) + 's'); }
+    }
+    function redeOrigem(mapa, org) {
+        return L.marker(org, { icon: L.divIcon({ className: 'hm-origem', html: '<span class="hm-origem-onda"></span><span class="hm-origem-onda hm-o2"></span><span class="hm-origem-nucleo"></span>', iconSize: [0, 0] }),
+            interactive: true, keyboard: false, title: 'Temp Rio — sede', zIndexOffset: 1000 }).bindTooltip('Temp Rio — sede', { direction: 'top', offset: [0, -12] }).addTo(mapa);
+    }
 
     function hmDestruir() {
+        if (hm.tFim) { clearTimeout(hm.tFim); hm.tFim = 0; }
+        if (hm.raf) { cancelAnimationFrame(hm.raf); hm.raf = 0; }
+        hm.animando = false; hm.interrompida = false;
         if (hm.ro) { try { hm.ro.disconnect(); } catch (e) { /* já solto */ } hm.ro = null; }
         if (hm.mapa) { try { hm.mapa.remove(); } catch (e) { /* já removido */ } hm.mapa = null; }
         hm.estado = ''; hm.linhas = null; hm.pts = null;
@@ -5730,8 +5926,8 @@
         if (gmap.carregado) return gmap.ordem.length && hmPinos().length ? 'pronto' : 'vazio';
         return 'carregando';
     }
-    function hmNumHtml(icone, valor, rotulo, sub) {
-        return '<li class="hm-num"><span class="hm-num-ico">' + icoFa(icone) + '</span><div class="hm-num-corpo"><span class="hm-num-valor">' + valor + '</span>' +
+    function hmNumHtml(icone, valor, rotulo, sub, alvo) {
+        return '<li class="hm-num"><span class="hm-num-ico">' + icoFa(icone) + '</span><div class="hm-num-corpo"><span class="hm-num-valor"' + (alvo != null ? ' data-alvo="' + alvo + '"' : '') + '>' + valor + '</span>' +
             '<span class="hm-num-rot">' + rotulo + '</span>' + (sub ? '<span class="hm-num-sub">' + sub + '</span>' : '') + '</div></li>';
     }
     function hmHtml(est) {
@@ -5753,9 +5949,9 @@
                 var dif = num.novos - num.ant, ic = dif > 0 ? 'fa-arrow-up' : dif < 0 ? 'fa-arrow-down' : 'fa-equals', cl = dif > 0 ? 'is-sobe' : dif < 0 ? 'is-desce' : '';
                 sub = '<span class="hm-var ' + cl + '">' + icoFa(ic) + (dif > 0 ? 'acima' : dif < 0 ? 'abaixo' : 'igual') + '</span> do mês anterior (' + NUM.format(num.ant) + ') · mês em andamento';
             }
-            nums = hmNumHtml('fa-store', NUM.format(num.ativos), 'clientes ativos', 'compraram nos últimos 12 meses e seguem comprando') +
-                hmNumHtml('fa-user-plus', NUM.format(num.novos), 'novos clientes em ' + esc(gmapMesRot(num.mAt)), sub) +
-                hmNumHtml('fa-city', NUM.format(num.cidades), 'cidades atendidas', 'com pelo menos um cliente ativo');
+            nums = hmNumHtml('fa-store', NUM.format(num.ativos), 'clientes ativos', 'compraram nos últimos 12 meses e seguem comprando', num.ativos) +
+                hmNumHtml('fa-user-plus', NUM.format(num.novos), 'novos clientes em ' + esc(gmapMesRot(num.mAt)), sub, num.novos) +
+                hmNumHtml('fa-city', NUM.format(num.cidades), 'cidades atendidas', 'com pelo menos um cliente ativo', num.cidades);
         } else {
             var tra = '<span aria-hidden="true">—</span><span class="sr-only">sem dado</span>';
             nums = hmNumHtml('fa-store', tra, 'clientes ativos', '') + hmNumHtml('fa-user-plus', tra, 'novos clientes no mês', '') + hmNumHtml('fa-city', tra, 'cidades atendidas', '');
@@ -5767,7 +5963,8 @@
         return '<div class="adm-card p-5 hm-cartao" role="group" aria-labelledby="hm-titulo">' +
             '<div class="flex items-start justify-between gap-3 flex-wrap mb-4"><div><p class="font-bold text-lg" id="hm-titulo">' + icoFa('fa-earth-americas') + ' Crescimento da marca</p>' +
                 '<p class="text-xs" style="color:var(--adm-tinta-3)">Cada pino é um cliente, na ordem da 1ª compra. ' + SELO_ERP + '</p></div>' +
-                '<button type="button" class="adm-botao-fantasma" data-ir-aba="regioes">' + icoFa('fa-up-right-from-square') + ' Abrir mapa completo</button></div>' +
+                '<div class="flex items-center gap-2 flex-wrap">' + (est === 'pronto' && !gmapReduzMov() ? '<button type="button" class="adm-botao-fantasma" data-hm-rever="1">' + icoFa('fa-play') + ' Rever animação</button>' : '') +
+                '<button type="button" class="adm-botao-fantasma" data-ir-aba="regioes">' + icoFa('fa-up-right-from-square') + ' Abrir mapa completo</button></div></div>' +
             '<div class="hm-grade">' + mapa + '<ul class="hm-numeros">' + nums + '</ul></div>' + leg + '</div>';
     }
     function hmAtualizar() {
@@ -5779,28 +5976,82 @@
         hmDestruir();
         alvo.innerHTML = hmHtml(est);
         hm.estado = est; hm.linhas = gmap.linhas;
-        if (est === 'pronto') hmCriarMapa();
+        if (est === 'pronto') {
+            hmCriarMapa();
+            var rv = alvo.querySelector('[data-hm-rever]');
+            if (rv) rv.addEventListener('click', hmRever);
+        }
     }
+    // Final da animação: tira a classe que anima (o estado estático é idêntico ao último quadro) e fixa os números.
+    function hmFinalizar() {
+        if (hm.tFim) { clearTimeout(hm.tFim); hm.tFim = 0; }
+        if (hm.raf) { cancelAnimationFrame(hm.raf); hm.raf = 0; }
+        hm.animando = false; hm.interrompida = false;
+        var el = hm.mapa && hm.mapa.getContainer();
+        if (el) el.classList.remove('hm-anim', 'hm-parado');
+        document.querySelectorAll('#hoje-mapa .hm-num-valor[data-alvo]').forEach(function (n) { n.textContent = NUM.format(Number(n.getAttribute('data-alvo'))); });
+    }
+    // Contagem dos números subindo junto com a animação (rAF; cancelada em hmDestruir/hmFinalizar).
+    function hmContar() {
+        var nums = [].slice.call(document.querySelectorAll('#hoje-mapa .hm-num-valor[data-alvo]')), t0 = performance.now(), dur = HM_T_TOTAL * 1000 * 0.95;
+        function passo(t) {
+            var f = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - f, 3);
+            nums.forEach(function (n) { n.textContent = NUM.format(Math.round(Number(n.getAttribute('data-alvo')) * e)); });
+            hm.raf = f < 1 ? requestAnimationFrame(passo) : 0;
+        }
+        nums.forEach(function (n) { n.textContent = '0'; });
+        hm.raf = requestAnimationFrame(passo);
+    }
+    // Liga a animação (mapa já visível): linhas saem da origem, pinos "pipocam" ao fim de cada linha, na ordem da 1ª compra.
+    function hmIniciar() {
+        var el = hm.mapa && hm.mapa.getContainer();
+        if (!el || gmapReduzMov()) { hmFinalizar(); return; }
+        if (hm.tFim) clearTimeout(hm.tFim);
+        if (hm.raf) { cancelAnimationFrame(hm.raf); hm.raf = 0; }
+        el.classList.remove('hm-anim', 'hm-parado');
+        void el.offsetWidth;   // reinicia as animações CSS
+        el.classList.add('hm-anim');
+        hm.animando = true; hm.interrompida = false; hm.animou = true;
+        hmContar();
+        hm.tFim = setTimeout(hmFinalizar, HM_T_TOTAL * 1000 + 250);
+    }
+    function hmRever() { if (hm.mapa && !gmapReduzMov()) hmIniciar(); }
+
     function hmCriarMapa() {
         var el = $('#hm-mapa');
         if (!el) return;
         if (typeof L === 'undefined') { el.classList.add('hm-aviso'); el.classList.remove('hm-parado'); el.innerHTML = icoFa('fa-map') + '<span>Mapa indisponível (a biblioteca não carregou).</span>'; return; }
         hm.mapa = L.map(el, { scrollWheelZoom: false }).setView([-22.92, -43.35], 10);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 18 }).addTo(hm.mapa);
-        var pinos = hmPinos(), pts = [], anim = !gmapReduzMov() && !hm.animou, passo = Math.min(HM_PASSO_MAX_MS, HM_ANIM_TOTAL_MS / Math.max(1, pinos.length));
+        var pinos = hmPinos(), pts = [], n = Math.max(1, pinos.length), animar = !gmapReduzMov() && !hm.animou;
+        var org = HM_ORIGEM || (pinos.length ? [Number(pinos[0].lat), Number(pinos[0].lng)] : null);
+        // Rede de linhas: pane próprio (abaixo dos pinos) com renderer SVG; o brilho é um único filtro no pane (barato mesmo com ~200 linhas).
+        var rend = redeRenderer(hm.mapa);
         pinos.forEach(function (l, i) {
-            var lat = Number(l.lat), lng = Number(l.lng);
+            var lat = Number(l.lat), lng = Number(l.lng), atraso = HM_T_INICIO + (i / n) * HM_T_ESPALHA;   // s
             var mk = L.marker([lat, lng], { icon: gmapIcone(l), keyboard: true, riseOnHover: true, zIndexOffset: l._cat === 'parou' ? 300 : l._cat === 'alta' ? 200 : l._cat === 'media' ? 100 : 0,
                 title: (l.nome || '(sem nome)') + ' — ' + (GMAP_CAT_ROT[l._cat] || '') });
             mk.bindPopup(function () { return gmapPopup(l); });
             mk.addTo(hm.mapa);
-            if (anim) { var s = mk.getElement() && mk.getElement().firstChild; if (s && s.classList) { s.classList.add('is-cai'); s.style.animationDelay = Math.round(i * passo) + 'ms'; } }
+            var me = mk.getElement(), s = me && me.firstChild;
+            if (me) me.style.setProperty('--hm-d', (atraso + HM_T_TRACO * 0.9).toFixed(2) + 's');   // o pino aparece quando a linha chega
+            if (s && s.classList) s.classList.add('hm-pino');
+            var ln = redeLinha(rend, org, lat, lng);
+            if (ln) redeAdicionar(hm.mapa, ln, atraso);
             pts.push([lat, lng]);
         });
+        if (org) redeOrigem(hm.mapa, org);
         hm.pts = gmapPtsPrincipais(pts);
+        if (animar) el.classList.add('hm-anim');   // começa pausada (hm-parado) até o mapa ficar visível
+        else el.classList.remove('hm-parado');
+        function visivel() {
+            if (!hm.mapa) return;
+            if (hm.interrompida) { hmFinalizar(); return; }   // saiu da aba no meio e voltou: mostra o estado final, sem repetir
+            if (animar && el.classList.contains('hm-parado')) { el.classList.remove('hm-parado'); hm.animou = true; hm.animando = true; hmContar(); hm.tFim = setTimeout(hmFinalizar, HM_T_TOTAL * 1000 + 250); }
+        }
         if (typeof ResizeObserver === 'undefined') {
-            el.classList.remove('hm-parado'); hm.animou = true;
             hm.mapa.invalidateSize(); hm.mapa.fitBounds(hm.pts, { padding: [30, 30], maxZoom: 12, animate: false });
+            visivel();
             return;
         }
         var agenda = 0;
@@ -5808,11 +6059,12 @@
             if (agenda) cancelAnimationFrame(agenda);
             agenda = requestAnimationFrame(function () {
                 agenda = 0;
-                if (!hm.mapa || !el.clientWidth || !el.clientHeight) return;   // escondido (outra aba): espera aparecer
+                if (!hm.mapa) return;
+                if (!el.clientWidth || !el.clientHeight) { if (hm.animando) hm.interrompida = true; return; }   // escondido (outra aba): CSS reinicia ao reaparecer, então é tratado acima
                 hm.mapa.invalidateSize({ animate: false });
                 if (hm.pts) { var p = hm.pts; hm.pts = null; hm.mapa.fitBounds(p, { padding: [30, 30], maxZoom: 12, animate: false }); }
                 else hm.mapa.setView(hm.mapa.getCenter(), hm.mapa.getZoom(), { animate: false });
-                if (el.classList.contains('hm-parado')) { el.classList.remove('hm-parado'); if (anim) hm.animou = true; }   // a queda dos pinos começa agora, já visível
+                visivel();
             });
         });
         hm.ro.observe(el);
@@ -5887,9 +6139,9 @@
                 '<span class="flex-1">' + esc(txt) + '</span><i class="fa-solid fa-chevron-right text-xs" style="color:var(--adm-tinta-3)"></i></button></li>');
         }
         var ag = dados.pedidos.filter(function (p) { return p.status === 'aguardando'; }).length;
-        if (ag) item('fa-hourglass-half', 'var(--adm-atencao)', NUM.format(ag) + (ag === 1 ? ' pedido aguardando confirmação' : ' pedidos aguardando confirmação'), 'pedidos');
+        if (ag) item('fa-hourglass-half', 'var(--adm-atencao)', NUM.format(ag) + (ag === 1 ? ' pedido aguardando confirmação' : ' pedidos aguardando confirmação'), 'site');
         var fat = erpv.res ? erpv.res.resumo.paraConfirmar : 0;
-        if (fat) item('fa-file-invoice-dollar', 'var(--adm-ok)', NUM.format(fat) + (fat === 1 ? ' pedido já faturado no ERP para confirmar' : ' pedidos já faturados no ERP para confirmar'), 'pedidos');
+        if (fat) item('fa-file-invoice-dollar', 'var(--adm-ok)', NUM.format(fat) + (fat === 1 ? ' pedido já faturado no ERP para confirmar' : ' pedidos já faturados no ERP para confirmar'), 'site');
         else if (erpv.erro && ag) discretos.push('Vendas do ERP para os pedidos: falha ao carregar');
 
         if (pronto(scli)) {
@@ -5899,7 +6151,7 @@
                 faltam[docNorm(p.cnpj, 'cnpj')] = true; // pedidos só têm CNPJ (admin/supabase.sql: cnpj not null)
             });
             var nf = Object.keys(faltam).length;
-            if (nf) item('fa-user-plus', 'var(--adm-atencao)', NUM.format(nf) + (nf === 1 ? ' cliente a cadastrar no ERP antes de faturar' : ' clientes a cadastrar no ERP antes de faturar'), 'pedidos');
+            if (nf) item('fa-user-plus', 'var(--adm-atencao)', NUM.format(nf) + (nf === 1 ? ' cliente a cadastrar no ERP antes de faturar' : ' clientes a cadastrar no ERP antes de faturar'), 'site');
         } else discretos.push('Cadastros do ERP: ' + resMotivo(scli));
 
         if (adm) {
@@ -5994,9 +6246,8 @@
     function desenharDashboard() {
         var alvo = $('#painel-dashboard');
         hmDestruir();   // o HTML abaixo substitui o container do mapa: solta a instância antiga
-        alvo.innerHTML = (papel === 'admin' ? '<section id="hoje-mapa" class="mb-8"></section>' : '') + '<section id="hoje"></section>' +
-            '<section class="mt-12 pt-8" style="border-top:1px solid var(--adm-borda)"><div class="mb-4"><p class="font-bold text-lg">Detalhe do site</p>' +
-            '<p class="text-xs" style="color:var(--adm-tinta-3)">Faturamento, pedidos e receita por período — pedidos feitos pelo site.</p></div><div id="dash-site-corpo"></div></section>';
+        // "Detalhe do site" (faturamento/pedidos/receita do site) foi para a aba Site (desenharSiteDash).
+        alvo.innerHTML = (papel === 'admin' ? '<section id="hoje-mapa" class="mb-8"></section>' : '') + '<section id="hoje"></section>';
         alvo.querySelector('#hoje').addEventListener('click', function (ev) {
             var ir = ev.target.closest('[data-ir-aba]');
             if (ir) { trocarAba(ir.getAttribute('data-ir-aba'), true); window.scrollTo(0, 0); return; }
@@ -6012,8 +6263,13 @@
             hmAtualizar(); hmPedirCarga();
         }
         desenharHoje();
-        desenharDashboardBase();
         if (!dash.iniciado) { dash.iniciado = true; dashCarregarProgressivo(false); }
+    }
+
+    // Aba Site › Vendas do site — resumo (todos os papéis): o antigo "Detalhe do site" do Hoje, mesmo conteúdo.
+    function desenharSiteDash() {
+        $('#painel-sitedash').innerHTML = '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Faturamento, pedidos e receita por período — pedidos feitos pelo site.</p><div id="dash-site-corpo"></div>';
+        desenharDashboardBase();
     }
 
     function desenharDashboardBase() {
@@ -6221,6 +6477,9 @@
         var ref = String(titulo || '') + ' ' + String(texto || '');
         var o = origem || (/erp|solidcon|instalad|rotina de|sincroniz|migra[cç][aã]o/i.test(ref) ? 'erp'
             : /pedido|venda|vitrine|lead|visita|espera|site/i.test(ref) ? 'site' : '');
+        // A etiqueta automática "Site" só vale dentro da aba Site; fora dela (LGPD, Regiões, Hoje...) fica sem etiqueta.
+        // Quem passa origem explícita continua decidindo.
+        if (!origem && o === 'site' && abaAtual !== 'site') o = '';
         var tag = o === 'erp' ? SELO_ERP : o === 'site' ? SELO_SITE : '';
         return '<p class="adm-vazio-linha" title="' + esc(ref.trim()) + '">' + tag +
             '<span class="adm-vazio-titulo">' + esc(titulo) + '</span>' +
@@ -6378,7 +6637,7 @@
             pe.carregando = false; pe.carregado = false; pe.erro = String(e && e.message || e); pe.itens = []; peRedesenhar();
         });
     }
-    function peRedesenhar() { if (secaoVisivel('pedidos')) desenharPedidos(); else abasParaRedesenhar.pedidos = true; }
+    function peRedesenhar() { if (secaoVisivel('pedidoserp')) desenharPedidosErpAba(); else abasParaRedesenhar.pedidoserp = true; }
 
     function peHa(iso) {
         var t = Date.parse(iso);
@@ -6479,15 +6738,8 @@
         var alvo = $('#painel-pedidos');
         var filtrados = dados.pedidos.filter(pedidoPassaNoFiltro);
 
-        var origem = peEfetivo();
-        var seletor = '<div class="flex gap-1" role="group" aria-label="Origem dos pedidos">' +
-            '<button type="button" class="adm-chip' + (origem === 'site' ? ' is-ativo' : '') + '" data-origem-pedidos="site" aria-pressed="' + (origem === 'site') + '">Pedidos do site</button>' +
-            '<button type="button" class="adm-chip' + (origem === 'erp' ? ' is-ativo' : '') + '" data-origem-pedidos="erp" aria-pressed="' + (origem === 'erp') + '">Pedidos do ERP</button></div>';
-        if (origem === 'erp') {
-            alvo.innerHTML = '<div class="flex items-center justify-between flex-wrap gap-3 mb-5">' + seletor + SELO_ERP + '</div>' + peHtml();
-            ligarOrigemPedidos(alvo); ligarLegendaKanban(alvo);
-            return;
-        }
+        // Sem seletor site/ERP: os pedidos do ERP agora têm a aba Pedidos (desenharPedidosErpAba).
+        var seletor = SELO_SITE;
         var cabecalho =
             '<div class="flex items-center justify-between flex-wrap gap-3 mb-5">' + seletor +
                 '<div class="flex gap-1">' +
@@ -7204,7 +7456,19 @@
      * solidcon_clientes) e cmp (compras em solidcon_vendas_clientes, 026). Compras sem cadastro no ERP continuam na lista.
      * Ações de edição/exclusão/WhatsApp só existem para quem é cliente do site. CPF nunca mostra endereço completo.
      * =================================================================== */
-    var ucli = { busca: '', origem: 'todos', ordem: { col: 'total', dir: -1 }, base: [], filtradas: [] };
+    // Escopo da lista: 'site' (aba Site › Clientes do site: só quem é cliente do site, com selo se já está no ERP) ou
+    // 'erp' (aba Clientes: só quem está no ERP — cadastro/compras —, sem colunas, ações nem textos do site).
+    // Mesma lista, estado independente por aba: ucli/clientesPagina/clientesFiltroAtivo são o estado do escopo ATIVO;
+    // ucliEscopo() guarda o do outro e carrega o pedido (os handlers de cada lista ativam o seu escopo antes de agir).
+    var ucli = { escopo: 'site', busca: '', origem: 'todos', ordem: { col: 'total', dir: -1 }, base: [], filtradas: [] };
+    var UCLI_EST = { erp: { ucli: { escopo: 'erp', busca: '', origem: 'todos', ordem: { col: 'total', dir: -1 }, base: [], filtradas: [] }, pagina: 1, status: 'todos' } };
+    function ucliEscopo(esc) {
+        if (ucli.escopo === esc) return;
+        UCLI_EST[ucli.escopo] = { ucli: ucli, pagina: clientesPagina, status: clientesFiltroAtivo };
+        var e = UCLI_EST[esc];
+        ucli = e.ucli; clientesPagina = e.pagina; clientesFiltroAtivo = e.status;
+    }
+    function ucliSite() { return ucli.escopo === 'site'; }
 
     function ucliDocFmt(d) {
         if (!d) return '';
@@ -7224,7 +7488,7 @@
         function nova(key, doc) { var r = { key: key, doc: doc, site: null, erp: null, cmp: null }; linhas.push(r); return r; }
         function porDoc(d) { return porKey[d] || (porKey[d] = nova(d, d)); }
 
-        listaClientesCombinada().forEach(function (c) {
+        if (ucliSite()) listaClientesCombinada().forEach(function (c) {
             var d = docNorm(c.cnpj || c.cpf, c.cnpj ? 'cnpj' : 'cpf');
             var r = d && !(porKey[d] && porKey[d].site) ? porDoc(d) : nova('site:' + c.clienteId, d);
             r.site = c;
@@ -7267,14 +7531,15 @@
     function recPronto() { return papel === 'admin' && rec.carregado && !rec.erro && !rec.ausente && !rec.truncado; }
 
     // Filtros globais valem para a parte "site"; período e região só existem no site, então escondem quem é só do ERP.
-    function ucliFiltroDoSiteAtivo() { return !!(filtros.de || filtros.ate || filtros.regioes.length); }
+    function ucliFiltroDoSiteAtivo() { return ucliSite() && !!(filtros.de || filtros.ate || filtros.regioes.length); }
 
     function ucliFiltrar(linhas) {
         var q = ucli.busca.trim().toLowerCase(), qd = docDigitos(q), siteAtivo = ucliFiltroDoSiteAtivo();
         var od = ucli.ordem, col = od.col;
         var lista = linhas.filter(function (r) {
+            if (ucliSite() && !r.site) return false;   // escopo site: só clientes do site (o "ambos" mostra o selo do ERP)
             if (ucli.origem !== 'todos' && r.origem !== ucli.origem) return false;
-            if (clientesFiltroAtivo !== 'todos' && (!r.site || (r.site.ativo ? 'ativos' : 'inativos') !== clientesFiltroAtivo)) return false;
+            if (ucliSite() && clientesFiltroAtivo !== 'todos' && (!r.site || (r.site.ativo ? 'ativos' : 'inativos') !== clientesFiltroAtivo)) return false;
             if (siteAtivo) {
                 if (!r.site) return false;
                 var c = r.site, dia = String(c.criadoEm).slice(0, 10);
@@ -7282,8 +7547,8 @@
                 if (filtros.ate && dia > filtros.ate) return false;
                 if (filtros.regioes.length && filtros.regioes.indexOf(c.regiaoId) === -1) return false;
             }
-            if (filtros.tipoCliente !== 'todos' && r.tipo.toLowerCase() !== filtros.tipoCliente) return false;
-            if (filtros.busca && r.busca.indexOf(filtros.busca) === -1) return false;
+            if (ucliSite() && filtros.tipoCliente !== 'todos' && r.tipo.toLowerCase() !== filtros.tipoCliente) return false;
+            if (ucliSite() && filtros.busca && r.busca.indexOf(filtros.busca) === -1) return false;
             if (q && r.busca.indexOf(q) === -1 && !(qd.length >= 3 && !/[a-z]/.test(q) && r.digitos.indexOf(qd) >= 0)) return false;
             return true;
         });
@@ -7302,10 +7567,12 @@
     function ucliAviso() {
         var base = '<div class="adm-card p-4 mb-4 text-sm" style="color:var(--adm-tinta-2)">';
         if (scli.carregando && !scli.carregado) return base + '<i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando cadastros do SOLIDCON…</div>';
-        if (scli.ausente) return base + 'Cadastros do SOLIDCON ainda não instalados: a tabela solidcon_clientes ainda não existe neste banco. Enquanto isso a lista mostra só os clientes do site.</div>';
-        if (scli.erro) return base + 'Não foi possível carregar os cadastros do SOLIDCON: ' + esc(scli.erro) + ' <button type="button" class="adm-botao-fantasma ml-2" id="scli-tentar">Tentar de novo</button></div>';
+        if (scli.ausente) return base + 'Cadastros do SOLIDCON ainda não instalados: a tabela solidcon_clientes ainda não existe neste banco.' +
+            (ucliSite() ? ' Sem ela não dá para indicar quem já está no ERP.' : ' Enquanto isso a lista mostra só quem tem compras no ERP.') + '</div>';
+        if (scli.erro) return base + 'Não foi possível carregar os cadastros do SOLIDCON: ' + esc(scli.erro) + ' <button type="button" class="adm-botao-fantasma ml-2" data-scli-tentar>Tentar de novo</button></div>';
         if (!cmpPronto()) return base + (cmp.carregando || !cmp.carregado && !cmp.erro && !cmp.ausente ? '<i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando histórico de compras do ERP…' :
-            'Histórico de compras do ERP indisponível agora (veja o bloco “Histórico de compras por cliente”): Última compra e Total usam só os pedidos do site.') + '</div>';
+            ucliSite() ? 'Histórico de compras do ERP indisponível agora: Última compra e Total usam só os pedidos do site.'
+                       : 'Histórico de compras do ERP indisponível agora (veja “Histórico de compras por cliente” abaixo): Última compra e Total ficam em branco.') + '</div>';
         return '';
     }
 
@@ -7315,64 +7582,71 @@
         }).join('');
     }
 
-    function desenharClientesLista() {
-        var alvo = $('#clientes-lista');
+    // escopo = 'site' | 'erp' (ver ucliEscopo). Sem parâmetro: redesenha o escopo ativo.
+    function desenharClientesLista(escopo) {
+        if (escopo) ucliEscopo(escopo);
+        var e = ucli.escopo, site = e === 'site';
+        var alvo = $(site ? '#clientes-lista' : '#clientes-lista-erp');
         if (!alvo) return;
+        function em(f) { return function (ev) { ucliEscopo(e); f(ev); }; }   // handler desta lista age no escopo dela
         ucli.base = ucliLinhas();
         if (!ucli.base.length && !(scli.carregando && !scli.carregado)) {
-            alvo.innerHTML = ucliAviso() + cartaoVazio('Nenhum cliente ainda',
-                'Um cliente entra aqui sozinho assim que o primeiro pedido dele é gravado no site, ou quando existir no cadastro do SOLIDCON.');
+            alvo.innerHTML = ucliAviso() + cartaoVazio('Nenhum cliente ainda', site
+                ? 'Um cliente entra aqui sozinho assim que o primeiro pedido dele é gravado no site.'
+                : 'Os clientes aparecem aqui quando existirem no cadastro do SOLIDCON ou tiverem compras no ERP.', site ? 'site' : 'erp');
             ligarUcliAviso(alvo);
             return;
         }
         alvo.innerHTML =
             '<div class="flex items-center justify-between flex-wrap gap-3 mb-3">' +
-                '<div class="flex gap-1 flex-wrap" role="group" aria-label="Origem">' +
-                    ucliChips('data-ucli-origem', [['todos', 'Todas as origens'], ['site', 'Só site'], ['erp', 'Só ERP'], ['ambos', 'Site + ERP']], ucli.origem) +
-                '</div>' +
+                (site ? '<div class="flex gap-1 flex-wrap" role="group" aria-label="Cadastro no ERP">' +
+                    ucliChips('data-ucli-origem', [['todos', 'Todos os clientes do site'], ['site', 'Ainda não estão no ERP'], ['ambos', 'Já estão no ERP']], ucli.origem) +
+                '</div>' : '<div></div>') +
                 '<div class="flex items-center gap-3 flex-wrap">' + botoesExportar('clientes') + '</div>' +
             '</div>' +
             '<div class="flex items-center justify-between flex-wrap gap-3 mb-4">' +
-                '<div class="flex gap-1" role="group" aria-label="Situação (clientes do site)">' +
+                (site ? '<div class="flex gap-1" role="group" aria-label="Situação (clientes do site)">' +
                     ucliChips('data-clientes-status', [['todos', 'Todos'], ['ativos', 'Ativos'], ['inativos', 'Inativos']], clientesFiltroAtivo) +
-                '</div>' +
+                '</div>' : '<div></div>') +
                 '<div class="flex items-center gap-2 flex-wrap">' +
-                    '<input type="search" id="ucli-busca" class="adm-input" style="width:16rem;max-width:100%;padding:.55rem .7rem" placeholder="Buscar por nome, documento ou telefone" aria-label="Buscar cliente" value="' + esc(ucli.busca) + '">' +
-                    '<select id="ucli-ordem" class="adm-input" style="width:auto;padding:.55rem .7rem" aria-label="Ordenar por">' +
+                    '<input type="search" id="ucli-busca-' + e + '" class="adm-input" style="width:16rem;max-width:100%;padding:.55rem .7rem" placeholder="Buscar por nome, documento ou telefone" aria-label="Buscar cliente" value="' + esc(ucli.busca) + '">' +
+                    '<select id="ucli-ordem-' + e + '" class="adm-input" style="width:auto;padding:.55rem .7rem" aria-label="Ordenar por">' +
                         [['nome', 'Nome'], ['ultima', 'Última compra'], ['total', 'Total comprado'], ['n', 'Nº de compras (ERP)'], ['total6', 'Total 6 meses (ERP)'], ['ticket6', 'Ticket médio 6 meses (ERP)'], ['freq', 'Frequência típica (ERP)']].concat(papel === 'admin' ? [['vencido', 'Vencido']] : []).map(function (o) {
                             return '<option value="' + o[0] + '"' + (ucli.ordem.col === o[0] ? ' selected' : '') + '>Ordenar: ' + o[1] + '</option>';
                         }).join('') +
                     '</select>' +
-                    '<button type="button" class="adm-botao-fantasma" id="ucli-dir" aria-label="Inverter a ordem"><i class="fa-solid ' + (ucli.ordem.dir > 0 ? 'fa-arrow-up-short-wide' : 'fa-arrow-down-wide-short') + '"></i></button>' +
+                    '<button type="button" class="adm-botao-fantasma" id="ucli-dir-' + e + '" aria-label="Inverter a ordem"><i class="fa-solid ' + (ucli.ordem.dir > 0 ? 'fa-arrow-up-short-wide' : 'fa-arrow-down-wide-short') + '"></i></button>' +
                 '</div>' +
             '</div>' +
             ucliAviso() +
-            '<div id="ucli-corpo"></div>';
+            '<div id="ucli-corpo-' + e + '"></div>';
 
         alvo.querySelectorAll('[data-ucli-origem]').forEach(function (b) {
-            b.addEventListener('click', function () { ucli.origem = b.getAttribute('data-ucli-origem'); clientesPagina = 1; desenharClientesLista(); });
+            b.addEventListener('click', em(function () { ucli.origem = b.getAttribute('data-ucli-origem'); clientesPagina = 1; desenharClientesLista(); }));
         });
         alvo.querySelectorAll('[data-clientes-status]').forEach(function (b) {
-            b.addEventListener('click', function () { clientesFiltroAtivo = b.getAttribute('data-clientes-status'); clientesPagina = 1; desenharClientesLista(); });
+            b.addEventListener('click', em(function () { clientesFiltroAtivo = b.getAttribute('data-clientes-status'); clientesPagina = 1; desenharClientesLista(); }));
         });
-        $('#ucli-busca').addEventListener('input', function (ev) { ucli.busca = ev.target.value; clientesPagina = 1; desenharUcliCorpo(); });
-        $('#ucli-ordem').addEventListener('change', function (ev) {
+        $('#ucli-busca-' + e).addEventListener('input', em(function (ev) { ucli.busca = ev.target.value; clientesPagina = 1; desenharUcliCorpo(); }));
+        $('#ucli-ordem-' + e).addEventListener('change', em(function (ev) {
             var c = ev.target.value; ucli.ordem = { col: c, dir: c === 'nome' ? 1 : -1 }; clientesPagina = 1; desenharClientesLista();
-        });
-        $('#ucli-dir').addEventListener('click', function () { ucli.ordem.dir = -ucli.ordem.dir; clientesPagina = 1; desenharClientesLista(); });
-        ligarBotoesExportar(alvo, { clientes: function () { exportarClientesCSV(ucli.filtradas); } });
+        }));
+        $('#ucli-dir-' + e).addEventListener('click', em(function () { ucli.ordem.dir = -ucli.ordem.dir; clientesPagina = 1; desenharClientesLista(); }));
+        ligarBotoesExportar(alvo, { clientes: em(function () { exportarClientesCSV(ucli.filtradas); }) });
         ligarUcliAviso(alvo);
         desenharUcliCorpo();
     }
 
     function ligarUcliAviso(alvo) {
-        var t = alvo.querySelector('#scli-tentar');
+        var t = alvo.querySelector('[data-scli-tentar]');
         if (t) t.addEventListener('click', carregarSolidClientes);
     }
 
     function desenharUcliCorpo() {
-        var alvo = $('#ucli-corpo');
+        var e = ucli.escopo, site = e === 'site';
+        var alvo = $('#ucli-corpo-' + e);
         if (!alvo) return;
+        function em(f) { return function (ev) { ucliEscopo(e); f(ev); }; }
         var filtradas = ucli.filtradas = ucliFiltrar(ucli.base);
         var adm = papel === 'admin';
         var nSite = 0, nErp = 0, nAmbos = 0;
@@ -7385,7 +7659,7 @@
         }
         var pag = paginar(filtradas, clientesPagina, POR_PAGINA_CLIENTES);
         clientesPagina = pag.pagina;
-        var colunas = adm ? 8 : 7;
+        var colunas = (adm ? 8 : 7) - (site ? 0 : 1);   // escopo erp: sem a coluna "Pedidos (site)" 
         function th(col, rot, num) {
             var ordenavel = !!col;
             return '<th' + (num ? ' class="num"' : '') + (ordenavel ? ' style="cursor:pointer" data-ucli-ord="' + col + '" aria-sort="' + (ucli.ordem.col === col ? (ucli.ordem.dir > 0 ? 'ascending' : 'descending') : 'none') + '"' : '') + '>' +
@@ -7393,22 +7667,24 @@
         }
         alvo.innerHTML = aviso +
             '<div class="adm-card p-5"><div class="overflow-x-auto"><table class="adm-tabela adm-tabela-lista"><thead><tr>' +
-                th('nome', 'Cliente') + th('', 'Contato') + th('', 'Pedidos (site)', true) + th('ultima', 'Última compra', true) + th('total', 'Total', true) +
+                th('nome', 'Cliente') + th('', 'Contato') + (site ? th('', 'Pedidos (site)', true) : '') + th('ultima', 'Última compra', true) + th('total', 'Total', true) +
                 (adm ? th('vencido', 'Vencido', true) : '') + th('', 'Ação') +
             '</tr></thead><tbody>' + pag.itens.map(function (r) { return linhaClienteUnico(r, colunas); }).join('') + '</tbody></table></div>' +
-            '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">' + NUM.format(filtradas.length) + ' clientes — ' + NUM.format(nSite) + ' só no site · ' + NUM.format(nErp) + ' só no ERP · ' + NUM.format(nAmbos) + ' nos dois. ' +
-                'Total = histórico no ERP (quando existe) ou pedidos fechados do site.</p>' +
+            '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">' + (site
+                ? NUM.format(filtradas.length) + ' clientes do site — ' + NUM.format(nAmbos) + ' já estão no ERP · ' + NUM.format(nSite) + ' ainda não. Total = histórico no ERP (quando existe) ou pedidos fechados do site.'
+                : NUM.format(filtradas.length) + ' clientes no ERP (cadastro ou compras). Total = histórico de compras no ERP.') + '</p>' +
             controlesDePaginacao('clientes', pag.pagina, pag.totalPaginas) + '</div>';
 
         alvo.querySelectorAll('[data-ucli-ord]').forEach(function (h) {
             h.addEventListener('click', function () {
                 var c = h.getAttribute('data-ucli-ord');
+                ucliEscopo(e);
                 ucli.ordem = { col: c, dir: ucli.ordem.col === c ? -ucli.ordem.dir : (c === 'nome' ? 1 : -1) };
                 clientesPagina = 1; desenharClientesLista();
             });
         });
         alvo.querySelectorAll('[data-pagina^="clientes:"]').forEach(function (b) {
-            b.addEventListener('click', function () { clientesPagina = Number(b.getAttribute('data-pagina').split(':')[1]); desenharUcliCorpo(); });
+            b.addEventListener('click', em(function () { clientesPagina = Number(b.getAttribute('data-pagina').split(':')[1]); desenharUcliCorpo(); }));
         });
 
         // "Detalhes" não abre modal: abre a própria linha, embaixo do cliente clicado (ver linhaClienteUnico).
@@ -7472,7 +7748,7 @@
             '<td>' + esc(r.nome) + '<div class="mt-1">' + ucliSelos(r) + '</div>' +
                 '<div class="text-xs mt-1" style="color:var(--adm-tinta-3)">' + esc(r.tipo) + (r.doc ? ' ' + esc(ucliDocFmt(r.doc)) : '') + (r.local ? ' · ' + esc(r.local) : '') + '</div></td>' +
             '<td data-rotulo="Contato">' + (r.telefones.length ? esc(r.telefones.join(' / ')) : '—') + (r.email ? '<br><span class="text-xs" style="color:var(--adm-tinta-3)">' + esc(r.email) + '</span>' : '') + '</td>' +
-            '<td class="num" data-rotulo="Pedidos (site)">' + (s ? NUM.format(r.pedidos) : '—') + '</td>' +
+            (ucliSite() ? '<td class="num" data-rotulo="Pedidos (site)">' + (s ? NUM.format(r.pedidos) : '—') + '</td>' : '') +
             '<td class="num" data-rotulo="Última compra">' + (r.ultima ? esc(cmpData(r.ultima)) : '—') + '</td>' +
             '<td class="num" data-rotulo="Total">' + (r.total != null ? esc(brl(Math.round(r.total))) + '<br><span class="text-xs" style="color:var(--adm-tinta-3)">' + r.totalDe + '</span>' : '—') + '</td>' +
             (adm ? '<td class="num" data-rotulo="Vencido"' + (r.vencido > 0 ? ' style="color:var(--adm-ruim)"' : '') + '>' + (r.vencido != null ? esc(brl(r.vencido)) : '—') + '</td>' : '') +
@@ -7619,6 +7895,14 @@
 
     function exportarClientesCSV(lista) {
         var adm = papel === 'admin';
+        if (!ucliSite()) {   // aba Clientes (ERP): sem colunas do site
+            exportarCSV('clientes', ['Nome', 'Documento', 'Telefone', 'Tipo', 'Local', 'Última compra', 'Total'].concat(adm ? ['Vencido (ERP)'] : []),
+                lista.map(function (r) {
+                    return [r.nome, ucliDocFmt(r.doc), r.telefones.join(' / '), r.tipo, r.local, r.ultima ? cmpData(r.ultima) : '',
+                        r.total != null ? brl(Math.round(r.total)) : ''].concat(adm ? [r.vencido != null ? brl(r.vencido) : ''] : []);
+                }));
+            return;
+        }
         exportarCSV('clientes', ['Nome', 'Documento', 'Origem', 'Telefone', 'Tipo', 'Local', 'Pedidos (site)', 'Ticket médio (site)', 'Última compra', 'Total', 'Total de'].concat(adm ? ['Vencido (ERP)'] : []),
             lista.map(function (r) {
                 var s = r.site;
@@ -7764,6 +8048,12 @@
      * visitas_por_regiao) já existem desde as migrações 007 e 008 — nasceram
      * pensando exatamente nesta tela, que só chegou agora.
      * =================================================================== */
+    // Aba Site › Vendas do site por período (admin): o antigo bloco "Vendas pelo site" do Dashboard de vendas.
+    function desenharSiteVendas() {
+        $('#painel-sitevendas').innerHTML = '<div id="vendas-site"></div>';
+        desenharVendasBase();
+    }
+
     function desenharVendasBase() {
         var alvo = $('#vendas-site');
 
@@ -8260,7 +8550,7 @@
         if (!lista.length) {
             alvo.innerHTML = cartaoVazio('Nenhuma região cadastrada',
                 'Rode admin/supabase-regioes.sql no SQL Editor do Supabase. ' +
-                'Enquanto isso, o site usa as regiões do arquivo data/regioes.js.');
+                'Enquanto isso, a venda online usa as regiões do arquivo data/regioes.js.');
             return;
         }
 
@@ -8952,6 +9242,7 @@
                     atualizarSino();
                     tocarAlerta();
                     if (secaoVisivel('dashboard')) desenharDashboard();
+                    if (secaoVisivel('sitedash')) desenharSiteDash(); else abasParaRedesenhar.sitedash = true;
                     if (secaoVisivel('pedidos')) desenharPedidos();
                     if (secaoVisivel('historico')) desenharHistorico();
                 })
