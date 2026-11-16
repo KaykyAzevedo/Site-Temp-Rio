@@ -9,7 +9,8 @@
  * é enviado. O botão "Abrir no Google Maps" só existe no clique e leva SÓ coordenadas (sem nome, documento ou endereço).
  *
  * Fontes (somente leitura, RLS eh_equipe — admin e vendedor):
- *   solidcon_pedidos_erp (035; caixas_24/48/outras da 039, se aplicada), solidcon_pedidos_erp_sync,
+ *   solidcon_pedidos_erp (035; caixas_24/48/outras da 039 — 'caixas_outras' são POTES AVULSOS, ver ROTA.VOLUME_POTE),
+ *   solidcon_pedidos_erp_sync,
  *   RPC solidcon_mapa_clientes (posição ATUAL do cliente: ignora pino de endereço antigo) e
  *   solidcon_clientes (logradouro/número/bairro para a regra do CEASA e a lista).
  * ===================================================================== */
@@ -26,6 +27,10 @@
         CAPACIDADE_S10: 1566,
         VOLUME_CX24: 9,
         VOLUME_CX48: 16.5,
+        // POTES AVULSOS: a coluna caixas_outras (039) traz UNIDADES (potes) de produtos com código próprio, fora do
+        // espelho 24/48 — conferido em produção: pedido 1497 = 530 × R$ 3,30. 24 potes ocupam o espaço de 1 caixa
+        // de 24, então cada pote = 9/24 = 0,375 de volume.
+        VOLUME_POTE: 9 / 24,
         // Prazo de entrega: 2 dias ÚTEIS a partir do pedido. Dia útil = segunda a sábado (os dois veículos
         // rodam sábado). Feriado não é considerado (ver relatório).
         PRAZO_DIAS_UTEIS: 2,
@@ -93,12 +98,12 @@
     }
 
     // ===================== volume =====================
-    // null = desconhecido (sem caixas do ERP). parcial = há caixas de outro tipo (volume não conhecido).
+    // null = desconhecido (sem caixas do ERP). avulsos = potes avulsos (caixas_outras), somados ao volume.
     function volumePedido(p) {
         var c24 = p.caixas_24, c48 = p.caixas_48, out = p.caixas_outras;
-        if (c24 == null && c48 == null) return { vol: null, c24: null, c48: null, outras: out == null ? null : Number(out), parcial: false };
+        if (c24 == null && c48 == null) return { vol: null, c24: null, c48: null, avulsos: out == null ? null : Number(out) };
         c24 = Number(c24) || 0; c48 = Number(c48) || 0; out = Number(out) || 0;
-        return { vol: c24 * ROTA.VOLUME_CX24 + c48 * ROTA.VOLUME_CX48, c24: c24, c48: c48, outras: out, parcial: out > 0 };
+        return { vol: c24 * ROTA.VOLUME_CX24 + c48 * ROTA.VOLUME_CX48 + out * ROTA.VOLUME_POTE, c24: c24, c48: c48, avulsos: out };
     }
 
     // ===================== distância e ordem =====================
@@ -165,7 +170,7 @@
         opts = opts || {};
         var excluir = opts.excluir || {};
         var res = { dia: dia, semSaida: !temSaida(dia), ceasa: [], s10: { pedidos: [], paradas: [], semPosicao: [], volume: 0, c24: 0, c48: 0,
-                    desconhecidos: 0, parciais: 0, km: 0, kmReta: 0 }, fica: [], entregues: {} };
+                    desconhecidos: 0, avulsos: 0, km: 0, kmReta: 0 }, fica: [], entregues: {} };
         if (res.semSaida) return res;
         var proxima = proximaSaida(dia, false);
         var cands = [];
@@ -195,7 +200,7 @@
             }
             if (usado + x.v.vol <= ROTA.CAPACIDADE_S10 + 1e-9) {
                 usado += x.v.vol; res.s10.pedidos.push(x); res.entregues[x.p.cd_pedido] = true;
-                res.s10.c24 += x.v.c24; res.s10.c48 += x.v.c48; if (x.v.parcial) res.s10.parciais++;
+                res.s10.c24 += x.v.c24; res.s10.c48 += x.v.c48; res.s10.avulsos += x.v.avulsos;
                 return;
             }
             // Não cabe: fica para a próxima saída. Estoura o prazo se a próxima saída é depois do prazo.
@@ -333,13 +338,28 @@
         var s = SIT[x.situacao] || SIT.ok;
         return '<span class="rota-sit ' + s[1] + '"><i class="fa-solid ' + s[2] + '" aria-hidden="true"></i>' + s[0] + (x.prazo ? ' · ' + dataBr(x.prazo) : '') + '</span>';
     }
+    // '530 potes avulsos (≈22 cx24)': potes de produto com código próprio, em caixas de 24 equivalentes.
+    function txtAvulsos(n) {
+        return NUM.format(n) + (n === 1 ? ' pote avulso' : ' potes avulsos') + ' (≈' + NUM.format(Math.round(n / 24)) + ' cx24)';
+    }
+    // Resumo curto das caixas de uma parada (janelinha do mapa).
+    function resumoParada(sp) {
+        var c24 = 0, c48 = 0, av = 0, desc = 0;
+        sp.pedidos.forEach(function (x) { if (x.v.vol == null) desc++; else { c24 += x.v.c24; c48 += x.v.c48; av += x.v.avulsos; } });
+        var p = [];
+        if (c24) p.push(NUM.format(c24) + ' cx24');
+        if (c48) p.push(NUM.format(c48) + ' cx48');
+        if (av) p.push(txtAvulsos(av));
+        if (desc) p.push(desc === 1 ? 'volume desconhecido' : NUM.format(desc) + ' pedidos sem volume');
+        return p.join(' + ');
+    }
     function txtCaixas(v) {
         if (v.vol == null) return '<span class="rota-aviso-txt"><i class="fa-solid fa-circle-question" aria-hidden="true"></i> volume desconhecido</span>';
         var p = [];
         if (v.c24) p.push(NUM.format(v.c24) + ' cx24');
         if (v.c48) p.push(NUM.format(v.c48) + ' cx48');
-        if (v.outras) p.push(NUM.format(v.outras) + ' outras');
-        return (p.join(' + ') || '0 cx') + (v.parcial ? ' <span class="rota-aviso-txt" title="Há caixas de outro tipo: volume não contado">(parcial)</span>' : '');
+        if (v.avulsos) p.push(txtAvulsos(v.avulsos));
+        return p.join(' + ') || '0 cx';
     }
     function nomeCliente(c, x) {
         if (c && c.nome) return c.nome;
@@ -364,7 +384,6 @@
         var nParadas = s.paradas.length + s.semPosicao.length;
         var avisos = [];
         if (s.desconhecidos) avisos.push(NUM.format(s.desconhecidos) + (s.desconhecidos === 1 ? ' pedido com volume desconhecido (não entra na conta)' : ' pedidos com volume desconhecido (não entram na conta)'));
-        if (s.parciais) avisos.push(NUM.format(s.parciais) + ' com caixas de outro tipo (volume parcial)');
         if (s.semPosicao.length) avisos.push(NUM.format(s.semPosicao.length) + (s.semPosicao.length === 1 ? ' parada sem posição no mapa (no fim, por bairro)' : ' paradas sem posição no mapa (no fim, por bairro)'));
         var links = s.paradas.length ? linksGoogleMaps(s.paradas, loteGmaps()) : [];
         return '<section class="adm-card p-5 mb-6 rota-cartao" aria-labelledby="rota-s10-tit">' +
@@ -376,6 +395,7 @@
             '<div class="rota-ocup" role="img" aria-label="Ocupação da S10: ' + NUM1.format(s.volume) + ' de ' + NUM.format(ROTA.CAPACIDADE_S10) + ' (' + pct + '%)">' +
                 '<div class="rota-ocup-barra' + (cheio ? ' is-cheia' : '') + '" style="width:' + pct + '%"></div></div>' +
             '<p class="rota-sub mt-1">Volume ' + NUM1.format(s.volume) + ' de ' + NUM.format(ROTA.CAPACIDADE_S10) + ' (' + pct + '%) · ' + NUM.format(s.c24) + ' cx24 · ' + NUM.format(s.c48) + ' cx48' +
+                (s.avulsos ? ' · ' + txtAvulsos(s.avulsos) + ' — inclui potes avulsos' : '') +
                 ' · cabe ~' + NUM.format(Math.floor((ROTA.CAPACIDADE_S10 - s.volume) / ROTA.VOLUME_CX24)) + ' cx24 a mais</p>' +
             (avisos.length ? '<ul class="rota-avisos">' + avisos.map(function (a) { return '<li><i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i> ' + esc(a) + '</li>'; }).join('') + '</ul>' : '') +
             (s.paradas.length ? '<div id="rota-mapa" class="adm-mapa-escuro rota-mapa" role="img" aria-label="Mapa da rota da S10 com ' + NUM.format(s.paradas.length) + ' paradas numeradas"></div>' : '') +
@@ -409,13 +429,13 @@
     function htmlCeasa(pl) {
         var porCli = {}, ordem = [];
         pl.ceasa.forEach(function (x) { var k = x.p.documento || 'p' + x.p.cd_pedido; if (!porCli[k]) { porCli[k] = []; ordem.push(k); } porCli[k].push(x); });
-        var cx24 = 0, cx48 = 0, desc = 0;
-        pl.ceasa.forEach(function (x) { if (x.v.vol == null) desc++; else { cx24 += x.v.c24; cx48 += x.v.c48; } });
+        var cx24 = 0, cx48 = 0, av = 0, desc = 0;
+        pl.ceasa.forEach(function (x) { if (x.v.vol == null) desc++; else { cx24 += x.v.c24; cx48 += x.v.c48; av += x.v.avulsos; } });
         return '<section class="adm-card p-5 mb-6 rota-cartao" aria-labelledby="rota-ceasa-tit">' +
             '<div class="rota-cab"><div><p class="rota-tit" id="rota-ceasa-tit"><i class="fa-solid fa-truck" aria-hidden="true"></i> Caminhão do CEASA</p>' +
             '<p class="rota-sub">Clientes do CEASA-RJ (Av. Brasil, 19001) · sem limite de capacidade</p></div>' +
             '<div class="rota-kpis"><span><strong>' + NUM.format(ordem.length) + '</strong> cliente' + (ordem.length === 1 ? '' : 's') + '</span><span><strong>' +
-                NUM.format(pl.ceasa.length) + '</strong> pedido' + (pl.ceasa.length === 1 ? '' : 's') + '</span><span>' + NUM.format(cx24) + ' cx24 · ' + NUM.format(cx48) + ' cx48' +
+                NUM.format(pl.ceasa.length) + '</strong> pedido' + (pl.ceasa.length === 1 ? '' : 's') + '</span><span>' + NUM.format(cx24) + ' cx24 · ' + NUM.format(cx48) + ' cx48' + (av ? ' · ' + txtAvulsos(av) : '') +
                 (desc ? ' · ' + NUM.format(desc) + ' sem caixas' : '') + '</span></div></div>' +
             (ordem.length ? '<ol class="rota-ceasa">' + ordem.map(function (k) {
                 var xs = porCli[k], x0 = xs[0];
@@ -445,7 +465,8 @@
         pl.s10.paradas.forEach(function (s, i) {
             L.marker(s.pos, { icon: L.divIcon({ className: 'rota-num-ic', html: '<span class="rota-num' + (s.precisao === 'bairro' ? ' is-aprox' : '') + '">' + (i + 1) + '</span>', iconSize: [26, 26], iconAnchor: [13, 13] }),
                 title: (i + 1) + '. ' + (s.nome || 'Cliente') + (s.bairro ? ' — ' + s.bairro : ''), keyboard: true })
-                .bindTooltip((i + 1) + '. ' + esc(s.nome || 'Cliente') + (s.bairro ? ' — ' + esc(s.bairro) : ''), { direction: 'top', offset: [0, -12] }).addTo(m);
+                .bindTooltip((i + 1) + '. ' + esc(s.nome || 'Cliente') + (s.bairro ? ' — ' + esc(s.bairro) : '') + (resumoParada(s) ? '<br>' + esc(resumoParada(s)) : ''),
+                    { direction: 'top', offset: [0, -12] }).addTo(m);
         });
         st.mapa = m;
         function enquadrar() { if (!st.mapa || !el.clientWidth) return; st.mapa.invalidateSize({ animate: false }); st.mapa.fitBounds(pts, { padding: [30, 30], maxZoom: 14, animate: false }); }
