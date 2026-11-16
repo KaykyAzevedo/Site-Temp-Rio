@@ -1464,3 +1464,13 @@ grant select, update, delete on public.pedidos, public.leads, public.visitas, pu
 ```
 
 As políticas antigas podem ser recriadas com o texto da 004/005/006 e de `supabase-regioes.sql`; a coluna sai com `alter table public.pedidos drop column cnpj_digitos` (depois de reaplicar a `historico_do_cliente` da 028).
+
+## 039 — caixas por pedido do ERP (Rota do dia) — APLICADA em 2026-11-16
+
+Arquivo: `039_pedidos_caixas.sql`. Requer 035 e 019. Independente de 036/037/038. Idempotente, `lock_timeout 5s`.
+
+- `solidcon_pedidos_erp` ganha `caixas_24`, `caixas_48`, `caixas_outras` (integer, NULL = não sabemos; CHECK 0..100000).
+- `solidcon_receber_pedidos_erp` passa a aceitar o campo **opcional** `produtos` = `[{p: cdProduto, q: quantidade}]` por pedido e converte em caixas pelo espelho `solidcon_produtos.categoria` (`TEMPERO - CAIXA 24 UN` / `48 UN`; produto fora do espelho = `caixas_outras`; quantidade fracionada = NULL nas três). O resto da função é idêntico ao da 035.
+- **Ordem:** aplicar a 039 **antes** de ligar `"pedidos_enviar_caixas": true` no `config-banco.json` do coletor. A 035 recusa campo novo (`campos_invalidos`) e a coleta inteira seria rejeitada.
+- Testada em PG 18 local: formato antigo continua aceito; misto 10/4/0; sem campo, `null`, lista vazia e fracionada = NULL; produto fora do espelho = outras; 7 rejeições (q negativa, campo extra, p texto, q > 100000, > 300 itens, campo novo fora da lista, `cliente_nome`) recusam o lote e não mexem na tabela; grants iguais.
+- Rollback: `alter table public.solidcon_pedidos_erp drop column caixas_24, drop column caixas_48, drop column caixas_outras;` e reaplicar a função da 035 (desligue `pedidos_enviar_caixas` antes).

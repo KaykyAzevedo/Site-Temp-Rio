@@ -366,7 +366,7 @@
     // 'pedidoserp' = Kanban do ERP + vendas do SOLIDCON (aba Pedidos). site* = blocos do site que saíram de abas mistas.
     var ABAS = ['dashboard', 'pedidoserp', 'pedidos', 'clientes', 'historico', 'vendas',
                 'espera', 'vitrine', 'regioes', 'visitas', 'solidcon', 'leads', 'lgpd', 'lojistas',
-                'siteclientes', 'siteprodutos', 'sitedash', 'sitevendas'];
+                'siteclientes', 'siteprodutos', 'sitedash', 'sitevendas', 'rotas'];
 
     // Menu: item -> seções que ele mostra. restrito = item inteiro só admin. Na aba Site (mista), o que é só admin sai
     // seção a seção (SECOES_SO_ADMIN, em secoesDe). Histórico = vista "Encerrados" dos pedidos do site.
@@ -379,7 +379,9 @@
         vendas:   { secoes: ['vendas'],    restrito: true },
         regioes:  { secoes: ['regioes'],   restrito: true },
         solidcon: { secoes: ['solidcon'],  restrito: false },
-        lgpd:     { secoes: ['lgpd'],      restrito: true }
+        lgpd:     { secoes: ['lgpd'],      restrito: true },
+        // Rota do dia (js/admin-rota.js): admin e vendedor (as fontes já são eh_equipe).
+        rotas:    { secoes: ['rotas'],     restrito: false }
     };
     // Nomes antigos de aba (links, atalhos, estado antigo) caem no item novo correspondente; desconhecido cai em "hoje".
     var ALIAS_ABA = { dashboard: 'hoje', historico: 'site', vitrine: 'estoque', espera: 'site', leads: 'site', visitas: 'site',
@@ -772,6 +774,7 @@
     function sair() {
         gmapEncerrar(true);
         hmDestruir(); hm.animou = false; hm.pediu = false;
+        if (window.TempRioRota) window.TempRioRota.sair();   // Rota do dia: solta o mapa e esquece os dados da conta
         saudeParar();
         if (canalRealtime) { sb.removeChannel(canalRealtime); canalRealtime = null; }
         sb.auth.signOut().then(function () {
@@ -941,6 +944,11 @@
         if (!NAV[qual]) qual = 'hoje';
         if (papel === 'vendedor' && NAV[qual].restrito) qual = 'site';
         if (abaAtual !== qual && secoesDe(abaAtual).indexOf('regioes') >= 0 && secoesDe(qual).indexOf('regioes') < 0) { gmapEncerrar(false); gmapTelaCheiaFim(); }
+        // Rota do dia: ao sair da aba, solta mapa/observer e cancela carga pendente; ao voltar, redesenha.
+        if (abaAtual !== qual && secoesDe(abaAtual).indexOf('rotas') >= 0 && secoesDe(qual).indexOf('rotas') < 0) {
+            if (window.TempRioRota) window.TempRioRota.encerrar();
+            abasParaRedesenhar.rotas = true;
+        }
         abaAtual = qual;
         document.querySelectorAll('.adm-aba').forEach(function (b) {
             b.classList.toggle('is-ativa', b.getAttribute('data-aba') === qual);
@@ -990,6 +998,14 @@
      * venda". Redesenhar só o que está visível resolve isso na raiz, não só
      * esconde o sintoma. */
     var abasParaRedesenhar = {};
+    // Rota do dia: o desenho e os dados ficam em js/admin-rota.js (módulo separado). Aqui só o contêiner e o cliente.
+    function desenharRotas() {
+        var alvo = $('#painel-rotas');
+        if (!alvo) return;
+        if (!window.TempRioRota) { alvo.innerHTML = cartaoVazio('Rota do dia indisponível', 'O arquivo js/admin-rota.js não carregou.', 'erp'); return; }
+        window.TempRioRota.desenhar(alvo, { sb: sb, papel: papel });
+    }
+
     var DESENHAR_ABA = {
         dashboard: desenharDashboard,
         pedidos: desenharPedidos,
@@ -1008,7 +1024,8 @@
         siteclientes: desenharSiteClientes,
         siteprodutos: desenharSiteProdutos,
         sitedash: desenharSiteDash,
-        sitevendas: desenharSiteVendas
+        sitevendas: desenharSiteVendas,
+        rotas: desenharRotas
     };
 
     // aba = item do menu: redesenha, entre as seções dele, só as que estão "sujas".
@@ -2559,7 +2576,7 @@
         function precisa(o) { return forcar ? !o.carregando : (!o.carregado && !o.carregando && !o.ausente && !o.erro); }
         if ((qual === 'solidcon' || qual === 'vitrine') && precisa(solid)) carregarSolidcon();
         if ((qual === 'solidcon' || qual === 'pedidos' || qual === 'vendas') && precisa(vend)) carregarVendas();
-        if ((qual === 'clientes' || qual === 'pedidos') && precisa(scli)) carregarSolidClientes();
+        if ((qual === 'clientes' || qual === 'pedidos' || qual === 'pedidoserp') && precisa(scli)) carregarSolidClientes();
         if (qual === 'pedidos' && precisa(kv)) carregarKanbanErp();
         // Aba Pedidos (ERP): Kanban por etapa (pe) + resumo de vendas do SOLIDCON (vend).
         if (qual === 'pedidoserp' && precisa(pe)) carregarPedidosErp();
@@ -2569,6 +2586,8 @@
         if (qual === 'siteclientes' && precisa(cmp)) carregarCompras();
         if (qual === 'siteclientes' && papel === 'admin' && precisa(rec)) carregarReceber();
         if (qual === 'siteprodutos' && precisa(solid)) carregarSolidcon();
+        // Rota do dia: o módulo carrega sozinho na 1ª vez; aqui só o ATUALIZAR (forcar) relê.
+        if (qual === 'rotas' && forcar && window.TempRioRota) window.TempRioRota.recarregar();
         if ((qual === 'clientes' || qual === 'regioes' || qual === 'vendas') && precisa(cmp)) carregarCompras();
         if (qual === 'regioes' && precisa(geo)) carregarGeoClientes();
         if (qual === 'regioes' && papel === 'admin' && precisa(gmap)) carregarMapaClientes();
@@ -2592,11 +2611,13 @@
     // Aba Pedidos (seção 'pedidoserp'): só o ERP — Kanban por etapa do WMS (peHtml) + vendas registradas no SOLIDCON.
     // Mesmo conteúdo que antes aparecia em Pedidos com o seletor "Pedidos do ERP" e no fim da aba; só mudou o contêiner.
     function desenharPedidosErpAba() {
+        peIniciarAba();
+        peAtualizarTopo();
         var alvo = $('#painel-pedidoserp');
         if (!alvo) return;
-        alvo.innerHTML = '<div class="flex items-center justify-between flex-wrap gap-3 mb-5">' + SELO_ERP + '</div>' + peHtml() +
+        alvo.innerHTML = '<div id="pe-quadro">' + peHtml() + '</div>' +
             '<section id="pedidos-erp" class="mt-10"></section>';
-        ligarOrigemPedidos(alvo); ligarLegendaKanban(alvo);
+        ligarOrigemPedidos(alvo);
         desenharPedidosErp();
     }
 
@@ -2737,6 +2758,7 @@
         abasParaRedesenhar.clientes = true;
         abasParaRedesenhar.siteclientes = true;
         abasParaRedesenhar.pedidos = true;
+        if (secaoVisivel('pedidoserp')) peRedesenharQuadro(); else abasParaRedesenhar.pedidoserp = true;
         desenharAbaSeSuja(abaAtual);
     }
 
@@ -2861,7 +2883,10 @@
         if (!scli.carregado || !scli.lista) return null;
         if (scli.idxDe !== scli.lista) {
             scli.idx = {}; scli.idxDe = scli.lista;
-            scli.lista.forEach(function (c) { var k = docNorm(c.documento, c.tipo); if (k) scli.idx[k] = c; });
+            scli.lista.forEach(function (c) {
+                var k = docNorm(c.documento, c.tipo); if (k) scli.idx[k] = c;
+                var d = docDigitos(c.documento); if (d && !scli.idx[d]) scli.idx[d] = c;
+            });
         }
         return scli.idx;
     }
@@ -6559,26 +6584,33 @@
     /* Pedidos do ERP por etapa do WMS (035) — SOMENTE LEITURA. Lê solidcon_pedidos_erp (sem a coluna documento: nada de CPF/CNPJ
        chega ao navegador) e o frescor em solidcon_pedidos_erp_sync. Sem arrastar, sem botões de ação. */
     var PE_COLUNAS = [
-        { id: 'aberto', titulo: 'Aberto', etapas: ['aberto'], data: 'dt_pedido', icone: 'fa-inbox', cor: 'aberto', dica: 'Pedido recebido, ainda não foi separado.', vazio: 'Nenhum pedido esperando.' },
-        { id: 'na_carga', titulo: 'Na carga', etapas: ['na_carga'], data: 'dt_carga', icone: 'fa-truck-ramp-box', cor: 'carga', dica: 'Já entrou numa carga de entrega; falta separar.', vazio: 'Nenhum pedido aguardando separação na carga.' },
+        { id: 'aberto', titulo: 'Aberto', etapas: ['aberto', 'na_carga'], data: 'dt_pedido', icone: 'fa-inbox', cor: 'aberto', dica: 'Pedido recebido, aguardando separação (pode já estar numa carga)', vazio: 'Nenhum pedido esperando.' },
         { id: 'separando', titulo: 'Separando', etapas: ['separando'], data: 'dt_sep_inicio', icone: 'fa-boxes-packing', cor: 'separando', dica: 'O estoque está pegando os produtos agora.', vazio: 'Ninguém separando no momento.' },
         { id: 'separado', titulo: 'Separado', etapas: ['separado'], data: 'dt_sep_fim', icone: 'fa-box', cor: 'separado', dica: 'Produtos separados; falta conferir.', vazio: 'Nada separado esperando conferência.' },
         { id: 'conferido', titulo: 'Conferido', etapas: ['conferido'], data: 'dt_conferencia', icone: 'fa-clipboard-check', cor: 'conferido', dica: 'Conferido e pronto para sair.', vazio: 'Nada conferido esperando saída.' },
-        { id: 'saiu', titulo: 'Saiu / atendido', etapas: ['saiu', 'atendido'], data: null, icone: 'fa-circle-check', cor: 'saiu', dica: 'Já saiu para o cliente. Etapa concluída.', vazio: 'Nenhum pedido concluído por aqui.' }
+        { id: 'enviado', titulo: 'Enviado', etapas: ['saiu'], data: 'dt_saida', icone: 'fa-truck-fast', cor: 'enviado', dica: 'Saiu para entrega', vazio: 'Nenhum pedido em rota de entrega.' },
+        { id: 'recebido', titulo: 'Recebido', etapas: ['atendido'], data: 'dt_atendido', icone: 'fa-circle-check', cor: 'recebido', dica: 'Entregue ao cliente', vazio: 'Nenhum pedido entregue por aqui.' }
     ];
-    // Coluna visual de cada etapa do pedido (a coluna "Saiu / atendido" junta duas etapas).
-    var PE_VISUAL = { aberto: 0, na_carga: 1, separando: 2, separado: 3, conferido: 4, saiu: 5, atendido: 5 };
+    // Coluna visual de cada etapa do pedido (Aberto reúne aberto + na_carga; desconhecida cai em Aberto = 0).
+    var PE_VISUAL = { aberto: 0, na_carga: 0, separando: 1, separado: 2, conferido: 3, saiu: 4, atendido: 5 };
+    function peIndiceColuna(etapa) {
+        return Object.prototype.hasOwnProperty.call(PE_VISUAL, etapa) ? PE_VISUAL[etapa] : 0;
+    }
     // Selo de atraso (só apresentação; pedidos concluídos não recebem). Idade = dias na etapa atual (data da etapa; no Aberto, a do pedido).
     var PE_ATRASO_ATENCAO_DIAS = 3;   // 3 a 7 dias: âmbar ("atenção")
     var PE_ATRASO_CRITICO_DIAS = 7;   // acima de 7 dias (8+): vermelho ("parado")
     function icoFa(c) { return '<i class="fa-solid ' + c + '" aria-hidden="true"></i>'; }
-    function seloAtraso(iso, parado) {
+    function infoAtraso(iso, parado) {
         var t = Date.parse(iso);
-        if (!isFinite(t)) return '';
+        if (!isFinite(t)) return null;
         var d = Math.max(0, Math.floor((Date.now() - t) / 86400000));
-        if (d > PE_ATRASO_CRITICO_DIAS) return '<span class="adm-atraso is-critico">' + icoFa('fa-triangle-exclamation') + (parado || 'Parado') + ' há ' + d + ' d</span>';
-        if (d >= PE_ATRASO_ATENCAO_DIAS) return '<span class="adm-atraso is-atencao">' + icoFa('fa-hourglass-half') + 'Atenção · há ' + d + ' d</span>';
-        return '<span class="adm-atraso is-ok">' + icoFa('fa-circle-check') + 'Em dia · ' + (d < 1 ? 'hoje' : 'há ' + d + ' d') + '</span>';
+        if (d > PE_ATRASO_CRITICO_DIAS) return { cls: 'is-critico', icone: 'fa-triangle-exclamation', texto: (parado || 'Parado') + ' há ' + d + ' d' };
+        if (d >= PE_ATRASO_ATENCAO_DIAS) return { cls: 'is-atencao', icone: 'fa-hourglass-half', texto: 'Atenção · há ' + d + ' d' };
+        return { cls: 'is-ok', icone: 'fa-circle-check', texto: 'Em dia · ' + (d < 1 ? 'hoje' : 'há ' + d + ' d') };
+    }
+    function seloAtraso(iso, parado) {
+        var a = infoAtraso(iso, parado);
+        return a ? '<span class="adm-atraso ' + a.cls + '">' + icoFa(a.icone) + esc(a.texto) + '</span>' : '';
     }
     var legendaKanbanAberta = !celular();   // celular: começa recolhida para não empurrar o quadro
     // Não renderiza o <p> do selo quando não há selo (data inválida).
@@ -6605,11 +6637,22 @@
         return '<div class="adm-kanban-vazio">' + icoFa(icone) + '<span>' + esc(texto) + '</span></div>';
     }
     var PE_DATA_ETAPA = { aberto: 'dt_pedido', na_carga: 'dt_carga', separando: 'dt_sep_inicio', separado: 'dt_sep_fim', conferido: 'dt_conferencia', saiu: 'dt_saida', atendido: 'dt_atendido' };
-    var PE_ROTULO_ETAPA = { aberto: 'Aberto', na_carga: 'Na carga', separando: 'Separando', separado: 'Separado', conferido: 'Conferido', saiu: 'Saiu', atendido: 'Atendido' };
-    var PE_COLS = 'cd_pedido,dt_pedido,etapa,dt_carga,dt_sep_inicio,dt_sep_fim,dt_conferencia,dt_saida,dt_atendido,cliente_tipo,cliente_nome,nr_carga,valor_centavos';
+    var PE_ROTULO_ETAPA = { aberto: 'Aberto', na_carga: 'Na carga', separando: 'Separando', separado: 'Separado', conferido: 'Conferido', saiu: 'Enviado', atendido: 'Recebido' };
+    var PE_COLS = 'cd_pedido,dt_pedido,etapa,dt_carga,dt_sep_inicio,dt_sep_fim,dt_conferencia,dt_saida,dt_atendido,cliente_tipo,documento,cliente_nome,nr_carga,valor_centavos';
     var PE_VELHO_MIN = 30;
+    var PE_MODO_CHAVE = 'adm.peModo';
     var pe = { carregado: false, carregando: false, erro: null, ausente: false, itens: [], coletado: null, seq: 0 };
     var peOrigem = null, peSegmento = 'aberto';   // peOrigem: null = automático (ERP quando não há pedidos do site)
+    var peModo = (function () {
+        try { return localStorage.getItem(PE_MODO_CHAVE) === 'detalhado' ? 'detalhado' : 'compacto'; }
+        catch (e) { return 'compacto'; }
+    })();
+    var peModalVolta = null;
+
+    function peGravarModo(m) {
+        peModo = m === 'detalhado' ? 'detalhado' : 'compacto';
+        try { localStorage.setItem(PE_MODO_CHAVE, peModo); } catch (e) { /* sem storage: vale na sessão */ }
+    }
 
     function peEfetivo() { return peOrigem || (dados.pedidos.length ? 'site' : 'erp'); }
 
@@ -6637,7 +6680,17 @@
             pe.carregando = false; pe.carregado = false; pe.erro = String(e && e.message || e); pe.itens = []; peRedesenhar();
         });
     }
-    function peRedesenhar() { if (secaoVisivel('pedidoserp')) desenharPedidosErpAba(); else abasParaRedesenhar.pedidoserp = true; }
+    function peRedesenhar() {
+        peAtualizarTopo();
+        if (secaoVisivel('pedidoserp')) peRedesenharQuadro(); else abasParaRedesenhar.pedidoserp = true;
+    }
+    function peRedesenharQuadro() {
+        peAtualizarTopo();
+        var q = $('#pe-quadro');
+        if (!q) { desenharPedidosErpAba(); return; }
+        q.innerHTML = peHtml();
+        ligarOrigemPedidos(q);
+    }
 
     function peHa(iso) {
         var t = Date.parse(iso);
@@ -6662,58 +6715,273 @@
         return '<p class="text-xs px-3 pb-2" style="color:var(--adm-tinta-3)">Total <strong style="color:var(--adm-tinta-2)">' + esc(brl(t.t)) + '</strong>' +
             (t.n < l.length ? ' <span title="Pedidos sem valor coletado não entram na soma">(' + NUM.format(t.n) + ' de ' + NUM.format(l.length) + ' com valor)</span>' : '') + '</p>';
     }
-    function peCartao(x) {
+
+    // Junta o pedido do ERP com solidcon_clientes por documento (só dígitos). Mostra cidade quando não for Rio de Janeiro.
+    function peLocalInfo(x) {
+        var d = docDigitos(x && x.documento);
+        var idx = cmpCadastros();
+        var c = idx && d ? (idx[d] || idx[docNorm(d, x && x.cliente_tipo)]) : null;
+        var bairro = String((c && c.bairro) || (x && x.bairro) || '').trim();
+        var cidade = String((c && c.cidade) || (x && x.cidade) || '').trim();
+        var outraCidade = !!(cidade && geoNorm(cidade) !== 'rio de janeiro');
+        var texto = (bairro || 'bairro não informado') + (outraCidade ? ' · ' + cidade : '');
+        return { bairro: bairro, cidade: cidade, outraCidade: outraCidade, texto: texto, semBairro: !bairro };
+    }
+
+    function peCargaTexto(x) {
+        if (x && x.nr_carga) return 'Carga ' + String(x.nr_carga);
+        if (x && x.etapa === 'na_carga') return 'Na carga';
+        return '';
+    }
+
+    function peCartaoCompacto(x) {
         var nome = String(x.cliente_tipo) === 'cnpj' && x.cliente_nome ? x.cliente_nome : 'Consumidor final';
         var dEtapa = x[PE_DATA_ETAPA[x.etapa]];
-        var col = PE_COLUNAS[PE_VISUAL[x.etapa]] || PE_COLUNAS[0];
+        var col = PE_COLUNAS[peIndiceColuna(x.etapa)] || PE_COLUNAS[0];
         var ref = x.etapa === 'aberto' ? x.dt_pedido : (dEtapa || x.dt_pedido);
-        var linha = function (ic, html) { return '<p class="adm-kc-linha">' + icoFa(ic) + '<span>' + html + '</span></p>'; };
-        return '<div class="adm-kanban-erpcartao" data-cor="' + col.cor + '">' +
-            '<p class="text-sm font-bold adm-kc-nome" title="' + esc(nome) + '">' + icoFa('fa-store') + '<span class="adm-nome-2l">' + esc(nome) + '</span></p>' +
-            linha('fa-hashtag', 'Pedido ' + esc(String(x.cd_pedido))) +
-            (x.nr_carga ? linha('fa-truck', 'Carga ' + esc(String(x.nr_carga))) : '') +
-            (peTemValor(x) ? '<p class="adm-kc-valor">' + icoFa('fa-sack-dollar') + '<span>' + esc(brl(Number(x.valor_centavos))) + '</span></p>' : '') +
-            linha('fa-clock', 'Feito ' + esc(peHora(x.dt_pedido)) + ' · <strong>' + esc(peHa(x.dt_pedido)) + '</strong>') +
-            (dEtapa && x.etapa !== 'aberto' ? linha('fa-calendar-check', esc(PE_ROTULO_ETAPA[x.etapa] || x.etapa) + ' ' + esc(peHora(dEtapa))) : '') +
-            (col.id === 'saiu' ? '' : selosAtraso(seloAtraso(ref), '')) +
+        var loc = peLocalInfo(x);
+        var cargaTxt = peCargaTexto(x);
+        var icoCarga = cargaTxt ? '<span class="adm-pe-ico-carga" role="img" title="' + esc(cargaTxt) + '" aria-label="' + esc(cargaTxt) + '">' + icoFa('fa-truck-ramp-box') + '</span>' : '';
+        var atr = col.id === 'recebido' ? null : infoAtraso(ref);
+        var ponto = atr ? '<span class="adm-pe-ponto ' + atr.cls + '" role="img" title="' + esc(atr.texto) + '" aria-label="' + esc(atr.texto) + '"></span>' : '';
+        var rotuloAria = nome + ' — ' + loc.texto + (cargaTxt ? ' — ' + cargaTxt : '') + (atr ? ' — ' + atr.texto : '') + ' (Pedido ' + x.cd_pedido + ')';
+        return '<div class="adm-kanban-erpcartao is-compacto" role="button" tabindex="0" data-cor="' + col.cor + '" data-pe-pedido="' + esc(String(x.cd_pedido)) + '" aria-label="' + esc(rotuloAria) + '">' +
+            '<div class="adm-pe-comp-topo">' +
+                '<span class="adm-pe-comp-nome" title="' + esc(nome) + '">' + esc(nome) + '</span>' +
+                (icoCarga || ponto ? '<span class="adm-pe-comp-ind">' + icoCarga + ponto + '</span>' : '') +
+            '</div>' +
+            '<p class="adm-pe-comp-bairro' + (loc.semBairro ? ' is-sem-bairro' : '') + '" title="' + esc(loc.texto) + '">' + esc(loc.texto) + '</p>' +
         '</div>';
     }
+
+    function peCartaoDetalhado(x, noModal) {
+        var nome = String(x.cliente_tipo) === 'cnpj' && x.cliente_nome ? x.cliente_nome : 'Consumidor final';
+        var dEtapa = x[PE_DATA_ETAPA[x.etapa]];
+        var col = PE_COLUNAS[peIndiceColuna(x.etapa)] || PE_COLUNAS[0];
+        var ref = x.etapa === 'aberto' ? x.dt_pedido : (dEtapa || x.dt_pedido);
+        var loc = peLocalInfo(x);
+        var cargaTxt = peCargaTexto(x);
+        var seloCarga = cargaTxt ? ' <span class="adm-pe-selo-carga">' + icoFa('fa-truck-ramp-box') + esc(cargaTxt) + '</span>' : '';
+        var rotEtapa = PE_ROTULO_ETAPA[x.etapa] || col.titulo || x.etapa;
+        var linha = function (ic, html, cls) { return '<p class="adm-kc-linha' + (cls ? ' ' + cls : '') + '">' + icoFa(ic) + '<span>' + html + '</span></p>'; };
+        return '<div class="adm-kanban-erpcartao' + (noModal ? ' is-modal-cartao' : '') + '" data-cor="' + col.cor + '">' +
+            (noModal ? '<p class="adm-pe-modal-etapa"><span class="adm-kanban-ico">' + icoFa(col.icone) + '</span><span>' + esc(col.titulo) + '</span></p>' : '') +
+            '<p class="text-sm font-bold adm-kc-nome" title="' + esc(nome) + '">' + icoFa('fa-store') + '<span class="adm-nome-2l">' + esc(nome) + '</span></p>' +
+            linha('fa-location-dot', esc(loc.texto), loc.semBairro ? 'is-sem-bairro' : '') +
+            linha('fa-hashtag', 'Pedido ' + esc(String(x.cd_pedido)) + seloCarga) +
+            (peTemValor(x) ? '<p class="adm-kc-valor">' + icoFa('fa-sack-dollar') + '<span>' + esc(brl(Number(x.valor_centavos))) + '</span></p>' : '') +
+            linha('fa-clock', 'Feito ' + esc(peHora(x.dt_pedido)) + ' · <strong>' + esc(peHa(x.dt_pedido)) + '</strong>') +
+            (dEtapa && x.etapa !== 'aberto' ? linha('fa-calendar-check', esc(rotEtapa) + ' ' + esc(peHora(dEtapa))) : '') +
+            (col.id === 'recebido' ? '' : selosAtraso(seloAtraso(ref), '')) +
+        '</div>';
+    }
+
+    function peCartao(x) {
+        return peModo === 'detalhado' ? peCartaoDetalhado(x, false) : peCartaoCompacto(x);
+    }
+
     function peItensDa(col) {
-        var l = pe.itens.filter(function (x) { return col.etapas.indexOf(x.etapa) >= 0; });
-        var desc = col.id === 'saiu';  // concluídos: mais recentes primeiro; fila: mais antigos primeiro
+        var idxAlvo = PE_COLUNAS.indexOf(col);
+        var l = pe.itens.filter(function (x) { return peIndiceColuna(x.etapa) === idxAlvo; });
+        var desc = col.id === 'recebido';  // recebidos: mais recentes primeiro; fila e enviados: mais antigos primeiro
         l.sort(function (a, b) { return desc ? (a.dt_pedido < b.dt_pedido ? 1 : -1) : (a.dt_pedido < b.dt_pedido ? -1 : 1); });
         return l;
     }
-    function peFrescor() {
-        if (!pe.carregado) return '';
-        if (!pe.coletado) return '<p class="text-xs mb-3" style="color:var(--adm-atencao)"><i class="fa-solid fa-triangle-exclamation mr-1"></i>Sem coleta registrada do ERP: os dados abaixo podem estar velhos.</p>';
+
+    // "Atualizado há X" na barra superior do painel, ao lado do sino, visível somente quando a aba Pedidos está ativa.
+    function peElementoTopo() {
+        var el = document.getElementById('pe-topo-frescor');
+        if (!el) {
+            var sino = document.getElementById('btn-sino');
+            if (!sino || !sino.parentNode) return null;
+            el = document.createElement('span');
+            el.id = 'pe-topo-frescor';
+            el.className = 'adm-pe-frescor hidden';
+            sino.parentNode.insertBefore(el, sino);
+        }
+        return el;
+    }
+    function peAtualizarTopo() {
+        var el = peElementoTopo();
+        if (!el) return;
+        var mostrar = secaoVisivel('pedidoserp') && pe.carregado;
+        if (!mostrar) { el.className = 'adm-pe-frescor hidden'; return; }
+        if (!pe.coletado) {
+            el.className = 'adm-pe-frescor is-atencao';
+            el.setAttribute('title', 'Sem coleta registrada do ERP: os dados podem estar velhos.');
+            el.innerHTML = icoFa('fa-rotate') + '<span>Sem coleta registrada</span>';
+            return;
+        }
         var min = Math.max(0, Math.round((Date.now() - Date.parse(pe.coletado)) / 60000));
         var velho = min > PE_VELHO_MIN;
-        return '<p class="text-xs mb-3" style="color:' + (velho ? 'var(--adm-atencao)' : 'var(--adm-tinta-3)') + '">' +
-            '<i class="fa-solid ' + (velho ? 'fa-triangle-exclamation' : 'fa-rotate') + ' mr-1"></i>Atualizado ' + esc(peHa(pe.coletado)) +
-            (velho ? ' — a coleta do ERP parece parada; confira o servidor.' : '') + '</p>';
+        el.className = 'adm-pe-frescor' + (velho ? ' is-atencao' : '');
+        el.setAttribute('title', 'Última coleta do ERP: ' + dataHora(pe.coletado) + (velho ? ' — a coleta do ERP parece parada; confira o servidor.' : ''));
+        el.innerHTML = icoFa('fa-rotate') + '<span>Atualizado ' + esc(peHa(pe.coletado)) + '</span>';
     }
+    function peFrescor() { return ''; }
+
+    function peCabecalhoColuna(c, l) {
+        var t = peTotalDa(l);
+        var extra = t && t.n < l.length ? ' (' + NUM.format(t.n) + ' de ' + NUM.format(l.length) + ' com valor)' : '';
+        var total = t ? '<span class="adm-kanban-total" title="' + esc('Total: ' + brl(t.t) + extra) + '">' + esc(brl(t.t)) + '</span>' : '';
+        return '<div class="adm-kanban-cabecalho adm-pe-col-cab" title="' + esc(c.titulo + ' — ' + c.dica) + '">' +
+            '<span class="adm-kanban-ico">' + icoFa(c.icone) + '</span>' +
+            '<span class="adm-kanban-titulo-txt">' + esc(c.titulo) + '</span>' +
+            '<span class="adm-kanban-contagem">' + l.length + '</span>' +
+            total +
+        '</div>';
+    }
+
+    function peBarraTopo() {
+        return '<div class="adm-pe-barra">' +
+            '<div class="adm-pe-alternador" role="group" aria-label="Visualização dos cartões">' +
+                '<button type="button" class="adm-pe-modo-btn' + (peModo === 'compacto' ? ' is-ativo' : '') + '" data-pe-modo="compacto" aria-pressed="' + (peModo === 'compacto') + '">Compacto</button>' +
+                '<button type="button" class="adm-pe-modo-btn' + (peModo === 'detalhado' ? ' is-ativo' : '') + '" data-pe-modo="detalhado" aria-pressed="' + (peModo === 'detalhado') + '">Detalhado</button>' +
+            '</div>' +
+            '<div class="adm-pe-ajuda-wrap">' +
+                '<button type="button" id="btn-pe-legenda" class="adm-pe-ajuda-btn" aria-expanded="false" aria-controls="pe-legenda-pop" aria-label="Como ler este quadro" title="Como ler este quadro">?</button>' +
+                '<div id="pe-legenda-pop" class="adm-pe-popover hidden" role="region" aria-label="Como ler este quadro">' +
+                    '<p class="adm-pe-pop-titulo">' + icoFa('fa-circle-info') + '<span>Como ler este quadro</span></p>' +
+                    '<p class="adm-pe-pop-texto">Cada coluna é uma etapa, da esquerda para a direita. Cor e ícone mostram o andamento: cinza (aberto), âmbar e laranja (separação), verde-limão (conferido), azul-esverdeado (enviado, a caminho) e verde (recebido).</p>' +
+                    '<p class="adm-legenda-selos">' +
+                        '<span class="adm-atraso is-ok">' + icoFa('fa-circle-check') + 'Em dia: até ' + (PE_ATRASO_ATENCAO_DIAS - 1) + ' dias</span>' +
+                        '<span class="adm-atraso is-atencao">' + icoFa('fa-hourglass-half') + 'Atenção: ' + PE_ATRASO_ATENCAO_DIAS + ' a ' + PE_ATRASO_CRITICO_DIAS + ' dias</span>' +
+                        '<span class="adm-atraso is-critico">' + icoFa('fa-triangle-exclamation') + 'Parado: mais de ' + PE_ATRASO_CRITICO_DIAS + ' dias</span>' +
+                    '</p>' +
+                    '<ul class="adm-pe-pop-etapas">' +
+                        PE_COLUNAS.map(function (c) {
+                            return '<li data-cor="' + c.cor + '">' + icoFa(c.icone) + '<span><strong>' + esc(c.titulo) + ':</strong> ' + esc(c.dica) + '</span></li>';
+                        }).join('') +
+                    '</ul>' +
+                '</div>' +
+            '</div>' +
+        '</div>';
+    }
+
     function peHtml() {
         if (pe.carregando && !pe.carregado) return cartaoVazio('Carregando pedidos do ERP…', '', 'erp');
         if (pe.ausente) return cartaoVazio('Pedidos do ERP ainda não instalados', 'A tabela solidcon_pedidos_erp (migração 035) não existe neste banco.', 'erp');
         if (pe.erro) return cartaoVazio('Pedidos do ERP indisponíveis agora', 'Tente Atualizar em instantes.', 'erp');
         if (!pe.carregado) return '';
+        if (pe.avisouRef !== pe.itens) {
+            pe.avisouRef = pe.itens;
+            var desc = pe.itens.filter(function (x) { return !Object.prototype.hasOwnProperty.call(PE_VISUAL, x && x.etapa); }).length;
+            if (desc > 0) console.warn('[painel] ' + desc + ' pedido(s) do ERP com etapa desconhecida exibido(s) em Aberto.');
+        }
         var cols = PE_COLUNAS.map(function (c) { return { c: c, l: peItensDa(c) }; });
-        return peFrescor() + legendaKanban(false) +
+        return peBarraTopo() +
             '<div class="adm-kanban-segmentos" role="tablist" aria-label="Etapas dos pedidos do ERP">' +
                 cols.map(function (x) {
                     return '<button type="button" role="tab" class="adm-chip adm-chip-etapa' + (peSegmento === x.c.id ? ' is-ativo' : '') + '" data-cor="' + x.c.cor + '" data-pe-seg="' + x.c.id +
                         '" aria-selected="' + (peSegmento === x.c.id) + '">' + icoFa(x.c.icone) + '<span class="adm-chip-txt">' + esc(x.c.titulo) + '</span> <span class="adm-kanban-contagem">' + x.l.length + '</span></button>';
                 }).join('') + '</div>' +
-            '<div class="adm-kanban adm-kanban-pe">' +
+            '<div class="adm-kanban adm-kanban-pe' + (peModo === 'compacto' ? ' is-compacto' : '') + '">' +
                 cols.map(function (x) {
                     return '<div class="adm-kanban-coluna' + (peSegmento === x.c.id ? ' is-seg-ativa' : '') + '" data-cor="' + x.c.cor + '" data-pe-col="' + x.c.id + '">' +
-                        cabecalhoKanban(x.c, x.l.length) + peTotalHtml(x.l) +
+                        peCabecalhoColuna(x.c, x.l) +
                         '<div class="adm-kanban-corpo-erp">' + (x.l.length ? x.l.map(peCartao).join('') : colunaVazia(x.c.icone, x.c.vazio)) + '</div>' +
                     '</div>';
                 }).join('') +
             '</div>';
     }
+
+    function peFecharLegenda(devolverFoco) {
+        var pop = document.getElementById('pe-legenda-pop'), btn = document.getElementById('btn-pe-legenda');
+        if (!pop || pop.classList.contains('hidden')) return;
+        pop.classList.add('hidden');
+        if (btn) {
+            btn.setAttribute('aria-expanded', 'false');
+            if (devolverFoco && btn.offsetParent !== null) { try { btn.focus(); } catch (e) { /* sem foco */ } }
+        }
+    }
+
+    function peAbrirModalPedido(x, opener) {
+        peFecharLegenda(false);
+        var nome = String(x.cliente_tipo) === 'cnpj' && x.cliente_nome ? x.cliente_nome : 'Consumidor final';
+        var fundo = $('#modal-detalhe');
+        var painel = fundo && fundo.querySelector('.adm-modal-painel');
+        var lerAtr = function (k) { return painel && painel.hasAttribute(k) ? painel.getAttribute(k) : null; };
+        var atrsAnt = peModalVolta && peModalVolta.atrs ? peModalVolta.atrs : {
+            role: lerAtr('role'), modal: lerAtr('aria-modal'), label: lerAtr('aria-label'), labelledby: lerAtr('aria-labelledby')
+        };
+        peModalVolta = { el: opener, id: String(x.cd_pedido), atrs: atrsAnt };
+        abrirModal(peCartaoDetalhado(x, true));
+        if (painel) {
+            painel.classList.add('adm-modal-compacto');
+            painel.setAttribute('role', 'dialog');
+            painel.setAttribute('aria-modal', 'true');
+            painel.removeAttribute('aria-labelledby');
+            painel.setAttribute('aria-label', 'Pedido ' + x.cd_pedido + ' — ' + nome);
+        }
+        var btn = $('#btn-fechar-modal');
+        if (btn) btn.focus();
+    }
+
+    function peIniciarAba() {
+        if (peIniciarAba.feito) return;
+        peIniciarAba.feito = true;
+        var sec = document.getElementById('painel-pedidoserp');
+        if (sec) {
+            new MutationObserver(function () {
+                peAtualizarTopo();
+                if (sec.classList.contains('hidden')) peFecharLegenda(false);
+            }).observe(sec, { attributes: true, attributeFilter: ['class'] });
+        }
+        var fundo = document.getElementById('modal-detalhe');
+        function restAtr(el, k, v) { if (v == null) el.removeAttribute(k); else el.setAttribute(k, v); }
+        function restaurarModal() {
+            if (!fundo || !fundo.classList.contains('hidden')) return;
+            var painel = fundo.querySelector('.adm-modal-painel');
+            if (painel) painel.classList.remove('adm-modal-compacto');
+            if (!peModalVolta) return;
+            var v = peModalVolta;
+            peModalVolta = null;
+            if (painel && v.atrs) {
+                restAtr(painel, 'role', v.atrs.role);
+                restAtr(painel, 'aria-modal', v.atrs.modal);
+                restAtr(painel, 'aria-label', v.atrs.label);
+                restAtr(painel, 'aria-labelledby', v.atrs.labelledby);
+            }
+            var alvo = v.el && v.el.isConnected ? v.el : document.querySelector('[data-pe-pedido="' + v.id.replace(/[^0-9]/g, '') + '"]');
+            if (alvo && typeof alvo.focus === 'function') { try { alvo.focus(); } catch (e) { /* sem foco */ } }
+        }
+        if (fundo) {
+            new MutationObserver(restaurarModal).observe(fundo, { attributes: true, attributeFilter: ['class'] });
+            fundo.addEventListener('click', function () { restaurarModal(); });
+        }
+        var btnFechar = document.getElementById('btn-fechar-modal');
+        if (btnFechar) btnFechar.addEventListener('click', function () { restaurarModal(); });
+        document.addEventListener('keydown', function (ev) {
+            if (ev.key === 'Escape') restaurarModal();
+        });
+        document.addEventListener('click', function (ev) {
+            var pop = document.getElementById('pe-legenda-pop');
+            if (!pop || pop.classList.contains('hidden')) return;
+            if (ev.target.closest('.adm-pe-ajuda-wrap')) return;
+            peFecharLegenda(false);
+        });
+        document.addEventListener('keydown', function (ev) {
+            var modalAberto = (fundo && !fundo.classList.contains('hidden')) || !!sobrepos.atual || !!document.querySelector('.adm-modal-fundo:not(#modal-detalhe)');
+            var pop = document.getElementById('pe-legenda-pop');
+            var abaVisivel = secaoVisivel('pedidoserp') && sec && !sec.classList.contains('hidden');
+            if (ev.key === 'Escape' && !modalAberto && abaVisivel && pop && !pop.classList.contains('hidden')) {
+                ev.preventDefault();
+                ev.stopImmediatePropagation();
+                peFecharLegenda(true);
+                return;
+            }
+            if (ev.key === 'Tab' && fundo && !fundo.classList.contains('hidden') && !sobrepos.atual) {
+                var painel = fundo.querySelector('.adm-modal-painel');
+                var f = painel ? focaveis(painel) : [];
+                if (!f.length) { ev.preventDefault(); return; }
+                var primeiro = f[0], ultimo = f[f.length - 1], ativo = document.activeElement;
+                if (!painel.contains(ativo)) { ev.preventDefault(); primeiro.focus(); }
+                else if (ev.shiftKey && ativo === primeiro) { ev.preventDefault(); ultimo.focus(); }
+                else if (!ev.shiftKey && ativo === ultimo) { ev.preventDefault(); primeiro.focus(); }
+            }
+        }, true);
+    }
+
     function ligarOrigemPedidos(raiz) {
         raiz.querySelectorAll('[data-origem-pedidos]').forEach(function (b) {
             b.addEventListener('click', function () { peOrigem = b.getAttribute('data-origem-pedidos'); desenharPedidos(); });
@@ -6723,6 +6991,39 @@
                 peSegmento = b.getAttribute('data-pe-seg');
                 raiz.querySelectorAll('[data-pe-seg]').forEach(function (o) { var a = o === b; o.classList.toggle('is-ativo', a); o.setAttribute('aria-selected', String(a)); });
                 raiz.querySelectorAll('[data-pe-col]').forEach(function (c) { c.classList.toggle('is-seg-ativa', c.getAttribute('data-pe-col') === peSegmento); });
+            });
+        });
+        raiz.querySelectorAll('[data-pe-modo]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                var m = b.getAttribute('data-pe-modo');
+                if (m === peModo) return;
+                peGravarModo(m);
+                peRedesenharQuadro();
+                var novoBtn = document.querySelector('#pe-quadro [data-pe-modo="' + peModo + '"]');
+                if (novoBtn) novoBtn.focus();
+            });
+        });
+        var btnLeg = raiz.querySelector('#btn-pe-legenda'), popLeg = raiz.querySelector('#pe-legenda-pop');
+        if (btnLeg && popLeg) {
+            btnLeg.addEventListener('click', function (ev) {
+                ev.stopPropagation();
+                var abrir = popLeg.classList.contains('hidden');
+                popLeg.classList.toggle('hidden', !abrir);
+                btnLeg.setAttribute('aria-expanded', String(abrir));
+            });
+        }
+        raiz.querySelectorAll('[data-pe-pedido]').forEach(function (card) {
+            function abrir() {
+                var id = card.getAttribute('data-pe-pedido');
+                var item = pe.itens.filter(function (x) { return String(x.cd_pedido) === id; })[0];
+                if (item) peAbrirModalPedido(item, card);
+            }
+            card.addEventListener('click', abrir);
+            card.addEventListener('keydown', function (ev) {
+                if (ev.key === 'Enter' || ev.key === ' ') {
+                    ev.preventDefault();
+                    abrir();
+                }
             });
         });
     }

@@ -30,6 +30,7 @@
 
     <script src="./js/config.js"></script>
     <link rel="stylesheet" href="./css/admin.css">
+    <link rel="stylesheet" href="./css/admin-rota.css">
 </head>
 
 <body class="admin">
@@ -106,6 +107,7 @@
             <button type="button" class="adm-aba" data-aba="pedidos"><i class="fa-solid fa-clipboard-list"></i><span>Pedidos</span></button>
             <!-- Site: tudo que vem do site (pedidos, clientes, produtos, vendas, visitas, leads, lista de espera, vitrines). -->
             <button type="button" class="adm-aba adm-so-desktop" data-aba="site"><i class="fa-solid fa-globe"></i><span>Site</span></button>
+            <button type="button" class="adm-aba adm-so-desktop" data-aba="rotas"><i class="fa-solid fa-route"></i><span>Rotas</span></button>
             <button type="button" class="adm-aba" data-aba="clientes"><i class="fa-solid fa-users"></i><span>Clientes</span></button>
             <button type="button" class="adm-aba" data-aba="estoque"><i class="fa-solid fa-boxes-stacked"></i><span>Estoque</span></button>
             <button type="button" class="adm-aba adm-so-desktop" data-aba="vendas"><i class="fa-solid fa-chart-line"></i><span>Vendas</span></button>
@@ -113,6 +115,7 @@
                 <button type="button" id="btn-mais" class="adm-aba adm-aba-mais" aria-expanded="false" aria-controls="menu-mais"><i class="fa-solid fa-ellipsis"></i><span>Mais</span><i class="fa-solid fa-chevron-down adm-mais-seta"></i></button>
                 <div id="menu-mais" class="adm-menu-mais">
                     <button type="button" class="adm-aba adm-so-mobile" data-aba="site"><i class="fa-solid fa-globe"></i><span>Site</span></button>
+                    <button type="button" class="adm-aba adm-so-mobile" data-aba="rotas"><i class="fa-solid fa-route"></i><span>Rotas</span></button>
                     <button type="button" class="adm-aba adm-so-mobile" data-aba="vendas"><i class="fa-solid fa-chart-line"></i><span>Vendas</span></button>
                     <button type="button" class="adm-aba" data-aba="regioes"><i class="fa-solid fa-map-location-dot"></i><span>Regiões</span></button>
                     <button type="button" class="adm-aba" data-aba="solidcon"><i class="fa-solid fa-plug"></i><span>Integração</span></button>
@@ -230,6 +233,8 @@
             <section id="painel-regioes" class="hidden"></section>
             <section id="painel-solidcon" class="hidden"></section>
             <section id="painel-lgpd" class="hidden"></section>
+            <!-- Rota do dia (js/admin-rota.js): S10 + caminhão do CEASA. -->
+            <section id="painel-rotas" class="hidden"></section>
         </main>
         </div>
     </div>
@@ -249,6 +254,7 @@
     <div id="dica" class="adm-dica"></div>
 
     <script src="./js/admin-erp-casamento.js"></script>
+    <script src="./js/admin-rota.js"></script>
     <script src="./js/admin.js"></script>
 </body>
 

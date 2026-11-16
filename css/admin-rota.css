@@ -1,0 +1,80 @@
+/* Rota do dia (aba "Rotas"): estilos próprios do módulo js/admin-rota.js. Usa os tokens --adm-* do admin.css. */
+.rota-topo { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 1.25rem; }
+.rota-titulo { font-size: 1.35rem; font-weight: 800; color: var(--adm-tinta); display: flex; align-items: center; gap: 0.55rem; }
+.rota-titulo i { color: var(--adm-acao); }
+.rota-sub { font-size: 0.78rem; color: var(--adm-tinta-3); }
+.rota-acoes { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.rota-acoes .adm-chip[disabled] { opacity: 0.5; cursor: not-allowed; }
+.rota-imp-dia { display: none; }
+.rota-banner { border-color: var(--adm-atencao-borda); color: var(--adm-tinta-2); font-size: 0.85rem; }
+.rota-banner p + p { margin-top: 0.35rem; }
+.rota-banner i { color: var(--adm-atencao); margin-right: 0.25rem; }
+
+.rota-cartao { position: relative; }
+.rota-cartao-alerta { border-color: var(--adm-ruim-borda); }
+.rota-cab { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 0.75rem; margin-bottom: 0.9rem; }
+.rota-tit { font-weight: 800; font-size: 1.05rem; color: var(--adm-tinta); display: flex; align-items: center; gap: 0.5rem; }
+.rota-tit i { color: var(--adm-acao); width: 1.25rem; text-align: center; }
+.rota-kpis { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; font-size: 0.85rem; color: var(--adm-tinta-2); }
+.rota-kpis strong { color: var(--adm-tinta); }
+
+/* Ocupação da S10 (volume / 1566) */
+.rota-ocup { height: 0.85rem; border-radius: 999px; background: var(--adm-neutro-fundo-2, rgba(255, 255, 255, 0.08)); overflow: hidden; border: 1px solid var(--adm-borda); }
+.rota-ocup-barra { height: 100%; background: linear-gradient(90deg, #5fc28a, #f0915a); border-radius: 999px; transition: width 0.3s; }
+.rota-ocup-barra.is-cheia { background: linear-gradient(90deg, #f0915a, #f08a80); }
+@media (prefers-reduced-motion: reduce) { .rota-ocup-barra { transition: none; } }
+
+.rota-avisos { margin: 0.75rem 0 0; padding: 0; list-style: none; font-size: 0.8rem; color: var(--adm-tinta-2); }
+.rota-avisos li { margin-top: 0.2rem; }
+.rota-avisos i, .rota-aviso-txt { color: var(--adm-atencao); }
+.rota-txt-ruim { color: var(--adm-ruim); }
+
+.rota-mapa { height: 380px; border-radius: 0.75rem; overflow: hidden; margin: 1rem 0 0.75rem; }
+.rota-gmaps { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 0.9rem; }
+
+/* Paradas numeradas e sede */
+.rota-num-ic, .rota-sede { background: none; border: 0; }
+.rota-num { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; border-radius: 50%; background: #f0915a; color: #181c22;
+    font: 800 12px/1 system-ui, sans-serif; border: 2px solid #181c22; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6); }
+.rota-num.is-aprox { background: #f7d84a; border-style: dashed; }
+.rota-sede span { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 8px; background: #fff3e8; color: #c2571e;
+    border: 2px solid #f0915a; box-shadow: 0 0 12px 3px rgba(245, 164, 116, 0.7); font-size: 13px; }
+.leaflet-marker-icon.rota-num-ic:focus-visible { outline: none; }
+.leaflet-marker-icon.rota-num-ic:focus-visible .rota-num { outline: 2px solid var(--adm-tinta); outline-offset: 2px; }
+
+.rota-tabela td { vertical-align: top; }
+.rota-n { font-weight: 800; color: var(--adm-acao); width: 2.5rem; }
+.rota-sep td { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--adm-tinta-3); background: var(--adm-neutro-fundo); }
+.rota-linha-ruim td { background: var(--adm-ruim-fundo); }
+
+/* Prazo: ícone + texto + cor (cor nunca sozinha) */
+.rota-sit { display: inline-flex; align-items: center; gap: 0.3rem; padding: 0.12rem 0.5rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700; white-space: nowrap; border: 1px solid transparent; }
+.rota-sit-vencido { color: var(--adm-ruim); background: var(--adm-ruim-fundo); border-color: var(--adm-ruim-borda); }
+.rota-sit-hoje { color: var(--adm-atencao); background: var(--adm-atencao-fundo); border-color: var(--adm-atencao-borda); }
+.rota-sit-amanha { color: var(--adm-tinta-2); background: var(--adm-neutro-fundo); border-color: var(--adm-borda); }
+.rota-sit-ok { color: var(--adm-ok); background: var(--adm-ok-fundo); }
+
+.rota-ceasa { margin: 0; padding-left: 1.4rem; display: grid; gap: 0.45rem; font-size: 0.9rem; }
+.rota-regras { font-size: 0.8rem; color: var(--adm-tinta-3); margin-top: 0.5rem; }
+.rota-regras summary { cursor: pointer; font-weight: 700; color: var(--adm-tinta-2); }
+.rota-regras ul { margin: 0.5rem 0 0 1.1rem; list-style: disc; display: grid; gap: 0.25rem; }
+
+/* ---------- Impressão: só a aba Rotas, fundo branco, sem menus/botões ---------- */
+@media print {
+    body.rota-imprimindo { background: #fff !important; color: #000 !important; }
+    body.rota-imprimindo * { visibility: hidden !important; }
+    body.rota-imprimindo #painel-rotas, body.rota-imprimindo #painel-rotas * { visibility: visible !important; }
+    body.rota-imprimindo #painel-rotas { position: absolute; left: 0; top: 0; width: 100%; padding: 0 !important; }
+    body.rota-imprimindo #painel-rotas .no-print, body.rota-imprimindo #painel-rotas .rota-regras,
+    body.rota-imprimindo #painel-rotas .rota-acoes { display: none !important; }
+    body.rota-imprimindo .rota-imp-dia { display: block; font-weight: 800; font-size: 14pt; margin: 0 0 6pt; }
+    body.rota-imprimindo .adm-card { background: #fff !important; border: 1px solid #999 !important; box-shadow: none !important; break-inside: avoid-page; }
+    body.rota-imprimindo .rota-titulo, body.rota-imprimindo .rota-tit, body.rota-imprimindo .rota-kpis,
+    body.rota-imprimindo .rota-kpis strong, body.rota-imprimindo .rota-sub, body.rota-imprimindo .adm-tabela,
+    body.rota-imprimindo .adm-tabela td, body.rota-imprimindo .adm-tabela th { color: #000 !important; background: #fff !important; }
+    body.rota-imprimindo .rota-mapa { height: 320px; break-inside: avoid; }
+    body.rota-imprimindo .rota-mapa .leaflet-tile-pane { filter: none !important; }
+    body.rota-imprimindo .rota-sit { border: 1px solid #555 !important; color: #000 !important; background: #fff !important; }
+    body.rota-imprimindo .rota-linha-ruim td { background: #fde2df !important; }
+    body.rota-imprimindo tr { break-inside: avoid; }
+}

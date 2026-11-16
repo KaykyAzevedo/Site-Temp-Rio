@@ -992,9 +992,11 @@ body.admin {
 [data-cor] { --etapa: var(--adm-tinta-3); }
 [data-cor="aberto"]     { --etapa: #aab6c4; }
 [data-cor="carga"]      { --etapa: #e8c25a; }
-[data-cor="separando"]  { --etapa: #f2a14a; }
+[data-cor="separando"]  { --etapa: #e8c25a; }
 [data-cor="separado"]   { --etapa: #f4825a; }
 [data-cor="conferido"]  { --etapa: #a6d86f; }
+[data-cor="enviado"]    { --etapa: #4cc9be; }
+[data-cor="recebido"]   { --etapa: #5fc28a; }
 [data-cor="saiu"]       { --etapa: #5fc28a; }
 [data-cor="cancelado"]  { --etapa: #f08a80; }
 
@@ -1042,6 +1044,65 @@ body.admin {
     .adm-kanban-segmentos .adm-chip-etapa { flex-direction: column; align-items: center; justify-content: flex-start; text-align: center; gap: 0.15rem; flex: 1 0 3.4rem; padding: 0.3rem 0.1rem; }
     .adm-kanban-segmentos .adm-chip-etapa .adm-chip-txt { overflow-wrap: normal; word-break: normal; hyphens: none; }
 }
+
+/* Kanban ERP (aba Pedidos): frescor na barra superior, alternador Compacto/Detalhado, legenda "?", 6 colunas sem rolagem em 1366, cabeçalho em 1 linha */
+.adm-pe-frescor { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.72rem; color: var(--adm-tinta-3); white-space: nowrap; }
+.adm-pe-frescor.is-atencao { color: var(--adm-atencao); }
+.adm-pe-barra { display: flex; align-items: center; justify-content: flex-end; gap: 0.45rem; margin-bottom: 0.45rem; }
+.adm-pe-alternador { display: inline-flex; background: var(--adm-superficie); border: 1px solid var(--adm-borda); border-radius: 0.45rem; padding: 0.1rem; gap: 0.1rem; }
+.adm-pe-modo-btn { padding: 0.2rem 0.55rem; border-radius: 0.35rem; font-size: 0.7rem; font-weight: 700; color: var(--adm-tinta-3); background: transparent; border: 1px solid transparent; cursor: pointer; min-height: 1.55rem; transition: color 0.15s ease, background-color 0.15s ease; }
+.adm-pe-modo-btn:hover { color: var(--adm-tinta); }
+.adm-pe-modo-btn.is-ativo { color: var(--adm-tinta); background: var(--adm-acao-fundo); border-color: var(--adm-acao-borda); }
+.adm-pe-ajuda-wrap { position: relative; }
+.adm-pe-ajuda-btn { display: inline-flex; align-items: center; justify-content: center; width: 1.65rem; height: 1.65rem; min-width: 1.5rem; min-height: 1.5rem; border-radius: 999px; background: var(--adm-superficie); border: 1px solid var(--adm-borda-forte); color: var(--adm-tinta-2); font-size: 0.75rem; font-weight: 800; cursor: pointer; transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease; }
+.adm-pe-ajuda-btn:hover, .adm-pe-ajuda-btn[aria-expanded="true"] { color: var(--adm-tinta); border-color: var(--adm-acao); background: var(--adm-acao-fundo); }
+.adm-pe-popover { position: absolute; right: 0; top: calc(100% + 0.4rem); z-index: 80; width: min(24rem, 90vw); padding: 0.75rem 0.9rem; background: var(--adm-superficie); border: 1px solid var(--adm-borda-forte); border-radius: 0.65rem; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55); font-size: 0.76rem; color: var(--adm-tinta-2); }
+.adm-pe-pop-titulo { font-weight: 700; color: var(--adm-tinta); margin: 0 0 0.35rem; display: flex; align-items: center; gap: 0.4rem; }
+.adm-pe-pop-texto { margin: 0 0 0.5rem; line-height: 1.35; }
+.adm-pe-pop-etapas { list-style: none; margin: 0.55rem 0 0; padding: 0.5rem 0 0; border-top: 1px solid var(--adm-borda); display: grid; gap: 0.25rem; font-size: 0.72rem; }
+.adm-pe-pop-etapas li { display: flex; align-items: baseline; gap: 0.4rem; }
+.adm-pe-pop-etapas li > i { width: 1rem; text-align: center; color: var(--etapa); flex: none; }
+
+@media (min-width: 901px) {
+    .adm-kanban.adm-kanban-pe { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0.42rem; overflow: visible; }
+}
+.adm-kanban-pe .adm-kanban-coluna { min-height: 120px; border-radius: 0.6rem; }
+.adm-kanban-pe .adm-pe-col-cab { padding: 0.36rem 0.36rem; gap: 0.2rem; border-bottom: 1px solid var(--adm-borda); display: flex; align-items: center; justify-content: flex-start; flex-wrap: nowrap; white-space: nowrap; min-width: 0; }
+.adm-kanban-pe .adm-pe-col-cab .adm-kanban-ico { width: 1.05rem; height: 1.05rem; font-size: 0.62rem; flex-shrink: 0; }
+.adm-kanban-pe .adm-kanban-titulo-txt { font-size: 0.62rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0; color: var(--adm-tinta); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.adm-kanban-pe .adm-pe-col-cab .adm-kanban-contagem { font-size: 0.6rem; padding: 0.02rem 0.3rem; flex-shrink: 0; }
+.adm-kanban-pe .adm-kanban-total { margin-left: auto; font-size: 0.64rem; font-weight: 700; color: var(--adm-tinta-2); font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0; }
+@media (min-width: 1600px) {
+    .adm-kanban.adm-kanban-pe { gap: 0.55rem; }
+    .adm-kanban-pe .adm-pe-col-cab { padding: 0.45rem 0.58rem; gap: 0.32rem; }
+    .adm-kanban-pe .adm-pe-col-cab .adm-kanban-ico { width: 1.2rem; height: 1.2rem; font-size: 0.68rem; }
+    .adm-kanban-pe .adm-kanban-titulo-txt { font-size: 0.7rem; letter-spacing: 0.015em; }
+    .adm-kanban-pe .adm-pe-col-cab .adm-kanban-contagem { font-size: 0.64rem; padding: 0.02rem 0.36rem; }
+    .adm-kanban-pe .adm-kanban-total { font-size: 0.72rem; }
+}
+.adm-kanban-pe .adm-kanban-corpo-erp { padding: 0.35rem; gap: 0.35rem; }
+.adm-kanban-pe.is-compacto .adm-kanban-corpo-erp { padding: 0.3rem; gap: 0.26rem; }
+
+/* Cartão compacto + pontinho de atraso + janelinha de detalhe */
+.adm-kanban-erpcartao.is-compacto { padding: 0.32rem 0.45rem 0.32rem 0.65rem; border-radius: 0.45rem; cursor: pointer; transition: border-color 0.15s ease, background-color 0.15s ease; }
+.adm-kanban-erpcartao.is-compacto:hover { border-color: var(--adm-acao); background: var(--adm-superficie-2); }
+.adm-pe-comp-topo { display: flex; align-items: center; justify-content: space-between; gap: 0.35rem; min-width: 0; }
+.adm-pe-comp-nome { font-size: 0.76rem; font-weight: 700; line-height: 1.2; color: var(--adm-tinta); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.adm-pe-comp-bairro { margin: 0.1rem 0 0; font-size: 0.68rem; line-height: 1.15; color: var(--adm-tinta-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.adm-pe-comp-bairro.is-sem-bairro, .adm-kc-linha.is-sem-bairro { color: var(--adm-tinta-3); font-style: italic; }
+.adm-pe-ponto { flex: none; width: 0.48rem; height: 0.48rem; border-radius: 999px; display: inline-block; }
+.adm-pe-ponto.is-ok { background: var(--adm-ok); }
+.adm-pe-ponto.is-atencao { background: var(--adm-atencao); box-shadow: 0 0 0 2px var(--adm-atencao-fundo); }
+.adm-pe-ponto.is-critico { background: var(--adm-ruim); box-shadow: 0 0 0 2px var(--adm-ruim-fundo); }
+.adm-pe-comp-ind { display: inline-flex; align-items: center; gap: 0.3rem; flex: none; }
+.adm-pe-ico-carga { color: #e8c25a; font-size: 0.66rem; line-height: 1; display: inline-flex; align-items: center; }
+.adm-pe-selo-carga { display: inline-flex; align-items: center; gap: 0.28rem; padding: 0.08rem 0.45rem; border-radius: 999px; font-size: 0.68rem; font-weight: 700; color: #e8c25a; background: rgba(232, 194, 90, 0.14); border: 1px solid rgba(232, 194, 90, 0.4); white-space: nowrap; }
+.adm-pe-selo-carga > i { font-size: 0.65rem; color: #e8c25a; }
+
+.adm-modal-painel.adm-modal-compacto { max-width: 22rem; padding: 1.1rem; }
+.adm-kanban-erpcartao.is-modal-cartao { border: none; background: transparent; padding: 0 0 0 0.75rem; border-radius: 0; }
+.adm-pe-modal-etapa { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--etapa); margin: 0 0 0.45rem; }
+.adm-pe-modal-etapa .adm-kanban-ico { width: 1.35rem; height: 1.35rem; font-size: 0.72rem; }
 
 /* ===================== Hoje: cartão "Crescimento da marca" (mapa + 3 números) ===================== */
 .hm-grade { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; }

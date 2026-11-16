@@ -19,6 +19,11 @@
 #   execucao; 30 dias, concluidos so nos ultimos 3 dias; no log so contagens, nunca valores). Conferencia sem gravar nada: sync-banco.ps1 -Testar [-Simular]
 #   (so o modulo pedidos; imprime contagens por etapa e a AMOSTRA de valor dos 5 pedidos mais
 #   recentes: codigo, data e totais candidatos, sem cliente; sem Supabase, sem agenda, sem arquivo).
+#   Caixas por pedido (Rota do dia, migracao 039): 'pedidos.produtos' = Soma(qtPedidoItem) por pedido e
+#   cdProduto (so tbPedidoItem; nenhum dado de cliente). O Supabase converte em caixas 24/48 pelo cadastro
+#   solidcon_produtos. So e ENVIADO com "pedidos_enviar_caixas": true no config-banco.json (padrao false):
+#   a RPC antiga (035) recusa campo novo, entao so ligue depois de aplicar a 039. -Testar mostra a AMOSTRA
+#   anonima (20 itens: pedido, data, produto, qt, vl; sem cliente) e as colunas de tbPedidoItem.
 # PROTECOES de toda sessao: ApplicationIntent=ReadOnly, READ UNCOMMITTED e toda leitura dentro de
 #   uma transacao explicita que SEMPRE termina em Rollback (conferidas no servidor; senao nada le).
 # Trava de permissoes: bloqueia se o login pode gravar/executar. Chave do dono no config-banco.json
@@ -67,6 +72,8 @@ $ConsultasAprovadas = @{
     'pedidos.valores' = "SELECT p.cdPedido AS cd_pedido, COUNT(*) AS itens, SUM(i.qtPedidoItem * i.vlPedidoItem) AS valor, SUM(CASE WHEN i.qtPedidoItem IS NULL OR i.vlPedidoItem IS NULL THEN 1 ELSE 0 END) AS nulos, SUM(CASE WHEN ISNULL(i.prDesconto, 0) > 0 OR ISNULL(i.prIPI, 0) > 0 OR ISNULL(i.prSubstTributaria, 0) > 0 THEN 1 ELSE 0 END) AS itens_desc_ipi_st FROM dbo.tbPedido AS p JOIN dbo.tbPedidoItem AS i ON i.cdPedido = p.cdPedido AND i.cdPessoaFilial = p.cdPessoaFilial WHERE p.cdPessoaFilial = 4 AND p.dtPedido >= @desde GROUP BY p.cdPedido"
     'pedidos.amostra_valor' ="SELECT TOP 5 p.cdPedido AS cd_pedido, p.dtPedido AS dt_pedido, COUNT(*) AS itens, SUM(i.qtPedidoItem * i.vlPedidoItem) AS qt_x_vl, SUM(i.qtPedidoItem * i.vlPedidoItem * (1 - ISNULL(i.prDesconto, 0) / 100)) AS qt_x_vl_desc, SUM(i.qtAtendida * i.vlPedidoItem) AS atend_x_vl, SUM(i.qtPedidoItem * i.vlVendaOriginal) AS qt_x_original, SUM(i.qtPedidoItemOriginal * i.vlPedidoItem) AS qtorig_x_vl, SUM(i.vlPedidoItem) AS soma_vl, SUM(i.qtPedidoItem * i.vlPedidoItem * ISNULL(i.prIPI, 0) / 100) AS ipi, SUM(i.qtPedidoItem * i.vlPedidoItem * ISNULL(i.prSubstTributaria, 0) / 100) AS st, SUM(i.qtPedidoItem * i.vlPedidoItem * ISNULL(i.prSTaRecolher, 0) / 100) AS st_recolher, SUM(i.vlItemFreteFOB) AS frete_fob, MAX(i.prDesconto) AS desc_max, MAX(i.prIPI) AS ipi_max, MAX(i.prSubstTributaria) AS st_max, SUM(CASE WHEN i.cdBloqueio IS NULL THEN 0 ELSE 1 END) AS itens_bloqueio, SUM(CASE WHEN i.qtPedidoItem IS NULL OR i.vlPedidoItem IS NULL THEN 1 ELSE 0 END) AS nulos FROM dbo.tbPedido AS p JOIN dbo.tbPedidoItem AS i ON i.cdPedido = p.cdPedido AND i.cdPessoaFilial = p.cdPessoaFilial WHERE p.cdPessoaFilial = 4 AND p.dtPedido >= @desde GROUP BY p.cdPedido, p.dtPedido ORDER BY p.dtPedido DESC, p.cdPedido DESC"
 }
+$ConsultasAprovadas['pedidos.produtos'] = "SELECT p.cdPedido AS cd_pedido, i.cdProduto AS cd_produto, SUM(i.qtPedidoItem) AS qt, COUNT(*) AS itens, SUM(CASE WHEN i.qtPedidoItem IS NULL THEN 1 ELSE 0 END) AS nulos FROM dbo.tbPedido AS p JOIN dbo.tbPedidoItem AS i ON i.cdPedido = p.cdPedido AND i.cdPessoaFilial = p.cdPessoaFilial WHERE p.cdPessoaFilial = 4 AND p.dtPedido >= @desde GROUP BY p.cdPedido, i.cdProduto"
+$ConsultasAprovadas['pedidos.amostra_caixas'] = "SELECT TOP 20 p.cdPedido AS cd_pedido, p.dtPedido AS dt_pedido, i.cdProduto AS cd_produto, i.qtPedidoItem AS qt, i.vlPedidoItem AS vl FROM dbo.tbPedido AS p JOIN dbo.tbPedidoItem AS i ON i.cdPedido = p.cdPedido AND i.cdPessoaFilial = p.cdPessoaFilial WHERE p.cdPessoaFilial = 4 AND p.dtPedido >= @desde ORDER BY p.dtPedido DESC, p.cdPedido DESC"
 $RpcsPermitidas = @('solidcon_receber_banco_saude', 'solidcon_receber_contas_receber', 'solidcon_receber_margem_vendas', 'solidcon_receber_custos', 'solidcon_receber_pedidos_erp')
 # Semantica de VW_RDUPHOLD_VENDA_ITENS CONFIRMADA pelo probe real da filial 4 (2026-11-12):
 #   Vlitem = PRECO UNITARIO; Valor_total_unidade = TOTAL DA LINHA (apesar do nome);
@@ -402,6 +409,7 @@ $LinhaTrava = ''
 $TravaLogada = $false
 $ProtecoesConfirmadas = $false
 $AceitarPermissoesExtras = $false
+$EnviarCaixas = $false
 
 function Resumo-Permissoes($L) {
     # So contagens (nunca nomes de schema/objeto): onde e de que tipo.
@@ -1021,7 +1029,7 @@ $PedidosDiasConcluidos = 3
 # So METADADOS (nomes/tipos de colunas) para o -Testar real: candidatas a valor do pedido em
 # tbPedidoItem, colunas de valor do cabecalho (tbPedido/tbPedidoVenda: so money/decimal/float) e a
 # documento em tbCliente. Texto interno fixo; nunca le dados; so roda no -Testar.
-$SqlMetadadosPedidos = "SELECT OBJECT_NAME(c.object_id) AS tabela, c.name AS coluna, ty.name AS tipo FROM sys.columns AS c JOIN sys.types AS ty ON ty.user_type_id = c.user_type_id WHERE (c.object_id = OBJECT_ID('dbo.tbPedidoItem') AND ty.name IN ('money','smallmoney','decimal','numeric','float','real','int','bigint','smallint')) OR (c.object_id IN (OBJECT_ID('dbo.tbPedido'), OBJECT_ID('dbo.tbPedidoVenda')) AND ty.name IN ('money','smallmoney','decimal','numeric','float','real')) OR (c.object_id = OBJECT_ID('dbo.tbCliente') AND (c.name LIKE '%Cnpj%' OR c.name LIKE '%Cpf%' OR c.name LIKE '%Doc%' OR c.name LIKE 'cdPessoa%')) ORDER BY 1, c.column_id"
+$SqlMetadadosPedidos = "SELECT OBJECT_NAME(c.object_id) AS tabela, c.name AS coluna, ty.name AS tipo FROM sys.columns AS c JOIN sys.types AS ty ON ty.user_type_id = c.user_type_id WHERE c.object_id = OBJECT_ID('dbo.tbPedidoItem') OR (c.object_id IN (OBJECT_ID('dbo.tbPedido'), OBJECT_ID('dbo.tbPedidoVenda')) AND ty.name IN ('money','smallmoney','decimal','numeric','float','real')) OR (c.object_id = OBJECT_ID('dbo.tbCliente') AND (c.name LIKE '%Cnpj%' OR c.name LIKE '%Cpf%' OR c.name LIKE '%Doc%' OR c.name LIKE 'cdPessoa%')) ORDER BY 1, c.column_id"
 
 function Data-Erp($Valor) {
     # datetime do ERP (hora de Sao Paulo, sem fuso) -> ISO com offset; sentinela antiga = sem data.
@@ -1103,7 +1111,38 @@ function Mapa-Valores($Linhas) {
     return $m
 }
 
-function Normalizar-Pedidos($Linhas, $Clientes, [datetime]$Recente, $Valores) {
+# Produtos por pedido (039): cd_pedido -> lista @{ p = cdProduto; q = quantidade } ou 'invalido' quando
+# algum item nao da para afirmar (produto sem codigo numerico, quantidade nula/negativa/absurda).
+# A conversao em caixas 24/48 e feita no Supabase (cadastro solidcon_produtos), nunca aqui.
+function Codigo-Produto($Valor) {
+    if ($null -eq $Valor -or $Valor -is [DBNull]) { return $null }
+    $t = ([string]$Valor).Trim()
+    if ($t -notmatch '^[0-9]{1,12}$') { return $null }
+    $n = [long]$t
+    if ($n -le 0) { return $null }
+    return $n
+}
+function Mapa-Produtos($Linhas) {
+    $m = @{}
+    foreach ($l in $Linhas) {
+        $cd = Inteiro-Banco $l.cd_pedido
+        if ($null -eq $cd) { continue }
+        $cd = [long]$cd
+        if ($m.ContainsKey($cd) -and $m[$cd] -is [string]) { continue }
+        $prod = Codigo-Produto $l.cd_produto
+        $q = $null
+        try { if ($null -ne $l.qt -and $l.qt -isnot [DBNull]) { $q = [decimal]$l.qt } } catch { $q = $null }
+        $nulos = 0
+        try { if ($null -ne $l.nulos -and $l.nulos -isnot [DBNull]) { $nulos = [int]$l.nulos } } catch { $nulos = 1 }
+        if ($null -eq $prod -or $null -eq $q -or $q -lt 0 -or $q -gt 100000 -or $nulos -gt 0) { $m[$cd] = 'invalido'; continue }
+        if (-not $m.ContainsKey($cd)) { $m[$cd] = New-Object Collections.ArrayList }
+        if ($m[$cd].Count -ge 300) { $m[$cd] = 'invalido'; continue }
+        [void]$m[$cd].Add([ordered]@{ p = $prod; q = $q })
+    }
+    return $m
+}
+
+function Normalizar-Pedidos($Linhas, $Clientes, [datetime]$Recente, $Valores, $Produtos) {
     # Codigo do cliente -> documento so digitos. Codigo repetido com documentos diferentes = indefinido.
     $docs = @{}
     foreach ($p in $Clientes) {
@@ -1114,7 +1153,8 @@ function Normalizar-Pedidos($Linhas, $Clientes, [datetime]$Recente, $Valores) {
     }
     $itens = New-Object Collections.ArrayList
     $vistos = @{}
-    $cont = [ordered]@{ canceladas = 0; fora_da_janela = 0; cnpj = 0; cpf = 0; indefinido = 0; com_valor = 0; sem_valor = 0; valor_negativo = 0; valor_fora_limite = 0; itens_desc_ipi_st = 0 }
+    $cont = [ordered]@{ canceladas = 0; fora_da_janela = 0; cnpj = 0; cpf = 0; indefinido = 0; com_valor = 0; sem_valor = 0; valor_negativo = 0; valor_fora_limite = 0; itens_desc_ipi_st = 0
+                        com_produtos = 0; sem_produtos = 0; produtos_invalidos = 0; qt_fracionada = 0 }
     $porEtapa = [ordered]@{}
     foreach ($e in $EtapasPedido) { $porEtapa[$e] = 0 }
     foreach ($l in $Linhas) {
@@ -1161,6 +1201,21 @@ function Normalizar-Pedidos($Linhas, $Clientes, [datetime]$Recente, $Valores) {
             valor_centavos = $val.centavos
             nr_carga = $(if ($null -ne $carga) { [long]$carga } else { $null })
         })
+        # Produtos/quantidades (039): contados sempre; campo 'produtos' so vai com pedidos_enviar_caixas=true.
+        # Atribuicao direta: '$x = if (...) { lista }' desenrolaria a ArrayList (1 item vira o proprio item).
+        $lp = $null
+        if ($null -ne $Produtos -and $Produtos.ContainsKey([long]$cd)) { $lp = $Produtos[[long]$cd] }
+        if ($lp -is [string]) { $cont.produtos_invalidos++; $lp = $null }
+        elseif ($null -ne $lp) {
+            $cont.com_produtos++
+            foreach ($x in $lp) { if ([decimal]::Truncate([decimal]$x.q) -ne [decimal]$x.q) { $cont.qt_fracionada++; break } }
+        } else { $cont.sem_produtos++ }
+        if ($EnviarCaixas) {
+            # Sem $(...): subexpressao tambem desenrola (1 produto viraria objeto em vez de lista).
+            $arr = $null
+            if ($null -ne $lp) { $arr = [object[]]$lp.ToArray() }
+            $itens[$itens.Count - 1]['produtos'] = $arr
+        }
     }
     return @{ itens = [object[]]$itens.ToArray(); contagens = $cont; etapas = $porEtapa }
 }
@@ -1221,6 +1276,38 @@ $ModuloPedidos = @{
                 )
             }
         }
+        # Caixas (039): quantidade por pedido e produto. Falha so desta consulta nao derruba o Kanban.
+        produtos = @{
+            maxLinhas = 40000; parametros = @('desde')
+            colunas = @('cd_pedido', 'cd_produto', 'qt', 'itens', 'nulos')
+            sql = "SELECT p.cdPedido AS cd_pedido, i.cdProduto AS cd_produto, SUM(i.qtPedidoItem) AS qt, COUNT(*) AS itens, SUM(CASE WHEN i.qtPedidoItem IS NULL THEN 1 ELSE 0 END) AS nulos FROM dbo.tbPedido AS p JOIN dbo.tbPedidoItem AS i ON i.cdPedido = p.cdPedido AND i.cdPessoaFilial = p.cdPessoaFilial WHERE p.cdPessoaFilial = 4 AND p.dtPedido >= @desde GROUP BY p.cdPedido, i.cdProduto"
+            # FICTICIO: 9001 misto, 9002 com item sem quantidade (invalido), 9003 quantidade fracionada.
+            simulacao = {
+                param($v)
+                ,@(
+                    @{ cd_pedido = 9001; cd_produto = 101; qt = [decimal]10; itens = 1; nulos = 0 },
+                    @{ cd_pedido = 9001; cd_produto = 202; qt = [decimal]4; itens = 2; nulos = 0 },
+                    @{ cd_pedido = 9002; cd_produto = 101; qt = $null; itens = 1; nulos = 1 },
+                    @{ cd_pedido = 9003; cd_produto = 101; qt = [decimal]2.5; itens = 1; nulos = 0 },
+                    @{ cd_pedido = 9005; cd_produto = 303; qt = [decimal]30; itens = 1; nulos = 0 }
+                )
+            }
+        }
+        # SO no -Testar: 20 itens dos pedidos mais recentes (pedido, data, produto, qt, vl; SEM cliente) para
+        # o dono conferir no comercial se qtPedidoItem e numero de CAIXAS e qual produto e 24/48.
+        amostra_caixas = @{
+            maxLinhas = 20; parametros = @('desde'); somenteTestar = $true
+            colunas = @('cd_pedido', 'dt_pedido', 'cd_produto', 'qt', 'vl')
+            sql = "SELECT TOP 20 p.cdPedido AS cd_pedido, p.dtPedido AS dt_pedido, i.cdProduto AS cd_produto, i.qtPedidoItem AS qt, i.vlPedidoItem AS vl FROM dbo.tbPedido AS p JOIN dbo.tbPedidoItem AS i ON i.cdPedido = p.cdPedido AND i.cdPessoaFilial = p.cdPessoaFilial WHERE p.cdPessoaFilial = 4 AND p.dtPedido >= @desde ORDER BY p.dtPedido DESC, p.cdPedido DESC"
+            simulacao = {
+                param($v)
+                $h = [datetime]::Now
+                ,@(
+                    @{ cd_pedido = 9001; dt_pedido = $h.AddHours(-2); cd_produto = 101; qt = [decimal]10; vl = [decimal]96 },
+                    @{ cd_pedido = 9001; dt_pedido = $h.AddHours(-2); cd_produto = 202; qt = [decimal]4; vl = [decimal]180 }
+                )
+            }
+        }
         # SO no -Testar (fase A do valor do pedido): 5 pedidos mais recentes, totais candidatos lado a lado
         # para o dono comparar com o comercial/nota. Sem cliente/documento. Nunca enviado ao Supabase.
         amostra_valor = @{
@@ -1249,6 +1336,10 @@ function Modulo-Pedidos($Modulo) {
     $amostraErro = $null
     $valoresLinhas = $null
     $valoresErro = $null
+    $produtosLinhas = $null
+    $produtosErro = $null
+    $amostraCx = $null
+    $amostraCxErro = $null
     $agoraSp = [TimeZoneInfo]::ConvertTimeFromUtc([DateTime]::UtcNow, [TimeZoneInfo]::FindSystemTimeZoneById('E. South America Standard Time'))
     $desde = $agoraSp.Date.AddDays(-$PedidosDiasJanela)
     $recente = $agoraSp.AddDays(-$PedidosDiasConcluidos)
@@ -1259,6 +1350,9 @@ function Modulo-Pedidos($Modulo) {
         # Valor (fase B): falha so desta consulta nao derruba o Kanban; os pedidos seguem sem valor.
         try { $valoresLinhas = Executar-Consulta $sessao $Modulo 'valores' @{ desde = $desde } }
         catch { $valoresErro = Descrever-Erro $_ }
+        # Caixas (039): idem; sem esta consulta os pedidos seguem sem produtos (caixas desconhecidas).
+        try { $produtosLinhas = Executar-Consulta $sessao $Modulo 'produtos' @{ desde = $desde } }
+        catch { $produtosErro = Descrever-Erro $_ }
         $coleta = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", $Invariant)
         if ($Testar -and -not $sessao.simulada) {
             $cmd = $sessao.con.CreateCommand(); $cmd.CommandTimeout = 30; $cmd.Transaction = $sessao.tx; $cmd.CommandText = $SqlMetadadosPedidos
@@ -1268,6 +1362,8 @@ function Modulo-Pedidos($Modulo) {
             # Amostra do valor (fase A): falha aqui nao derruba o resto do -Testar (metadados ja lidos).
             try { $amostra = Executar-Consulta $sessao $Modulo 'amostra_valor' @{ desde = $desde } }
             catch { $amostraErro = Descrever-Erro $_ }
+            try { $amostraCx = Executar-Consulta $sessao $Modulo 'amostra_caixas' @{ desde = $desde } }
+            catch { $amostraCxErro = Descrever-Erro $_ }
         }
     } catch {
         $motivo = Descrever-Erro $_
@@ -1282,7 +1378,8 @@ function Modulo-Pedidos($Modulo) {
     } finally { Fechar-Sessao $sessao }
     try {
         $mapaValores = if ($null -ne $valoresLinhas) { Mapa-Valores $valoresLinhas } else { $null }
-        $normal = Normalizar-Pedidos $linhas $clientes $recente $mapaValores
+        $mapaProdutos = if ($null -ne $produtosLinhas) { Mapa-Produtos $produtosLinhas } else { $null }
+        $normal = Normalizar-Pedidos $linhas $clientes $recente $mapaValores $mapaProdutos
     }
     catch {
         # Inteiro-Banco usa o codigo do modulo receber; aqui o texto certo e o de pedido.
@@ -1310,6 +1407,19 @@ function Modulo-Pedidos($Modulo) {
         Write-Output ('  valor do pedido: com_valor={0} sem_valor={1} valor_negativo={2} valor_fora_limite={3} itens_desc_ipi_st={4} (Soma qt*vl; desconto/IPI/ST nao aplicados)' -f
             $c.com_valor, $c.sem_valor, $c.valor_negativo, $c.valor_fora_limite, $c.itens_desc_ipi_st)
         if ($valoresErro) { Write-Output ('  ERRO valores: ' + $valoresErro + ' (pedidos iriam sem valor)') }
+        Write-Output ('  caixas (039): com_produtos={0} sem_produtos={1} produtos_invalidos={2} qt_fracionada={3} envio={4}' -f
+            $c.com_produtos, $c.sem_produtos, $c.produtos_invalidos, $c.qt_fracionada, $(if ($EnviarCaixas) { 'LIGADO' } else { 'desligado (pedidos_enviar_caixas)' }))
+        if ($produtosErro) { Write-Output ('  ERRO produtos: ' + $produtosErro + ' (pedidos iriam sem caixas)') }
+        Write-Output '  AMOSTRA caixas (20 itens mais recentes da filial 4; sem cliente): pedido data produto qt vl'
+        if ($amostraCxErro) { Write-Output ('    ERRO amostra caixas: ' + $amostraCxErro) }
+        elseif ($null -eq $amostraCx -or $amostraCx.Count -eq 0) { Write-Output '    nenhum item na janela' }
+        else {
+            foreach ($a in $amostraCx) {
+                $dt = if ($a.dt_pedido -is [datetime]) { $a.dt_pedido.ToString('yyyy-MM-dd HH:mm', $Invariant) } else { '?' }
+                $pr = if ($null -ne (Codigo-Produto $a.cd_produto)) { [string](Codigo-Produto $a.cd_produto) } else { '?' }
+                Write-Output ('    {0} {1} produto={2} qt={3} vl={4}' -f (Valor-Amostra $a.cd_pedido 0), $dt, $pr, (Valor-Amostra $a.qt 4), (Valor-Amostra $a.vl 2))
+            }
+        }
         if ($null -ne $metadados) {
             Write-Output '  colunas candidatas (so metadados):'
             foreach ($m in $metadados) { Write-Output ('    {0}.{1} ({2})' -f $m.tabela, $m.coluna, $m.tipo) }
@@ -1352,6 +1462,9 @@ function Modulo-Pedidos($Modulo) {
     }
     $relogio.Stop()
     if ($valoresErro) { Log ('AVISO pedidos modo={0} fase=valores motivo={1}; pedidos enviados sem valor. execucao={2}' -f $Cfg.modo, $valoresErro, $ExecucaoId) }
+    if ($produtosErro) { Log ('AVISO pedidos modo={0} fase=produtos motivo={1}; pedidos enviados sem caixas. execucao={2}' -f $Cfg.modo, $produtosErro, $ExecucaoId) }
+    Log ('INFO pedidos caixas com_produtos={0} sem_produtos={1} produtos_invalidos={2} qt_fracionada={3} envio={4} execucao={5}' -f
+        $c.com_produtos, $c.sem_produtos, $c.produtos_invalidos, $c.qt_fracionada, $(if ($EnviarCaixas) { 'sim' } else { 'nao' }), $ExecucaoId)
     Log ('OK pedidos modo={0}{1} linhas={2} {3} cnpj={4} cpf={5} indefinido={6} canceladas={7} antigos={8} pedidos_com_valor={9} sem_valor={10} valor_negativo={11} valor_fora_limite={12} itens_desc_ipi_st={13} duracao_ms={14} enviado={15} execucao={16}' -f
         $Cfg.modo, $(if ($Simular) { ' SIMULADO' } else { '' }), $normal.itens.Count, $etapasTxt, $c.cnpj, $c.cpf, $c.indefinido,
         $c.canceladas, $c.fora_da_janela, $c.com_valor, $c.sem_valor, $c.valor_negativo, $c.valor_fora_limite, $c.itens_desc_ipi_st, $relogio.ElapsedMilliseconds, $enviado, $ExecucaoId)
@@ -1375,6 +1488,10 @@ try {
     $chave = Campo $Cfg 'aceitar_permissoes_extras'
     if ($null -ne $chave -and $chave -isnot [bool]) { throw 'aceitar_permissoes_extras deve ser true ou false' }
     $AceitarPermissoesExtras = ($chave -eq $true)
+    # Caixas por pedido (039): so o booleano JSON true liga o ENVIO (a coleta e a amostra rodam sempre).
+    $chaveCx = Campo $Cfg 'pedidos_enviar_caixas'
+    if ($null -ne $chaveCx -and $chaveCx -isnot [bool]) { throw 'pedidos_enviar_caixas deve ser true ou false' }
+    $EnviarCaixas = ($chaveCx -eq $true)
     if ($SimularFalha -and -not $Simular) { throw '-SimularFalha exige -Simular' }
     if ($Testar -and ($BackfillMargemDesde -or $Forcar)) { throw '-Testar nao combina com -BackfillMargemDesde/-Forcar' }
     if ([string]::IsNullOrWhiteSpace([string](Campo $Cfg 'pastaSaida')) -or -not [IO.Path]::IsPathRooted($Cfg.pastaSaida)) {

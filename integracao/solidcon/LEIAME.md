@@ -915,3 +915,11 @@ Fórmula confirmada pelo dono: **valor do pedido = Σ `qtPedidoItem` × `vlPedid
 - **Painel:** o card do Kanban "Pedidos do ERP" lê `solidcon_pedidos_erp.valor_centavos`; `null` = sem valor.
 
 **Instalar:** copiar o `sync-banco.ps1` novo para `C:\TempRio\solidcon\`, rodar `-Testar` uma vez (deve mostrar `valor do pedido: com_valor=N ...`) e deixar a tarefa de 5 min seguir.
+
+## Caixas por pedido (Rota do dia, migração 039)
+
+- Nova consulta aprovada `pedidos.produtos`: `Soma(qtPedidoItem)` por pedido e `cdProduto` (só `dbo.tbPedidoItem`, filial 4, mesma janela). Nenhum dado de cliente. Falha só desta consulta: os pedidos seguem sem caixas (`AVISO ... fase=produtos`).
+- A conversão em caixas 24/48 é feita **no Supabase** (039), pelo espelho `solidcon_produtos` (o `cdProduto` do ERP é o `id_produto` do espelho, o mesmo casamento que as vendas já usam).
+- **Envio desligado por padrão.** Liga com `"pedidos_enviar_caixas": true` no `config-banco.json`, e só **depois** de aplicar a 039.
+- `-Testar` mostra `caixas (039): com_produtos/sem_produtos/produtos_invalidos/qt_fracionada` e a **AMOSTRA caixas**: 20 itens mais recentes (pedido, data, produto, qt, vl; sem cliente) para conferir no comercial que `qtPedidoItem` é número de **caixas**. Os metadados agora listam **todas** as colunas de `tbPedidoItem` (só nome/tipo), para achar embalagem/unidade se a quantidade não for em caixas.
+- Log da coleta real: `INFO pedidos caixas com_produtos=... envio=sim|nao` (só contagens).
