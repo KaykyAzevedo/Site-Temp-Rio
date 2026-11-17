@@ -1497,7 +1497,7 @@ Arquivo: `041_fornecedores.sql`. Requer 033 e 037 e `eh_admin()/eh_equipe()`. In
 - Testada em PG 18 local (aplicada 2x; sem marcados = igual a antes; marcado some do mapa/pendentes/corrigir e volta ao desmarcar; vendedor lê e não escreve; anon nada).
 - Rollback: reaplicar as funções da 033/037 e `drop table public.solidcon_fornecedores; drop function public.solidcon_041_fornecedor_carimbar();`.
 
-## 042 — WhatsApp (fila/log + agendamento) — NÃO aplicada
+## 042 — WhatsApp (fila/log + agendamento) — APLICADA em 2026-11-17
 
 Arquivo: `042_whatsapp.sql`. Requer `eh_admin()`, 033 e **041** (`solidcon_rota_posicoes`). Idempotente, `lock_timeout 5s`. Passo a passo completo em `integracao/whatsapp/LEIAME.md`.
 

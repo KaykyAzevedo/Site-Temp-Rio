@@ -1,5 +1,5 @@
 -- 042: rotinas de WhatsApp (relatório de contas a receber, rota dos entregadores, alertas) — fila/log + agendamento.
--- NAO APLICADA. Instalacao manual no SQL Editor (papel postgres). Idempotente: pode rodar de novo.
+-- APLICADA em 2026-11-17 (pg_net ativado; 4 rotinas desligadas em simulacao; cron whatsapp-rotinas */15 e whatsapp-limpeza criados; anon sem grant). Idempotente.
 -- Requer eh_admin() (014), 033 e 041 (solidcon_rota_posicoes: posicao dos clientes da rota). Le 030/035/039/040 se existirem.
 -- NADA de segredo ou telefone neste arquivo (repositorio publico):
 --   * telefones: tabela whatsapp_destinatarios, preenchida pelo painel (aba WhatsApp);
