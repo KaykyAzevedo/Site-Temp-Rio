@@ -1,7 +1,9 @@
 // Edge Function whatsapp-rotinas — rotinas de WhatsApp (contas a receber, rota dos entregadores, alertas).
 //
 // Chamadas aceitas (POST):
-//   1) pg_cron a cada 15 min (migração 042): header x-cron-token = secret CRON_TOKEN; body {"acao":"agendado"}.
+//   1) pg_cron a cada 15 min (migração 042): header x-cron-token = segredo 'whatsapp_cron_token' do Vault; body {"acao":"agendado"}.
+//      Validação (cronAutorizado): pelo banco, rpc whatsapp_043_cron_ok (043) — o token fica SÓ no Vault, ninguém copia.
+//      Compatibilidade: se o secret CRON_TOKEN existir, vale a comparação local (como antes).
 //      Decide o que está no horário (São Paulo), reserva (rotina, dia) no banco (nunca 2x no mesmo dia), monta e
 //      envia (modo 'real') ou só registra (modo 'simulacao'). Tudo vai para whatsapp_envios.
 //   2) Painel, admin logado (Authorization: Bearer <JWT do usuário>): {"acao":"previa","rotina":"receber_diario"}.
@@ -10,7 +12,7 @@
 // Deploy SEM verificação de JWT do gateway (o cron não manda JWT; a função autentica sozinha):
 //   supabase functions deploy whatsapp-rotinas --no-verify-jwt
 // Secrets (Dashboard > Edge Functions > Secrets, nunca no repositório):
-//   CRON_TOKEN (obrigatório, ≥ 32 caracteres, igual ao segredo 'whatsapp_cron_token' do Vault),
+//   CRON_TOKEN (DESCONTINUADO/opcional: sem ele a validação é pelo Vault via 043; se existir, ≥ 32 e igual ao do Vault),
 //   WHATSAPP_TOKEN, WHATSAPP_PHONE_NUMBER_ID (só para o modo real), opcionais WHATSAPP_GRAPH_VERSION, PAINEL_URL.
 // SUPABASE_URL / SUPABASE_ANON_KEY / SUPABASE_SERVICE_ROLE_KEY já existem no ambiente das Edge Functions.
 
@@ -146,6 +148,17 @@ async function previa(jwt: string, rotina: string, agora: Date) {
   }
 }
 
+// x-cron-token: com o secret CRON_TOKEN (legado) compara aqui; sem ele pergunta ao banco (043, só true/false).
+// Nunca registra o token (nem em erro: a mensagem do PostgREST não ecoa parâmetros, e só logamos ela encurtada).
+async function cronAutorizado(token: string): Promise<boolean> {
+  const legado = Deno.env.get('CRON_TOKEN');
+  if (legado) return legado.length >= 32 && iguais(token, legado);
+  if (token.length < 32 || token.length > 512) return false;
+  const { data, error } = await sbServico().rpc('whatsapp_043_cron_ok', { p_token: token });
+  if (error) { console.error('[whatsapp] validação do cron pelo Vault falhou (043 aplicada?):', curto(error.message, 120)); return false; }
+  return data === true;
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
   if (req.method !== 'POST') return resp(405, { erro: 'use POST' });
@@ -155,8 +168,7 @@ Deno.serve(async (req) => {
   const agora = new Date();
   const tokenCron = req.headers.get('x-cron-token');
   if (tokenCron !== null) {
-    const esperado = Deno.env.get('CRON_TOKEN') ?? '';
-    if (esperado.length < 32 || !iguais(tokenCron, esperado)) return resp(401, { erro: 'não autorizado' });
+    if (!(await cronAutorizado(tokenCron))) return resp(401, { erro: 'não autorizado' });
     if (corpo.acao !== 'agendado') return resp(400, { erro: 'ação inválida' });
     try { return resp(200, await agendado(agora)); }
     catch (e) { console.error('[whatsapp] agendado:', curto(e, 160)); return resp(500, { erro: 'falha no agendamento' }); }

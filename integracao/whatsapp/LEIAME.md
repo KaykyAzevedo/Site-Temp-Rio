@@ -47,7 +47,7 @@ Arquivos:
 ### 1. Banco (Supabase, SQL Editor) — pode ser feito já, continua tudo em simulação
 
 1. Em **Database → Extensions**, ative **pg_cron** e **pg_net**. O Vault já vem ativo nos projetos atuais.
-2. Rode a **041** (se ainda não rodou) e depois a **042**.
+2. Rode a **041** (se ainda não rodou), depois a **042** e a **043**.
    - Se aparecer o aviso "pg_cron/pg_net nao instalados", ative as extensões e rode a 042 de novo. Ela pode ser repetida.
 3. Crie os 2 segredos do agendamento no Vault, trocando os valores:
    ```sql
@@ -55,7 +55,7 @@ Arquivos:
    select vault.create_secret('COLE-AQUI-UM-TOKEN-ALEATORIO-DE-64-CARACTERES', 'whatsapp_cron_token');
    ```
    - Para gerar o token no PowerShell: `-join ((1..32) | % { '{0:x2}' -f (Get-Random -Max 256) })`
-   - Guarde o token: ele vai também no passo 2.3.
+   - Melhor ainda: gere o token **dentro do banco**, sem copiar nada: `select vault.create_secret(encode(extensions.gen_random_bytes(32), 'hex'), 'whatsapp_cron_token');`. Com a 043, ninguém precisa ver o token.
 4. Confira o agendamento: `select jobname, schedule from cron.job;` deve mostrar `whatsapp-rotinas` (a cada 15 min) e `whatsapp-limpeza` (diário).
 
 ### 2. Edge Function (Supabase CLI) — continua em simulação
@@ -66,7 +66,7 @@ Arquivos:
    supabase functions deploy whatsapp-rotinas --no-verify-jwt --project-ref SEU-PROJETO
    ```
 3. Secrets da função (Dashboard → Edge Functions → Secrets, ou `supabase secrets set`):
-   - `CRON_TOKEN`: o **mesmo** token do Vault, com no mínimo 32 caracteres.
+   - `CRON_TOKEN`: **descontinuado, não crie.** Com a migração **043** aplicada, a função confere o token do cron direto no Vault (`whatsapp_043_cron_ok`, que só responde sim/não). O token fica **só** no banco e ninguém precisa copiá-lo. Se um `CRON_TOKEN` antigo existir, ele ainda vale, mas tem de ser igual ao do Vault; o recomendado é apagá-lo.
    - `PAINEL_URL`: endereço do site, sem barra no fim (ex.: `https://www.seusite.com.br`). Serve para o link do painel nas mensagens e para o CORS.
 4. No painel, aba **WhatsApp**:
    - cadastre o Márcio e o chefe, marcando o consentimento só depois de eles concordarem;
