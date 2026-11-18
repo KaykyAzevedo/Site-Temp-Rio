@@ -1273,12 +1273,16 @@
     }
     // Mapa efetivo { cd_pedido: 'YYYY-MM-DD' }: junta o salvo no banco (st.plano) com o rascunho da sessão (st.rascSemana).
     // Valor null no rascunho significa "Voltar à sugestão" para um pedido que estava salvo.
-    function planoEfetivo() {
-        var m = {}, k, d;
+    // Quando semIni é informada, um rascunho de semana ANTERIOR a semIni não sobrescreve um dia já salvo em semIni.
+    function planoEfetivo(semIni) {
+        var m = {}, k, r, d, s;
         for (k in st.plano) if (Object.prototype.hasOwnProperty.call(st.plano, k) && st.plano[k]) m[k] = st.plano[k];
         for (k in st.rascSemana) {
             if (!Object.prototype.hasOwnProperty.call(st.rascSemana, k)) continue;
-            d = diaDeRasc(st.rascSemana[k]);
+            r = st.rascSemana[k];
+            d = diaDeRasc(r);
+            s = semanaDeRasc(k, r);
+            if (semIni && s && s < semIni && m[k] && m[k] >= semIni) continue;
             if (d === null) delete m[k];
             else if (d) m[k] = d;
         }
@@ -1301,9 +1305,9 @@
         }
         return out.sort();
     }
-    function limparRascunhoDaSemana(ini, cdsExtras) {
+    function limparRascunhoDaSemana(ini) {
         Object.keys(st.rascSemana).forEach(function (k) {
-            if (semanaDeRasc(k, st.rascSemana[k]) === ini || (cdsExtras && cdsExtras[k])) delete st.rascSemana[k];
+            if (semanaDeRasc(k, st.rascSemana[k]) === ini) delete st.rascSemana[k];
         });
     }
     function temSalvoSemana(sem) {
@@ -1360,6 +1364,7 @@
         }
         var rot = 'Dia da semana para o pedido ' + cd + ' de ' + nome;
         var temDia = dias.some(function (d) { return d.dia === x.dia; });
+        var atualVal = temDia ? x.dia : '';
         var ops = (!temDia ? '<option value="" selected>Escolher dia…</option>' : '') +
             dias.map(function (d) {
                 var r = cap(DIAS_ROTULO[diaSemana(d.dia)] || d.nome) + ' ' + dataBr(d.dia);
@@ -1367,7 +1372,7 @@
             }).join('') +
             (x.origemDia === 'salvo' ? '<option value="sugestao">Voltar à sugestão</option>' : '');
         return '<label class="rota-veic rota-sem-veic no-print"><span class="sr-only">' + esc(rot) + '</span>' +
-            '<select class="adm-input rota-sem-sel" data-rota-sem-dia="' + esc(cd) + '" aria-label="' + esc(rot) + '"' + (st.semSalvando ? ' disabled aria-busy="true"' : '') + '>' +
+            '<select class="adm-input rota-sem-sel" data-rota-sem-dia="' + esc(cd) + '" data-rota-sem-atual="' + esc(atualVal) + '" aria-label="' + esc(rot) + '"' + (st.semSalvando ? ' disabled aria-busy="true"' : '') + '>' +
             ops + '</select></label>';
     }
     function htmlLinhaPedidoSemana(x, n, eta, dias) {
@@ -1564,18 +1569,18 @@
         if (!podeEditar() || st.semSalvando) return;
         var cd = Number(sel.getAttribute('data-rota-sem-dia'));
         var val = sel.value || '';
+        var valAtual = sel.getAttribute('data-rota-sem-atual') || '';
         if (!cd) return;
         var semIni = semanaAlvo();
         var rAnt = st.rascSemana[cd];
         var semAnt = rAnt ? semanaDeRasc(cd, rAnt) : null;
         if (rAnt && semAnt && semAnt !== semIni) {
-            var diaAnt = diaDeRasc(rAnt) || st.plano[cd] || '';
             perguntarEscopoMarcacao({
                 texto: 'O pedido #' + cd + ' tem alteração não salva na semana de seg ' + dataBr(semAnt) + '. Aplicar a mudança nesta semana e descartar o rascunho de ' + dataBr(semAnt) + '?',
                 soSempre: true,
                 rotuloSempre: 'Mover para esta semana',
                 aoEscolher: function () { aplicarDiaSemana(cd, val, semIni); },
-                aoCancelar: function () { sel.value = diaAnt && semAnt === semIni ? diaAnt : ''; sel.focus(); }
+                aoCancelar: function () { sel.value = valAtual; sel.focus(); }
             });
             return;
         }
@@ -1627,7 +1632,7 @@
                     if ((st.plano[k] >= ini && st.plano[k] <= fim) || cdsSalvos[k]) delete st.plano[k];
                 });
                 itens.forEach(function (it) { st.plano[it.cd_pedido] = it.dia; });
-                limparRascunhoDaSemana(ini, cdsSalvos);
+                limparRascunhoDaSemana(ini);
                 st.msgSemana = limpar
                     ? 'Plano salvo da semana removido (voltou à sugestão automática).'
                     : 'Plano da semana salvo (' + NUM.format(itens.length) + (itens.length === 1 ? ' pedido).' : ' pedidos).');
@@ -1762,7 +1767,7 @@
         var semIni = semanaAlvo();
         var sem = st.v2 && st.vista === 'semana'
             ? planejarSemana(st.pedidos, st.clientes, semIni, { cfg: st.cfg, padroes: st.excecoes, porPedido: st.porPedido, regras: st.regras,
-                ignorados: st.ign045 ? st.ignorados : {}, plano: planoEfetivo() })
+                ignorados: st.ign045 ? st.ignorados : {}, plano: planoEfetivo(semIni) })
             : null;
         var motivoSem = pl.hoje.feriado ? 'feriado' : 'domingo';
         var nFora = st.v2 && st.ign045 && atual.ignorados ? atual.ignorados.length : 0;
