@@ -37,14 +37,26 @@
         catch (e) { return 'R$ ' + v.toFixed(2).replace('.', ','); }
     }
     function plural(n, um, varios) { return n + ' ' + (n === 1 ? um : varios); }
+    // Texto bem formado: surrogate isolado que já venha do banco vira U+FFFD (toWellFormed: Deno, Node 20+, navegadores
+    // atuais; sem ela, segue como veio).
+    function bemFormado(s) { s = String(s == null ? '' : s); return typeof s.toWellFormed === 'function' ? s.toWellFormed() : s; }
+    // Corte em até n unidades UTF-16 (o .length que a Meta e os limites contam) SEM separar um emoji/caractere fora do
+    // BMP: se o corte cairia entre o surrogate alto e o baixo, recua 1 (o resultado fica com n-1, dentro do limite).
+    function corte(s, n) {
+        if (n <= 0) return '';
+        if (s.length <= n) return s;
+        var c = s.charCodeAt(n - 1);
+        return s.slice(0, c >= 0xD800 && c <= 0xDBFF ? n - 1 : n);
+    }
+    // Corta para caber em max COM a reticência ('…' = 1 unidade): no máximo max-1 do texto + '…'.
+    function encurtar(t, max) { return t.length > max ? corte(t, max - 1).trim() + '…' : t; }
     // Parâmetro de template da Meta: sem quebra de linha/tab, sem 4+ espaços seguidos, tamanho limitado.
     function param(s, max) {
-        var t = String(s == null ? '' : s).replace(/[\r\n\t]+/g, ' · ').replace(/ {2,}/g, ' ').trim();
-        var m = max || WA.PARAM_MAX;
-        if (t.length > m) t = t.slice(0, m - 1).trim() + '…';
+        var t = bemFormado(s).replace(/[\r\n\t]+/g, ' · ').replace(/ {2,}/g, ' ').trim();
+        t = encurtar(t, max || WA.PARAM_MAX);
         return t || '-';
     }
-    function nomeCurto(s, max) { var t = String(s || '').replace(/\s+/g, ' ').trim(); max = max || 40; return t.length > max ? t.slice(0, max - 1).trim() + '…' : t; }
+    function nomeCurto(s, max) { return encurtar(bemFormado(s || '').replace(/\s+/g, ' ').trim(), max || 40); }
     function horaMin(valor) {
         var d = valor instanceof Date ? valor : new Date(valor);
         if (isNaN(d.getTime())) return null;
@@ -224,12 +236,22 @@
 
     // ===================== templates (texto EXATO cadastrado na Meta — igual a integracao/whatsapp/LEIAME.md) =====================
     // A prévia e o log mostram a renderização destes textos com os parâmetros: é exatamente o que a Meta entrega.
+    // Regras da Meta para o corpo (erro 2388293 = poucas palavras para tantas variáveis): não começa nem termina com
+    // {{n}}; dois {{n}} nunca lado a lado (só espaço/pontuação entre eles); pelo menos 3 palavras fixas por {{n}};
+    // no máximo 1 linha em branco seguida; renderizado <= 1024. Conferido em supabase/tests/whatsapp-templates.test.js.
     var MODELOS = {
-        relatorio_diario: 'Contas a receber — {{1}}\nVencido: {{2}}\nVence hoje: {{3}}\nPróximos 7 dias: {{4}}\nMaiores vencidos: {{5}}\n{{6}}\nPainel: {{7}}\nMensagem automática do Temp Rio.',
-        rota_do_dia: 'Rota {{1}} de {{2}} ({{3}}): {{4}}\nMapa: {{5}}\nMensagem automática do Temp Rio.',
-        alertas_operacao: 'Alertas de {{1}}: {{2}}\nPainel: {{3}}\nMensagem automática do Temp Rio.'
+        relatorio_diario: 'Resumo das contas a receber de {{1}}.\nTotal vencido em aberto: {{2}}.\nTotal que vence hoje: {{3}}.\nTotal a vencer nos próximos 7 dias: {{4}}.\nMaiores valores vencidos por cliente: {{5}}.\nDados do ERP: {{6}}.\nMais detalhes no painel: {{7}}\nMensagem automática do Temp Rio.',
+        rota_do_dia: 'Rota do dia do veículo {{1}}, saída de {{2}}.\nTrecho desta mensagem: {{3}}.\nParadas em ordem de entrega: {{4}}\nMapa ou painel deste trecho: {{5}}\nMensagem automática do Temp Rio.',
+        alertas_operacao: 'Alertas da operação do Temp Rio em {{1}}.\nPontos que precisam de atenção: {{2}}\nConfira os detalhes no painel: {{3}}\nMensagem automática do Temp Rio.'
     };
     WA.CORPO_MAX = 1024;   // limite do corpo do template na Meta (texto fixo + parâmetros)
+    // Orçamento de caracteres por parâmetro ({{1}}, {{2}}, ...): texto fixo + soma dos limites <= CORPO_MAX no PIOR caso
+    // (fixo: relatorio 236, rota 153, alertas 134). parte() aplica estes limites a todo parâmetro (corte com '…').
+    WA.LIMITES = {
+        relatorio_diario: [25, 140, 60, 60, 300, 60, 140],
+        rota_do_dia: [20, 25, 40, 480, 300],
+        alertas_operacao: [25, 750, 110]
+    };
     function renderizar(parte) {
         return MODELOS[parte.modelo].replace(/\{\{(\d+)\}\}/g, function (_, n) { return parte.params[Number(n) - 1]; });
     }
@@ -244,14 +266,17 @@
     WA.CORPO_LOG_MAX = 6000;
     var MARCA_RESUMO = '[histórico resumido]';
     function corpoLog(s) {
-        s = String(s == null ? '' : s);
-        return s.length <= WA.CORPO_LOG_MAX ? s : s.slice(0, WA.CORPO_LOG_MAX - MARCA_RESUMO.length - 1) + '\n' + MARCA_RESUMO;
+        s = bemFormado(s);
+        return s.length <= WA.CORPO_LOG_MAX ? s : corte(s, WA.CORPO_LOG_MAX - MARCA_RESUMO.length - 1) + '\n' + MARCA_RESUMO;
     }
     function linhasDeLog(msg) {
         if (!msg || !msg.partes || !msg.partes.length) return [{ parte: null, partes: null, corpo: msg && msg.texto ? corpoLog(msg.texto) : null }];
         return msg.partes.map(function (p, i) { return { parte: i + 1, partes: msg.partes.length, corpo: corpoLog(renderizar(p)) }; });
     }
-    function parte(modelo, template, params) { return { modelo: modelo, template: template || modelo, params: params }; }
+    function parte(modelo, template, params) {
+        var lim = WA.LIMITES[modelo] || [];
+        return { modelo: modelo, template: template || modelo, params: params.map(function (v, i) { return param(v, lim[i]); }) };
+    }
     // Empacota itens inteiros (nunca corta um item no meio) em grupos de até maxItens e maxChars (juntos com sep).
     function empacotar(itens, maxItens, maxChars, sep) {
         var grupos = [], g = [], tam = 0;
@@ -298,7 +323,8 @@
                 return (i + 1) + ') ' + nm + ' ' + brl(c.v) + ' (' + c.dias + 'd)';
             });
         var cliTxt = plural(nCli, 'cliente', 'clientes') + (venc.semDoc ? ' + ' + plural(venc.semDoc, 'parcela', 'parcelas') + ' de pessoa física/sem documento' : '');
-        var dadosTxt = d.coletado ? 'Dados do ERP de ' + core.dataBr(core.diaSP(d.coletado)) + ' ' + horaMin(d.coletado) : 'Sem coleta do ERP registrada';
+        // {{6}} entra em "Dados do ERP: {{6}}." -> "coleta de 16/11 06:00" / "ATENÇÃO, coleta antiga de 14/11 05:50".
+        var quando = d.coletado ? core.dataBr(core.diaSP(d.coletado)) + ' ' + horaMin(d.coletado) : null;
         var velho = !d.coletado || (new Date(agora).getTime() - new Date(d.coletado).getTime()) > 26 * 36e5;
         var partes = [parte('relatorio_diario', opts.template, [
             param(dataLonga(hoje), 40),
@@ -306,7 +332,7 @@
             param(brl(hojeV.v) + ' (' + plural(hojeV.n, 'parcela', 'parcelas') + ')', 60),
             param(brl(prox.v) + ' (' + plural(prox.n, 'parcela', 'parcelas') + ')', 60),
             param(top.length ? top.join('; ') : 'nenhum', 350),
-            param((velho ? 'ATENÇÃO: ' : '') + dadosTxt + '.', 80),
+            param(!quando ? 'ATENÇÃO, nenhuma coleta registrada' : (velho ? 'ATENÇÃO, coleta antiga de ' : 'coleta de ') + quando, 60),
             param(linkPainel(opts.painelUrl, 'site') || 'abra o painel', 150)])];
         return { texto: textoDe(partes), partes: partes, resumo: { vencido: venc.v, parcelasVencidas: venc.n, clientes: nCli, hoje: hojeV.v, prox7: prox.v } };
     }
@@ -325,7 +351,7 @@
         return (sp.tipo === 'cnpj' ? 'cliente' : nomeNeutro(sp.tipo)) + ' (pedido ' + sp.pedidos[0].p.cd_pedido + ')';
     }
     // Uma parada = um item inteiro (nunca cortado): "n) nome — bairro — caixas", no máximo ITEM_MAX caracteres.
-    var ITEM_MAX = 115, LISTA_MAX = 480;
+    var ITEM_MAX = 115, LISTA_MAX = WA.LIMITES.rota_do_dia[3];
     // v2 (044): "n) ~HH:MM nome — bairro — caixas — recebe 08:00–11:00". A hora prevista vem logo depois do número e a
     // janela por último: se o item passar de ITEM_MAX, o corte pega a janela, nunca a hora nem as caixas.
     // CD do CEASA (última parada do caminhão): UM item com quantos clientes e o total de caixas da carga.
@@ -369,7 +395,7 @@
         links.forEach(function (lk) {
             var itens = comLink.slice(lk.de - 1, lk.ate).map(function (sp, i) { return itemParada(sp, lk.de + i, v2); });
             partes.push(comParadas(parte('rota_do_dia', opts.template, [param(rotulo, 20), param(dataLonga(hoje), 40),
-                param('paradas ' + lk.de + (lk.ate > lk.de ? '–' + lk.ate : '') + ' de ' + total, 40), param(itens.join('; '), LISTA_MAX), param(lk.url, 300)]), itens.length));
+                param((lk.ate > lk.de ? 'paradas ' + lk.de + '–' + lk.ate : 'parada ' + lk.de) + ' de ' + total, 40), param(itens.join('; '), LISTA_MAX), param(lk.url, 300)]), itens.length));
         });
         // Sem posição: mesmos lotes (até 4 paradas e LISTA_MAX caracteres), sem cortar parada.
         var ini = comLink.length + 1, n = ini;
@@ -479,7 +505,8 @@
         coletarReceber: coletarReceber, coletarRota: coletarRota, coletarAlertas: coletarAlertas,
         montarReceber: montarReceber, montarRota: montarRota, montarAlertas: montarAlertas, gerar: gerar,
         filtrarDestinatarios: filtrarDestinatarios, papelPermitido: papelPermitido, PAPEIS: PAPEIS, MODELOS: MODELOS, renderizar: renderizar,
-        empacotar: empacotar, COLETORES: COLETORES, linkPainel: linkPainel, linhasDeLog: linhasDeLog, corpoLog: corpoLog, MARCA_RESUMO: MARCA_RESUMO };
+        empacotar: empacotar, COLETORES: COLETORES, linkPainel: linkPainel, linhasDeLog: linhasDeLog, corpoLog: corpoLog, MARCA_RESUMO: MARCA_RESUMO,
+        nomeCurto: nomeCurto, corte: corte };
     raiz.TempRioWhatsCore = WhatsCore;
     if (typeof module !== 'undefined' && module.exports) module.exports = WhatsCore;
 })(typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : this));

@@ -83,31 +83,60 @@ Arquivos:
    - Anote o **Phone number ID**. Não é o número de telefone: é um código de dígitos que aparece em *WhatsApp → API Setup*.
 3. Faça a **verificação da empresa** (Business Verification) se a Meta pedir, para sair dos limites iniciais de envio.
 4. Crie os **templates** em *WhatsApp Manager → Message templates*. Use a categoria **Utility**, idioma **Portuguese (BR) / pt_BR** e exatamente estes nomes e textos:
+   Regras da Meta para o corpo (sem elas a Meta recusa com o erro 2388293, "muitas variáveis para a extensão"):
+   - não começar nem terminar com `{{n}}`;
+   - dois `{{n}}` nunca lado a lado, separados só por espaço ou pontuação;
+   - pelo menos 3 palavras fixas para cada `{{n}}`;
+   - no máximo 1 linha em branco seguida;
+   - corpo final (texto fixo + parâmetros) com até 1024 caracteres. O código corta cada `{{n}}` no limite dele para caber no pior caso.
+
+   Os textos abaixo são os mesmos do código (`supabase/functions/_shared/whatsapp-core.js`, MODELOS): a prévia e o histórico mostram exatamente o que a Meta entrega. Os exemplos são fictícios e servem para o campo de exemplo de cada `{{n}}` na Meta.
    - **`relatorio_diario`**
      ```
-     Contas a receber — {{1}}
-     Vencido: {{2}}
-     Vence hoje: {{3}}
-     Próximos 7 dias: {{4}}
-     Maiores vencidos: {{5}}
-     {{6}}
-     Painel: {{7}}
+     Resumo das contas a receber de {{1}}.
+     Total vencido em aberto: {{2}}.
+     Total que vence hoje: {{3}}.
+     Total a vencer nos próximos 7 dias: {{4}}.
+     Maiores valores vencidos por cliente: {{5}}.
+     Dados do ERP: {{6}}.
+     Mais detalhes no painel: {{7}}
      Mensagem automática do Temp Rio.
      ```
+     Exemplos:
+     - `{{1}}` segunda, 16/11
+     - `{{2}}` R$ 5.020,00 (4 parcelas, 2 clientes + 1 parcela de pessoa física/sem documento)
+     - `{{3}}` R$ 123,45 (1 parcela)
+     - `{{4}}` R$ 100,00 (1 parcela)
+     - `{{5}}` 1) Mercado Exemplo Ltda R$ 3.000,00 (1d); 2) Padaria Modelo R$ 2.000,00 (15d); 3) cliente pessoa física R$ 20,00 (46d)
+     - `{{6}}` coleta de 16/11 05:50 (com a coleta velha: "ATENÇÃO, coleta antiga de 14/11 05:50")
+     - `{{7}}` https://www.exemplo.com.br/admin.html#site
    - **`rota_do_dia`**: usado pela S10 e pelo caminhão. Cada mensagem leva até 4 paradas.
      ```
-     Rota {{1}} de {{2}} ({{3}}): {{4}}
-     Mapa: {{5}}
+     Rota do dia do veículo {{1}}, saída de {{2}}.
+     Trecho desta mensagem: {{3}}.
+     Paradas em ordem de entrega: {{4}}
+     Mapa ou painel deste trecho: {{5}}
      Mensagem automática do Temp Rio.
      ```
+     Exemplos:
+     - `{{1}}` S10 (ou "Caminhão CEASA")
+     - `{{2}}` segunda, 16/11
+     - `{{3}}` paradas 1–3 de 3 (outros casos: "sem posição no mapa, 5–6 de 6", "parada 7 de 7 (última)", "aviso")
+     - `{{4}}` 1) ~07:04 Mercado Exemplo — Barra da Tijuca — 5 cx24; 2) ~07:24 Hortifruti Ficticio — Jacarepaguá — 3 cx24; 3) ~07:57 Padaria Modelo — Recreio dos Bandeiran… — 2 cx24 + 1 cx48 — recebe 08:00–11:00
+     - `{{5}}` https://www.google.com/maps/dir/?api=1&travelmode=driving&origin=-23.00300,-43.32640&destination=-22.99900,-43.38640&waypoints=-22.99100%2C-43.33040%7C-22.96300%2C-43.32640 (sem posição: "sem link (cliente sem posição no mapa)"; no aviso de rota longa: o link do painel)
    - **`alertas_operacao`**
      ```
-     Alertas de {{1}}: {{2}}
-     Painel: {{3}}
+     Alertas da operação do Temp Rio em {{1}}.
+     Pontos que precisam de atenção: {{2}}
+     Confira os detalhes no painel: {{3}}
      Mensagem automática do Temp Rio.
      ```
+     Exemplos:
+     - `{{1}}` segunda, 16/11 06:10
+     - `{{2}}` 📦 1 pedido do ERP parado há mais de 7 dias: #48120 Padaria Modelo (13d) | 🔌 Coleta do ERP parada: pedidos (há 70 min, última 16/11 05:00)
+     - `{{3}}` https://www.exemplo.com.br/admin.html
 
-   A Meta pede exemplos para cada `{{n}}`: use a "Gerar prévia" do painel para copiar exemplos realistas. Se usar outro nome de template, troque no campo "Template na Meta" da rotina, no painel.
+   Se usar outro nome de template, troque no campo "Template na Meta" da rotina, no painel.
 5. Crie um **token permanente**:
    - *Business Settings → Users → System users*: crie um usuário de sistema e atribua o app e a conta do WhatsApp;
    - gere o token com as permissões `whatsapp_business_messaging` e `whatsapp_business_management`, sem expiração.
