@@ -39,6 +39,7 @@
     var dataBr = core.dataBr;
     var nomeDia = core.nomeDia;
     var proximaSaida = core.proximaSaida;
+    var situacaoPrazo = core.situacaoPrazo;
     var proximaSemana = core.proximaSemana;
     var segundaDe = core.segundaDe;
     var km = core.km;
@@ -293,10 +294,13 @@
     var SIT = { vencido: ['Vencido', 'rota-sit-vencido', 'fa-triangle-exclamation'], hoje: ['Vence hoje', 'rota-sit-hoje', 'fa-hourglass-end'],
                 amanha: ['Vence na próxima saída', 'rota-sit-amanha', 'fa-hourglass-half'], ok: ['No prazo', 'rota-sit-ok', 'fa-check'], sem_data: ['Sem data', 'rota-sit-ok', 'fa-question'] };
     // soProblema=true (v3): só mostra selo quando há problema (vencido, vence hoje ou sem data); no prazo fica limpo.
-    function seloPrazo(x, soProblema) {
+    // US-2: listas auxiliares da semana vêm sem x.situacao no core — calcula em relação a diaRef e nunca trata undefined como "No prazo".
+    function seloPrazo(x, soProblema, diaRef, veicRef) {
         if (!x) return '';
-        if (soProblema && (x.situacao === 'ok' || x.situacao === 'amanha')) return '';
-        var s = SIT[x.situacao] || SIT.ok;
+        var sit = x.situacao || (diaRef && situacaoPrazo ? situacaoPrazo(x.prazo, diaRef, st.cfg, veicRef || x.veiculo) : null);
+        if (!sit || !SIT[sit]) return x.prazo && !soProblema ? '<span class="rota-selo">Prazo · ' + esc(dataBr(x.prazo)) + '</span>' : '';
+        if (soProblema && (sit === 'ok' || sit === 'amanha')) return '';
+        var s = SIT[sit];
         return '<span class="rota-sit ' + s[1] + '"><i class="fa-solid ' + s[2] + '" aria-hidden="true"></i>' + s[0] + (x.prazo ? ' · ' + dataBr(x.prazo) : '') + '</span>';
     }
     // '530 potes avulsos (≈22 cx24)': potes de produto com código próprio, em caixas de 24 equivalentes.
@@ -524,7 +528,7 @@
             pl.aguardando.map(function (x) {
                 var nome = nomeCliente(x.c, x);
                 var local = x.c ? [x.c.bairro, x.c.cidade].filter(Boolean).join(' · ') : '';
-                var prazoRuim = seloPrazo(x, true);
+                var prazoRuim = seloPrazo(x, true, pl.dia);
                 return '<tr><td><div class="rota-cli-linha"><strong>' + esc(nome) + '</strong>' + botaoRegraCliente(x.p.documento, nome) + '</div>' +
                     '<div class="rota-sub">' + esc(local || 'sem bairro') + ' · #' + esc(x.p.cd_pedido) + (prazoRuim ? ' ' + prazoRuim : '') + '</div>' +
                     htmlRegrasCliente(x.p.documento, nome, true, true) + '</td>' +
@@ -1259,19 +1263,49 @@
         var ini = st.semanaIni && /^\d{4}-\d{2}-\d{2}$/.test(st.semanaIni) ? segundaDe(st.semanaIni) : null;
         return ini || proximaSemana(hojeSP());
     }
+    function diaDeRasc(r) { return r && typeof r === 'object' ? r.dia : r; }
+    function semanaDeRasc(cd, r) {
+        if (r && typeof r === 'object' && r.semana) return r.semana;
+        var d = diaDeRasc(r);
+        if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) return segundaDe(d);
+        if (st.plano[cd] && /^\d{4}-\d{2}-\d{2}$/.test(st.plano[cd])) return segundaDe(st.plano[cd]);
+        return semanaAlvo();
+    }
     // Mapa efetivo { cd_pedido: 'YYYY-MM-DD' }: junta o salvo no banco (st.plano) com o rascunho da sessão (st.rascSemana).
     // Valor null no rascunho significa "Voltar à sugestão" para um pedido que estava salvo.
     function planoEfetivo() {
-        var m = {}, k;
+        var m = {}, k, d;
         for (k in st.plano) if (Object.prototype.hasOwnProperty.call(st.plano, k) && st.plano[k]) m[k] = st.plano[k];
         for (k in st.rascSemana) {
             if (!Object.prototype.hasOwnProperty.call(st.rascSemana, k)) continue;
-            if (st.rascSemana[k] === null) delete m[k];
-            else if (st.rascSemana[k]) m[k] = st.rascSemana[k];
+            d = diaDeRasc(st.rascSemana[k]);
+            if (d === null) delete m[k];
+            else if (d) m[k] = d;
         }
         return m;
     }
-    function temRascunhoSemana() { return Object.keys(st.rascSemana).length > 0; }
+    function temRascunhoSemana(ini) {
+        var k;
+        for (k in st.rascSemana) {
+            if (!Object.prototype.hasOwnProperty.call(st.rascSemana, k)) continue;
+            if (!ini || semanaDeRasc(k, st.rascSemana[k]) === ini) return true;
+        }
+        return false;
+    }
+    function outrasSemanasComRascunho(ini) {
+        var vistas = {}, out = [], k, s;
+        for (k in st.rascSemana) {
+            if (!Object.prototype.hasOwnProperty.call(st.rascSemana, k)) continue;
+            s = semanaDeRasc(k, st.rascSemana[k]);
+            if (s && s !== ini && !vistas[s]) { vistas[s] = true; out.push(s); }
+        }
+        return out.sort();
+    }
+    function limparRascunhoDaSemana(ini, cdsExtras) {
+        Object.keys(st.rascSemana).forEach(function (k) {
+            if (semanaDeRasc(k, st.rascSemana[k]) === ini || (cdsExtras && cdsExtras[k])) delete st.rascSemana[k];
+        });
+    }
     function temSalvoSemana(sem) {
         if (!sem || !st.pln046) return false;
         var ini = sem.inicio, fim = somaDias(ini, 5), k;
@@ -1319,6 +1353,10 @@
             return x.origemDia === 'salvo'
                 ? '<span class="rota-selo rota-selo-plano"><i class="fa-solid fa-thumbtack" aria-hidden="true"></i>fixado</span>'
                 : '';
+        }
+        // US-4: semana sem nenhum dia de saída (recesso/feriados): não exibe seletor sem opções válidas.
+        if (!dias || !dias.length) {
+            return '<span class="rota-sub">Sem dias com saída · mude de semana</span>';
         }
         var rot = 'Dia da semana para o pedido ' + cd + ' de ' + nome;
         var temDia = dias.some(function (d) { return d.dia === x.dia; });
@@ -1397,7 +1435,7 @@
             (itens.length ? '<ol class="rota-sem-lista">' + itens.join('') + '</ol>' : '<p class="adm-vazio-linha"><span class="adm-vazio-titulo">Nenhum pedido neste dia</span></p>') +
             '</section>';
     }
-    function htmlListaExtraSemana(id, icone, titulo, sub, lista, dias, motivoFn) {
+    function htmlListaExtraSemana(id, icone, titulo, sub, lista, dias, diaRef, motivoFn) {
         if (!lista || !lista.length) return '';
         return '<section class="adm-card p-4 mb-4 rota-cartao" id="' + esc(id) + '" aria-labelledby="' + esc(id) + '-tit">' +
             '<div class="rota-cab rota-cab-compacto"><p class="rota-tit" id="' + esc(id) + '-tit"><i class="fa-solid ' + icone + '" aria-hidden="true"></i> ' + esc(titulo) + ' (' + NUM.format(lista.length) + ')</p>' +
@@ -1405,8 +1443,10 @@
             '<div class="overflow-x-auto"><table class="adm-tabela rota-tabela"><thead><tr><th>Cliente</th><th>Caixas</th><th>Situação</th><th>Dia na semana</th></tr></thead><tbody>' +
             lista.map(function (x) {
                 var nome = nomeCliente(x.c, x);
-                var prazoRuim = seloPrazo(x, true);
-                return '<tr' + (x.estoura ? ' class="rota-linha-ruim"' : '') + '><td><div class="rota-cli-linha"><strong>' + esc(nome) + '</strong>' + botaoRegraCliente(x.p.documento, nome) + '</div>' +
+                var ref = x.dia || diaRef;
+                var prazoRuim = seloPrazo(x, true, ref, 's10');
+                var ruim = !!(x.estoura || (x.prazo && ref && x.prazo < ref));
+                return '<tr' + (ruim ? ' class="rota-linha-ruim"' : '') + '><td><div class="rota-cli-linha"><strong>' + esc(nome) + '</strong>' + botaoRegraCliente(x.p.documento, nome) + '</div>' +
                     '<div class="rota-sub">' + esc((x.c && x.c.bairro) || 'sem bairro') + ' · #' + esc(x.p.cd_pedido) + (prazoRuim ? ' ' + prazoRuim : '') + '</div>' +
                     htmlRegrasCliente(x.p.documento, nome, true, true) + '</td>' +
                     '<td data-rotulo="Caixas">' + txtCaixas(x.v) + '</td>' +
@@ -1416,9 +1456,11 @@
     }
     function htmlSemana(sem) {
         var padraoIni = proximaSemana(hojeSP());
+        var diaRefSem = (sem.dias[0] && sem.dias[0].dia) || sem.inicio;
         var capCx = Math.round(ROTA.CAPACIDADE_S10 / ROTA.VOLUME_CX24);
         var totCx = Math.round((sem.resumo.volume || 0) / ROTA.VOLUME_CX24);
-        var temRasc = temRascunhoSemana();
+        var temRasc = temRascunhoSemana(sem.inicio);
+        var outrasRasc = outrasSemanasComRascunho(sem.inicio);
         var temSalvo = temSalvoSemana(sem);
         var temPedidosDias = sem.dias.some(function (d) { return d.pedidos.length > 0; });
         var feriadosTxt = sem.semSaida.length
@@ -1436,6 +1478,18 @@
         } else if (!st.pln046) {
             botoesAcao.push('<span class="rota-sub"><i class="fa-solid fa-circle-info" aria-hidden="true"></i> Sugestão (sem migração 046: visualização sem salvar no banco)</span>');
         }
+        var avisoOutras = '';
+        if (podeEditar() && outrasRasc.length) {
+            avisoOutras = '<div class="rota-sem-barra mt-2 no-print" id="rota-sem-aviso-outras" role="status">' +
+                '<span class="rota-sub"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> Há alterações não salvas em outra semana (' +
+                outrasRasc.map(function (s) { return 'seg ' + esc(dataBr(s)); }).join(', ') + '): elas são mantidas ao salvar ou limpar esta semana.</span>' +
+                '<div class="rota-sem-acoes">' +
+                outrasRasc.map(function (s) {
+                    return '<button type="button" class="adm-botao-fantasma" data-rota-ir-sem="' + esc(s) + '"' + (st.semSalvando ? ' disabled' : '') + '>Ir para ' + esc(dataBr(s)) + '</button>';
+                }).join('') +
+                '<button type="button" class="adm-botao-fantasma" id="rota-sem-desc-outras"' + (st.semSalvando ? ' disabled' : '') + '>Descartar rascunho de outra semana</button>' +
+                '</div></div>';
+        }
         var cdResumo = '';
         if (sem.cd && sem.cd.total && sem.cd.total.pedidos) {
             var tCd = sem.cd.total;
@@ -1444,14 +1498,17 @@
                 '<div class="rota-kpis"><span><strong>' + NUM.format(tCd.clientes) + '</strong> ' + (tCd.clientes === 1 ? 'cliente' : 'clientes') + ' · <strong>' + NUM.format(tCd.pedidos) + '</strong> ' + (tCd.pedidos === 1 ? 'pedido' : 'pedidos') + ' · <strong>' + NUM.format(tCd.caixas) + ' cx</strong> (' + esc(brl(tCd.valorCentavos)) + ')</span>' +
                 '<span class="rota-sub">O caminhão do CEASA sai seg–sáb na rota do dia</span></div></div></section>';
         }
+        var subSobra = !sem.dias.length
+            ? 'Esta semana não tem dias com saída da S10 (feriados/datas sem saída) — use Anterior ou Seguinte para planejar outra semana.'
+            : 'Não couberam nos ' + NUM.format(capCx) + ' cx24/dia ou o cliente não recebe de segunda a sexta — escolha um dia para incluir.';
         return '<section class="adm-card p-4 mb-4 rota-cartao" id="rota-semana-topo" aria-labelledby="rota-sem-topo-tit">' +
                 '<div class="rota-cab rota-cab-compacto">' +
                     '<div><p class="rota-tit" id="rota-sem-topo-tit"><i class="fa-solid fa-calendar-week" aria-hidden="true"></i> Plano da semana da S10 · seg ' + esc(dataBr(sem.inicio)) + ' a sex ' + esc(dataBr(sem.fim)) + '</p>' +
                     '<p class="rota-sub">Referência para organizar a semana por região e capacidade (' + NUM.format(capCx) + ' cx24/dia). Todo dia a rota do dia é calculada separadamente.</p></div>' +
                     '<div class="rota-sem-nav no-print">' +
-                        '<button type="button" class="adm-botao-fantasma" id="rota-sem-ant" title="Semana anterior"><i class="fa-solid fa-chevron-left" aria-hidden="true"></i> Anterior</button>' +
-                        (sem.inicio !== padraoIni ? '<button type="button" class="adm-botao-fantasma" id="rota-sem-padrao">Próxima semana (' + esc(dataBr(padraoIni)) + ')</button>' : '') +
-                        '<button type="button" class="adm-botao-fantasma" id="rota-sem-prox" title="Semana seguinte">Seguinte <i class="fa-solid fa-chevron-right" aria-hidden="true"></i></button>' +
+                        '<button type="button" class="adm-botao-fantasma" id="rota-sem-ant" title="Semana anterior"' + (st.semSalvando ? ' disabled' : '') + '><i class="fa-solid fa-chevron-left" aria-hidden="true"></i> Anterior</button>' +
+                        (sem.inicio !== padraoIni ? '<button type="button" class="adm-botao-fantasma" id="rota-sem-padrao"' + (st.semSalvando ? ' disabled' : '') + '>Próxima semana (' + esc(dataBr(padraoIni)) + ')</button>' : '') +
+                        '<button type="button" class="adm-botao-fantasma" id="rota-sem-prox" title="Semana seguinte"' + (st.semSalvando ? ' disabled' : '') + '>Seguinte <i class="fa-solid fa-chevron-right" aria-hidden="true"></i></button>' +
                     '</div>' +
                 '</div>' +
                 '<div class="rota-sem-barra">' +
@@ -1465,53 +1522,94 @@
                     '</div>' +
                     '<div class="rota-sem-acoes no-print">' + botoesAcao.join('') + '</div>' +
                 '</div>' +
+                avisoOutras +
                 (st.msgSemana ? '<p class="rota-sub mt-2" id="rota-sem-msg" role="status"><i class="fa-solid fa-circle-info" aria-hidden="true"></i> ' + esc(st.msgSemana) + '</p>' : '') +
             '</section>' +
             (sem.dias.length
                 ? '<div class="rota-semana-grade mb-4">' + sem.dias.map(function (d) { return htmlCardDiaSemana(d, sem); }).join('') + '</div>'
-                : '<div class="adm-card p-6 mb-4"><p class="adm-vazio-linha"><span class="adm-vazio-titulo">Nenhum dia útil com saída da S10 nesta semana</span></p></div>') +
+                : '<div class="adm-card p-6 mb-4"><p class="adm-vazio-linha"><span class="adm-vazio-titulo">Nenhum dia útil com saída da S10 nesta semana — use Anterior ou Seguinte para mudar de semana</span></p></div>') +
             htmlListaExtraSemana('rota-sem-sobra', 'fa-clock-rotate-left', 'Fora dos dias da semana / Sobra',
-                'Não couberam nos 300 cx24/dia ou o cliente não recebe de segunda a sexta — escolha um dia para incluir.',
-                sem.sobra, sem.dias, function (x) {
+                subSobra,
+                sem.sobra, sem.dias, diaRefSem, function (x) {
+                    if (x.motivoSobra === 'sem_saida_semana') return '<span class="rota-selo rota-selo-fechado"><i class="fa-solid fa-calendar-xmark" aria-hidden="true"></i>sem saída da S10 nesta semana · mude de semana</span>';
                     if (x.motivoSobra === 'dia_fechado') return '<span class="rota-selo rota-selo-fechado"><i class="fa-solid fa-calendar-xmark" aria-hidden="true"></i>não recebe nos dias com saída</span>';
                     return '<span class="rota-selo"><i class="fa-solid fa-box" aria-hidden="true"></i>excede capacidade (' + NUM.format(capCx) + ' cx24)' + (x.diaSugerido ? ' · setor de ' + esc(DIAS_ROTULO[diaSemana(x.diaSugerido)] + ' ' + dataBr(x.diaSugerido)) : '') + '</span>';
                 }) +
             htmlListaExtraSemana('rota-sem-sempos', 'fa-location-dot', 'Sem posição no mapa',
                 'Pedidos S10 sem coordenadas nem bairro localizado — escolha o dia da semana manualmente.',
-                sem.semPosicao, sem.dias, function () {
+                sem.semPosicao, sem.dias, diaRefSem, function () {
                     return '<span class="rota-selo"><i class="fa-solid fa-circle-question" aria-hidden="true"></i>sem coordenadas para setorizar</span>';
                 }) +
             htmlListaExtraSemana('rota-sem-outra', 'fa-calendar-days', 'Salvos em outra semana',
                 'Pedidos S10 com dia fixado fora desta semana.',
-                sem.foraDaSemana, sem.dias, function (x) {
+                sem.foraDaSemana, sem.dias, diaRefSem, function (x) {
                     return seloPlanoDia({ planoDia: x.dia });
                 }) +
-            htmlAguardando({ aguardando: sem.faltaMarcar }) +
+            htmlAguardando({ aguardando: sem.faltaMarcar, dia: diaRefSem }) +
             cdResumo;
+    }
+    function aplicarDiaSemana(cd, val, semIni) {
+        if (val === 'sugestao' || !val) {
+            if (st.plano[cd]) st.rascSemana[cd] = { dia: null, semana: st.plano[cd] ? segundaDe(st.plano[cd]) : semIni };
+            else delete st.rascSemana[cd];
+        } else if (/^\d{4}-\d{2}-\d{2}$/.test(val)) {
+            if (st.plano[cd] === val) delete st.rascSemana[cd];
+            else st.rascSemana[cd] = { dia: val, semana: segundaDe(val) };
+        }
+        st.msgSemana = '';
+        st.focoSem = 'ped:' + cd;
+        desenhar();
     }
     function aoMudarDiaSemana(sel) {
         if (!podeEditar() || st.semSalvando) return;
         var cd = Number(sel.getAttribute('data-rota-sem-dia'));
         var val = sel.value || '';
         if (!cd) return;
-        if (val === 'sugestao' || !val) {
-            if (st.plano[cd]) st.rascSemana[cd] = null;
-            else delete st.rascSemana[cd];
-        } else if (/^\d{4}-\d{2}-\d{2}$/.test(val)) {
-            if (st.plano[cd] === val) delete st.rascSemana[cd];
-            else st.rascSemana[cd] = val;
+        var semIni = semanaAlvo();
+        var rAnt = st.rascSemana[cd];
+        var semAnt = rAnt ? semanaDeRasc(cd, rAnt) : null;
+        if (rAnt && semAnt && semAnt !== semIni) {
+            var diaAnt = diaDeRasc(rAnt) || st.plano[cd] || '';
+            perguntarEscopoMarcacao({
+                texto: 'O pedido #' + cd + ' tem alteração não salva na semana de seg ' + dataBr(semAnt) + '. Aplicar a mudança nesta semana e descartar o rascunho de ' + dataBr(semAnt) + '?',
+                soSempre: true,
+                rotuloSempre: 'Mover para esta semana',
+                aoEscolher: function () { aplicarDiaSemana(cd, val, semIni); },
+                aoCancelar: function () { sel.value = diaAnt && semAnt === semIni ? diaAnt : ''; sel.focus(); }
+            });
+            return;
         }
-        st.msgSemana = '';
-        st.focoSem = 'ped:' + cd;
-        desenhar();
+        aplicarDiaSemana(cd, val, semIni);
+    }
+    function descartarOutrasSemanas(semIni, btnOrigem) {
+        var outras = outrasSemanasComRascunho(semIni);
+        if (!outras.length || st.semSalvando) return;
+        perguntarEscopoMarcacao({
+            texto: 'Descartar as alterações não salvas de outra(s) semana(s) (' + outras.map(function (s) { return 'seg ' + dataBr(s); }).join(', ') + ')?',
+            soSempre: true,
+            rotuloSempre: 'Descartar rascunho',
+            aoEscolher: function () {
+                Object.keys(st.rascSemana).forEach(function (k) {
+                    if (semanaDeRasc(k, st.rascSemana[k]) !== semIni) delete st.rascSemana[k];
+                });
+                st.msgSemana = 'Rascunho de outra semana descartado.';
+                st.focoSem = '#rota-sem-salvar';
+                desenhar();
+            },
+            aoCancelar: function () { if (btnOrigem && btnOrigem.isConnected) btnOrigem.focus(); }
+        });
     }
     function salvarSemana(sem, limpar) {
         if (!podeSalvarSemana() || st.semSalvando || !sem) return;
         var ini = sem.inicio, fim = somaDias(ini, 5);
-        var itens = [];
+        var itens = [], cdsSalvos = {};
         if (!limpar) {
             sem.dias.forEach(function (d) {
-                d.pedidos.forEach(function (x) { itens.push({ cd_pedido: Number(x.p.cd_pedido), dia: d.dia }); });
+                d.pedidos.forEach(function (x) {
+                    var cd = Number(x.p.cd_pedido);
+                    itens.push({ cd_pedido: cd, dia: d.dia });
+                    cdsSalvos[cd] = true;
+                });
             });
         }
         st.semSalvando = true;
@@ -1526,15 +1624,15 @@
                     : 'Não foi possível salvar a semana: ' + String(r.error.message || r.error);
             } else {
                 Object.keys(st.plano).forEach(function (k) {
-                    if (st.plano[k] >= ini && st.plano[k] <= fim) delete st.plano[k];
+                    if ((st.plano[k] >= ini && st.plano[k] <= fim) || cdsSalvos[k]) delete st.plano[k];
                 });
                 itens.forEach(function (it) { st.plano[it.cd_pedido] = it.dia; });
-                st.rascSemana = {};
+                limparRascunhoDaSemana(ini, cdsSalvos);
                 st.msgSemana = limpar
                     ? 'Plano salvo da semana removido (voltou à sugestão automática).'
                     : 'Plano da semana salvo (' + NUM.format(itens.length) + (itens.length === 1 ? ' pedido).' : ' pedidos).');
             }
-            st.focoSem = limpar ? '#rota-sem-salvar' : '#rota-sem-salvar';
+            st.focoSem = '#rota-sem-salvar';
             aposMutacao();
             desenhar();
         }, function (e) {
@@ -1786,13 +1884,24 @@
             s.addEventListener('change', function () { aoMudarDiaSemana(s); });
         });
         var bSemAnt = alvo.querySelector('#rota-sem-ant');
-        if (bSemAnt) bSemAnt.addEventListener('click', function () { st.semanaIni = somaDias(semanaAlvo(), -7); st.msgSemana = ''; st.focoSem = '#rota-sem-ant'; desenhar(); });
+        if (bSemAnt) bSemAnt.addEventListener('click', function () { if (st.semSalvando) return; st.semanaIni = somaDias(semanaAlvo(), -7); st.msgSemana = ''; st.focoSem = '#rota-sem-ant'; desenhar(); });
         var bSemProx = alvo.querySelector('#rota-sem-prox');
-        if (bSemProx) bSemProx.addEventListener('click', function () { st.semanaIni = somaDias(semanaAlvo(), 7); st.msgSemana = ''; st.focoSem = '#rota-sem-prox'; desenhar(); });
+        if (bSemProx) bSemProx.addEventListener('click', function () { if (st.semSalvando) return; st.semanaIni = somaDias(semanaAlvo(), 7); st.msgSemana = ''; st.focoSem = '#rota-sem-prox'; desenhar(); });
         var bSemPad = alvo.querySelector('#rota-sem-padrao');
-        if (bSemPad) bSemPad.addEventListener('click', function () { st.semanaIni = null; st.msgSemana = ''; st.focoSem = '#rota-sem-prox'; desenhar(); });
+        if (bSemPad) bSemPad.addEventListener('click', function () { if (st.semSalvando) return; st.semanaIni = null; st.msgSemana = ''; st.focoSem = '#rota-sem-prox'; desenhar(); });
+        alvo.querySelectorAll('[data-rota-ir-sem]').forEach(function (b) {
+            b.addEventListener('click', function () { if (st.semSalvando) return; st.semanaIni = b.getAttribute('data-rota-ir-sem'); st.msgSemana = ''; st.focoSem = '#rota-sem-topo-tit'; desenhar(); });
+        });
+        var bSemDescOutras = alvo.querySelector('#rota-sem-desc-outras');
+        if (bSemDescOutras && sem) bSemDescOutras.addEventListener('click', function () { descartarOutrasSemanas(sem.inicio, bSemDescOutras); });
         var bSemSug = alvo.querySelector('#rota-sem-sugestao');
-        if (bSemSug) bSemSug.addEventListener('click', function () { st.rascSemana = {}; st.msgSemana = 'Alterações não salvas descartadas.'; st.focoSem = '#rota-sem-salvar'; desenhar(); });
+        if (bSemSug && sem) bSemSug.addEventListener('click', function () {
+            if (st.semSalvando) return;
+            limparRascunhoDaSemana(sem.inicio);
+            st.msgSemana = 'Alterações não salvas desta semana descartadas.';
+            st.focoSem = '#rota-sem-salvar';
+            desenhar();
+        });
         var bSemSalvar = alvo.querySelector('#rota-sem-salvar');
         if (bSemSalvar && sem) bSemSalvar.addEventListener('click', function () { salvarSemana(sem, false); });
         var bSemLimpar = alvo.querySelector('#rota-sem-limpar');
@@ -1810,18 +1919,20 @@
             var alvoTirar = alvo.querySelector('[data-rota-tirar="' + st.focoTirar + '"]');
             st.focoTirar = null;
             st.focoPedido = null;
+            st.focoSem = null;
             st.focoFora = false;
             if (alvoTirar) alvoTirar.focus();
         } else if (st.focoRegra) {
             var alvoReg = alvo.querySelector('[data-rota-regra="' + st.focoRegra + '"]');
             st.focoRegra = null;
             st.focoPedido = null;
+            st.focoSem = null;
             st.focoFora = false;
             if (alvoReg) alvoReg.focus();
         } else if (st.focoPedido) {
             var alvoPed = alvo.querySelector('[data-rota-marcar="' + st.focoPedido + '"]');
             st.focoPedido = null;
-            if (alvoPed) { alvoPed.focus(); st.focoFora = false; }
+            if (alvoPed) { alvoPed.focus(); st.focoFora = false; st.focoSem = null; }
         }
         if (st.focoSem) {
             var fsSem = st.focoSem;
