@@ -79,8 +79,25 @@
     }
 
     // ===================== coleta (supabase-js) =====================
-    function erroDe(r) { return r && r.error ? new Error(String(r.error.message || r.error)) : null; }
-    function ausente(err) { return !!err && /PGRST205|42P01|does not exist|Could not find the table/i.test(String(err.code || '') + ' ' + String(err.message || '')); }
+    // Mantém o código do PostgREST/Postgres no Error (ausente() decide pelo código, não pela frase).
+    function erroDe(r) {
+        if (!r || !r.error) return null;
+        var e = new Error(String(r.error.message || r.error));
+        if (r.error.code) e.code = String(r.error.code);
+        return e;
+    }
+    // TABELA ausente (migração não aplicada): SÓ PGRST205 (PostgREST, "Could not find the table") ou 42P01 (Postgres,
+    // relation does not exist). Coluna ausente (42703 / PGRST204), função, permissão, timeout etc. NÃO são ausência:
+    // viram erro. Erro SEM código também é erro (a frase sozinha não basta). Com 'tabela': se a mensagem nomeia outra
+    // tabela/relação (ex.: uma relação usada por política), também não.
+    function ausente(err, tabela) {
+        if (!err) return false;
+        var cod = String(err.code || ''), msg = String(err.message || '');
+        if (cod !== 'PGRST205' && cod !== '42P01') return false;
+        if (!tabela) return true;
+        var m = msg.match(/table '([^']+)'/i) || msg.match(/relation "([^"]+)"/i);
+        return !m || m[1] === tabela || m[1] === 'public.' + tabela;
+    }
     // Pagina de 1000 em 1000 (limite padrão do PostgREST) até max linhas.
     function todas(fabrica, max) {
         var out = [], passo = 1000; max = max || 20000;
@@ -116,21 +133,34 @@
         });
     }
 
-    // Mesmas fontes da aba Rotas (js/admin-rota.js): pedidos pendentes, cadastro, posição atual, config (040) e exceções.
+    // Mesmas fontes da aba Rotas (js/admin-rota.js): pedidos pendentes, cadastro, posição atual, config (040), padrões
+    // por cliente e (044) escolha por pedido + regras de entrega. Tabela da 044 AUSENTE = modo automático de antes (v1).
+    // Tabela da 044 presente com ERRO de leitura (timeout, permissão...) = erro ("falha ao montar" no log): nunca manda
+    // uma rota montada sem as marcações (seria diferente da aba Rotas), igual ao que já vale para rota_config.
     function coletarRota(sb) {
+        function opcional(tabela, fab) { return todas(fab, 20000).catch(function (e) { if (ausente(e, tabela)) return null; throw e; }); }
         return Promise.all([
             todas(function () { return sb.from('solidcon_pedidos_erp').select('*').in('etapa', ROTA.ETAPAS_PENDENTES).order('cd_pedido', { ascending: true }); }, 5000),
             sb.from('solidcon_pedidos_erp_sync').select('coletado_em').eq('status', 'ok').order('coletado_em', { ascending: false }).limit(1),
             sb.from('rota_config').select('*').eq('id', 1).limit(1),
             todas(function () { return sb.from('rota_cliente_veiculo').select('documento,veiculo').order('documento', { ascending: true }); }, 20000)
-                .catch(function (e) { if (ausente(e)) return []; throw e; })
+                .catch(function (e) { if (ausente(e, 'rota_cliente_veiculo')) return []; throw e; }),
+            opcional('rota_pedido_veiculo', function () { return sb.from('rota_pedido_veiculo').select('cd_pedido,veiculo').order('cd_pedido', { ascending: true }); }),
+            opcional('rota_cliente_regras', function () { return sb.from('rota_cliente_regras').select('documento,janela_inicio,janela_fim,dias_sem_receber,prioridade,observacao').order('documento', { ascending: true }); })
         ]).then(function (rs) {
             var pedidos = rs[0], docs = {};
             pedidos.forEach(function (p) { if (p.documento) docs[p.documento] = true; });
-            if (rs[2] && rs[2].error && !ausente(rs[2].error)) throw erroDe(rs[2]);
+            if (rs[2] && rs[2].error && !ausente(rs[2].error, 'rota_config')) throw erroDe(rs[2]);
+            var cfgAusente = !!(rs[2] && rs[2].error);
             var cfgLinha = rs[2] && !rs[2].error && rs[2].data && rs[2].data[0] ? rs[2].data[0] : null;
             var excecoes = {};
             rs[3].forEach(function (e) { if (e.veiculo === 'caminhao' || e.veiculo === 's10') excecoes[e.documento] = e.veiculo; });
+            // v2 só com a 044 inteira (mesma detecção da aba Rotas: config + as duas tabelas novas).
+            var v2 = !cfgAusente && rs[4] !== null && rs[5] !== null, porPedido = {}, regras = {};
+            if (v2) {
+                rs[4].forEach(function (p) { if (p.veiculo === 'caminhao' || p.veiculo === 's10') porPedido[p.cd_pedido] = p.veiculo; });
+                regras = core.regrasDe(rs[5]);
+            }
             var sy = rs[1] && !rs[1].error && rs[1].data && rs[1].data[0];
             return emBlocos(Object.keys(docs), 500, function (b) {
                 return sb.rpc('solidcon_rota_posicoes', { p_documentos: b }).then(function (r) { if (r.error) throw erroDe(r); return r.data || []; });
@@ -141,7 +171,9 @@
                     cli[c.documento] = { nome: c.nome, logradouro: c.logradouro, numero: c.numero, complemento: c.complemento, bairro: c.bairro,
                                          cidade: c.cidade, pos: tem ? [lat, lng] : null, precisao: tem ? c.precisao : null };
                 });
-                return { pedidos: pedidos, clientes: cli, cfg: core.cfgDe(cfgLinha || core.CFG_PADRAO), excecoes: excecoes, coletado: sy ? sy.coletado_em : null };
+                var d = { pedidos: pedidos, clientes: cli, cfg: core.cfgDe(cfgLinha || core.CFG_PADRAO), excecoes: excecoes, coletado: sy ? sy.coletado_em : null };
+                if (v2) { d.v2 = true; d.porPedido = porPedido; d.regras = regras; }
+                return d;
             });
         });
     }
@@ -294,45 +326,86 @@
     }
     // Uma parada = um item inteiro (nunca cortado): "n) nome — bairro — caixas", no máximo ITEM_MAX caracteres.
     var ITEM_MAX = 115, LISTA_MAX = 480;
-    function itemParada(sp, n) { return nomeCurto(n + ') ' + nomeParada(sp) + ' — ' + (sp.bairro ? nomeCurto(sp.bairro, 22) : 's/ bairro') + ' — ' + caixasTxt(sp), ITEM_MAX); }
+    // v2 (044): "n) ~HH:MM nome — bairro — caixas — recebe 08:00–11:00". A hora prevista vem logo depois do número e a
+    // janela por último: se o item passar de ITEM_MAX, o corte pega a janela, nunca a hora nem as caixas.
+    // CD do CEASA (última parada do caminhão): UM item com quantos clientes e o total de caixas da carga.
+    function itemParada(sp, n, v2) {
+        if (!v2) return nomeCurto(n + ') ' + nomeParada(sp) + ' — ' + (sp.bairro ? nomeCurto(sp.bairro, 22) : 's/ bairro') + ' — ' + caixasTxt(sp), ITEM_MAX);
+        var hora = sp.eta ? '~' + sp.eta + ' ' : '';
+        if (sp.cd) return nomeCurto(n + ') ' + hora + ROTA.CEASA_CD_NOME + ' — ' + plural(sp.carga ? sp.carga.length : 0, 'cliente', 'clientes') + ' — ' + caixasTxt(sp), ITEM_MAX);
+        return nomeCurto(n + ') ' + hora + nomeParada(sp) + ' — ' + (sp.bairro ? nomeCurto(sp.bairro, 22) : 's/ bairro') + ' — ' + caixasTxt(sp) +
+            (sp.janela ? ' — recebe ' + sp.janela : ''), ITEM_MAX);
+    }
     // Quantas paradas a parte leva: guardado na estrutura (o texto não é reanalisado). Não vai para a Meta.
     function comParadas(pt, n) { pt.paradas = n; return pt; }
     function montarRota(d, veiculo, agora, opts) {
         opts = opts || {};
         var hoje = core.diaSP(agora), rotulo = veiculo === 'caminhao' ? 'Caminhão CEASA' : 'S10';
-        var pl = core.planejar(d.pedidos, d.clientes, hoje, { cfg: d.cfg, excecoes: d.excecoes });
+        // v2 (044 legível, ver coletarRota): veículo só pela marcação (pedido > padrão do cliente); sem marcação o pedido
+        // fica FORA (aguardando, como na aba Rotas); regras de entrega (dia fechado, janela, prioridade) e hora prevista.
+        var v2 = !!d.v2;
+        var pl = v2
+            ? core.planejar(d.pedidos, d.clientes, hoje, { cfg: d.cfg, excecoes: d.excecoes, marcacao: true, padroes: d.excecoes, porPedido: d.porPedido || {}, regras: d.regras || {} })
+            : core.planejar(d.pedidos, d.clientes, hoje, { cfg: d.cfg, excecoes: d.excecoes });
         if (pl.semSaida) return { vazio: 'sem saída hoje (' + (pl.feriado ? 'feriado' : 'domingo/dia sem saída') + ')', texto: 'Rota ' + rotulo + ' — ' + dataLonga(hoje) + ': sem saída hoje.', partes: [] };
         var r = veiculo === 'caminhao' ? pl.caminhao : pl.s10;
         var total = r.paradas.length + r.semPosicao.length;
-        if (!total) return { vazio: 'sem paradas', texto: 'Rota ' + rotulo + ' — ' + dataLonga(hoje) + ': nenhuma parada.', partes: [] };
+        if (!total) {
+            // v2: diz quantos pedidos esperam marcação (o histórico mostra por que a rota saiu vazia).
+            var ag = v2 && pl.aguardando.length ? ' (' + plural(pl.aguardando.length, 'pedido aguardando', 'pedidos aguardando') + ' marcação CEASA/S10)' : '';
+            return { vazio: 'sem paradas' + ag, texto: 'Rota ' + rotulo + ' — ' + dataLonga(hoje) + ': nenhuma parada' + ag + '.', partes: [] };
+        }
         var partes = [];
+        // v2 caminhão com CD E porta sem posição: o CD continua a ÚLTIMA parada. Portas com posição (links), depois as sem
+        // posição, e o CD numa mensagem própria no fim, com link da última porta com posição (ou da sede) até o CD.
+        // Sem porta sem posição: o CD vai no último link, como qualquer parada — EXCETO se a rota vai passar de PARTES_MAX
+        // (aí o corte poderia levar o CD): separa também, e o CD fica fora do corte, depois do aviso.
+        // (sem porta sem posição, partes = só os links: ceil(paradas / LOTE_PARADAS)).
+        var cdSep = !!(v2 && veiculo === 'caminhao' && r.cd &&
+            (r.semPosicao.length > 0 || Math.ceil(r.paradas.length / WA.LOTE_PARADAS) > WA.PARTES_MAX));
+        var comLink = cdSep ? r.paradas.slice(0, -1) : r.paradas;
         // Com posição: 1 mensagem por link do Maps (até 4 paradas: 3 intermediárias + destino).
-        var links = core.linksGoogleMaps(r.paradas, WA.LOTE_PARADAS);
+        var links = core.linksGoogleMaps(comLink, WA.LOTE_PARADAS);
         links.forEach(function (lk) {
-            var itens = r.paradas.slice(lk.de - 1, lk.ate).map(function (sp, i) { return itemParada(sp, lk.de + i); });
+            var itens = comLink.slice(lk.de - 1, lk.ate).map(function (sp, i) { return itemParada(sp, lk.de + i, v2); });
             partes.push(comParadas(parte('rota_do_dia', opts.template, [param(rotulo, 20), param(dataLonga(hoje), 40),
                 param('paradas ' + lk.de + (lk.ate > lk.de ? '–' + lk.ate : '') + ' de ' + total, 40), param(itens.join('; '), LISTA_MAX), param(lk.url, 300)]), itens.length));
         });
         // Sem posição: mesmos lotes (até 4 paradas e LISTA_MAX caracteres), sem cortar parada.
-        var ini = r.paradas.length + 1, n = ini;
-        empacotar(r.semPosicao.map(function (sp, i) { return itemParada(sp, ini + i); }), WA.LOTE_PARADAS, LISTA_MAX, '; ').forEach(function (g) {
+        var ini = comLink.length + 1, n = ini;
+        empacotar(r.semPosicao.map(function (sp, i) { return itemParada(sp, ini + i, v2); }), WA.LOTE_PARADAS, LISTA_MAX, '; ').forEach(function (g) {
             var de = n, ate = n + g.length - 1; n = ate + 1;
             partes.push(comParadas(parte('rota_do_dia', opts.template, [param(rotulo, 20), param(dataLonga(hoje), 40),
                 param('sem posição no mapa, ' + de + (ate > de ? '–' + ate : '') + ' de ' + total, 40), param(g.join('; '), LISTA_MAX),
                 param('sem link (cliente sem posição no mapa)', 300)]), g.length));
         });
+        var cdParte = null;
+        if (cdSep) {
+            var ultima = comLink.length ? comLink[comLink.length - 1] : null;
+            var lkCd = ultima ? core.linksGoogleMaps([ultima, r.cd], 1)[1] : core.linksGoogleMaps([r.cd], 1)[0];
+            cdParte = comParadas(parte('rota_do_dia', opts.template, [param(rotulo, 20), param(dataLonga(hoje), 40),
+                param('parada ' + total + ' de ' + total + ' (última)', 40), param(itemParada(r.cd, total, v2), LISTA_MAX), param(lkCd.url, 300)]), 1);
+        }
         // Rota gigante (ex.: milhares de pedidos PF sem posição): limita ANTES do envio, com aviso na última mensagem.
-        var omitidas = 0;
-        if (partes.length > WA.PARTES_MAX) {
-            var fora = partes.splice(WA.PARTES_MAX - 1);
+        // Com o CD separado, ele fica fora do corte e continua sendo a última mensagem (o aviso vem antes dele).
+        var omitidas = 0, maxPartes = WA.PARTES_MAX - (cdParte ? 1 : 0), ultimaNum = total - (cdParte ? 1 : 0);
+        if (partes.length > maxPartes) {
+            var fora = partes.splice(maxPartes - 1);
             fora.forEach(function (x) { omitidas += x.paradas; });   // pela estrutura, nunca pelo texto (nome pode ter '; ')
             partes.push(parte('rota_do_dia', opts.template, [param(rotulo, 20), param(dataLonga(hoje), 40), param('aviso', 40),
                 param('rota longa demais para o WhatsApp: ' + plural(omitidas, 'parada não foi enviada', 'paradas não foram enviadas') +
-                      ' (' + (total - omitidas + 1) + ' a ' + total + '). Veja a rota completa na aba Rotas do painel.', LISTA_MAX),
+                      ' (' + (ultimaNum - omitidas + 1) + ' a ' + ultimaNum + '). Veja a rota completa na aba Rotas do painel.', LISTA_MAX),
                 param(linkPainel(opts.painelUrl, 'rotas') || 'abra o painel', 300)]));
         }
-        return { texto: textoDe(partes), partes: partes,
-                 resumo: { paradas: total, semPosicao: r.semPosicao.length, links: links.length, fica: veiculo === 's10' ? pl.fica.length : 0, omitidas: omitidas } };
+        if (cdParte) partes.push(cdParte);
+        var resumo = { paradas: total, semPosicao: r.semPosicao.length, links: links.length + (cdParte ? 1 : 0), fica: veiculo === 's10' ? pl.fica.length : 0, omitidas: omitidas };
+        if (v2) {   // na v2 o caminhão também pode deixar pedido para depois (cliente que não recebe hoje)
+            resumo.modo = 'marcacao'; resumo.aguardando = pl.aguardando.length;
+            resumo.fica = pl.fica.filter(function (x) { return x.veiculo === veiculo; }).length;
+            resumo.atrasos = r.horario ? r.horario.atrasos : 0;
+            if (veiculo === 'caminhao') resumo.cd = r.cd ? r.cd.total.clientes : 0;
+        }
+        return { texto: textoDe(partes), partes: partes, resumo: resumo };
     }
 
     // alertas_marcio. d = coletarAlertas(...). Sem nada a alertar: vazio (não manda mensagem). SÓ para gestor.

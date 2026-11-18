@@ -621,3 +621,11 @@ o script pré-022. Objetos 019/020 e dados de estoque/eventos permanecem intacto
 - `pedidos.cnpj_digitos` (gerada, indexada), usada por `historico_do_cliente`.
 - anon só tem INSERT em `pedidos`, `leads`, `visitas`, `lista_espera`, `solicitacoes_lgpd`, `consentimentos` e `vitrines`; o site insere sempre com `return=minimal`.
 - `public.vitrines` agora tem definição de referência em `admin/migracoes/base/vitrines.sql` (export de produção).
+
+## 044 — Rotas v2: marcação CEASA/S10 e horários (NÃO APLICADA)
+
+- Quem marca: `pode_marcar_rota()` = admin ou `admins.marca_rota = true` (o dono liga pelo SQL Editor). Vendedor sem a marca só lê.
+- `rota_cliente_veiculo` (040) = padrão do cliente; `rota_pedido_veiculo` = escolha só daquele pedido (vence o padrão; sem FK porque a coleta do ERP reinsere os pedidos; limpeza diária `rota_044_limpar`). Pedido sem nenhuma das duas não entra na rota (o painel mostra a regra automática como sugestão).
+- `rota_cliente_regras`: janela de recebimento, dias sem receber, prioridade, observação (≤ 200). Usada pelo planejador (`supabase/functions/_shared/rota-core.js`) para ordem e horário estimado.
+- `rota_config` + `hora_saida`, `velocidade_kmh`, `minutos_parada`.
+- `rota_044_marcar(cd_pedido, veiculo, escopo)`: uma chamada do painel, INVOKER (RLS vale).

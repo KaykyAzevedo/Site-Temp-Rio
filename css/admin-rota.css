@@ -113,6 +113,55 @@
     background: var(--adm-neutro-fundo-2, var(--adm-neutro-fundo)); border: 1px solid var(--adm-borda); font-size: 0.78rem; font-weight: 700; }
 .rota-chip-x { display: inline-flex; align-items: center; justify-content: center; width: 1.5rem; height: 1.5rem; border-radius: 999px; color: var(--adm-tinta-2); }
 .rota-chip-x:hover, .rota-chip-x:focus-visible { background: var(--adm-ruim-fundo); color: var(--adm-ruim); }
-@media print { body.rota-imprimindo .rota-veic, body.rota-imprimindo .rota-config-resumo, body.rota-imprimindo .rota-dialogo { display: none !important; } }
+@media print { body.rota-imprimindo .rota-veic, body.rota-imprimindo .rota-btn-regra, body.rota-imprimindo .rota-config-resumo, body.rota-imprimindo .rota-dialogo { display: none !important; } }
 /* sr-only próprio (não depende do Tailwind ter gerado a classe) */
 #painel-rotas .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+/* ---------- 044 (Rotas v2): marcação CEASA/S10, horários, regras por cliente e CD CEASA ---------- */
+.rota-cartao-aguardando { border-color: var(--adm-atencao-borda); }
+.rota-marc-item + .rota-marc-item { margin-top: 0.45rem; padding-top: 0.45rem; border-top: 1px dashed var(--adm-borda); }
+.rota-marc-bloco { display: flex; flex-direction: column; align-items: flex-start; gap: 0.25rem; }
+.rota-dica-sug { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.74rem; color: var(--adm-tinta-2); }
+.rota-dica-sug i { color: var(--adm-atencao); }
+.rota-ped-tag { display: inline-block; font-size: 0.72rem; font-weight: 700; color: var(--adm-tinta-3); margin-right: 0.25rem; }
+
+.rota-col-horario { display: flex; flex-direction: column; align-items: flex-start; gap: 0.22rem; min-width: 6.5rem; }
+.rota-eta { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.85rem; color: var(--adm-tinta); white-space: nowrap; }
+.rota-eta i { color: var(--adm-acao); font-size: 0.78rem; }
+
+.rota-regras-cli { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; margin-top: 0.3rem; }
+.rota-selo { display: inline-flex; align-items: center; gap: 0.28rem; padding: 0.1rem 0.48rem; border-radius: 999px; font-size: 0.71rem; font-weight: 700;
+    color: var(--adm-tinta-2); background: var(--adm-neutro-fundo); border: 1px solid var(--adm-borda); white-space: nowrap; }
+.rota-selo i { color: var(--adm-acao); }
+.rota-selo-pri { color: var(--adm-atencao); background: var(--adm-atencao-fundo); border-color: var(--adm-atencao-borda); }
+.rota-selo-pri i { color: var(--adm-atencao); }
+.rota-selo-espera { color: var(--adm-tinta-2); background: var(--adm-neutro-fundo-2, var(--adm-neutro-fundo)); border-color: var(--adm-borda); }
+.rota-selo-fechado { color: var(--adm-atencao); background: var(--adm-atencao-fundo); border-color: var(--adm-atencao-borda); }
+.rota-selo-fechado i { color: var(--adm-atencao); }
+.rota-obs { display: inline-flex; align-items: center; gap: 0.28rem; font-size: 0.74rem; color: var(--adm-tinta-2); background: var(--adm-neutro-fundo);
+    border: 1px dashed var(--adm-borda); border-radius: 0.45rem; padding: 0.1rem 0.45rem; max-width: 26rem; }
+.rota-obs i { color: var(--adm-tinta-3); }
+.rota-btn-regra { display: inline-flex; align-items: center; gap: 0.28rem; padding: 0.12rem 0.5rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700;
+    color: var(--adm-tinta); background: transparent; border: 1px solid var(--adm-borda); cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+.rota-btn-regra i { color: var(--adm-acao); }
+.rota-btn-regra:hover, .rota-btn-regra:focus-visible { border-color: var(--adm-acao); background: var(--adm-neutro-fundo); }
+
+.rota-cd-bloco { border: 1px solid var(--adm-borda); border-radius: 0.75rem; padding: 0.9rem 1rem; background: var(--adm-neutro-fundo); }
+.rota-cd-cab { display: flex; align-items: flex-start; gap: 0.65rem; margin-bottom: 0.75rem; }
+.rota-num-cd { flex-shrink: 0; margin-top: 0.1rem; }
+.rota-cd-total td { border-top: 2px solid var(--adm-borda); background: var(--adm-neutro-fundo-2, rgba(255, 255, 255, 0.04)); }
+
+.rota-dialogo-curto { width: min(30rem, calc(100vw - 2rem)); }
+.rota-dlg-acoes-wrap { flex-wrap: wrap; }
+.rota-dlg-grade3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: 0.65rem; }
+.rota-dlg-grade2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 0.65rem; }
+.rota-dlg-campo { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.8rem; color: var(--adm-tinta-2); }
+.rota-dlg-campo .adm-input { padding: 0.45rem 0.65rem; }
+.rota-dias-grade { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; }
+.rota-dia-check { align-items: center; }
+/* Revisão UI (Sentinela): erro de leitura da v2 visível no topo; botão "Enquadrar rota" no mapa (Leaflet). */
+.rota-banner-erro { border-color: var(--adm-ruim-borda); background: var(--adm-ruim-fundo); }
+.rota-banner-erro i { color: var(--adm-ruim); }
+.rota-reenq { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; background: var(--adm-superficie); color: var(--adm-tinta); cursor: pointer; }
+.rota-reenq:hover, .rota-reenq:focus-visible { color: var(--adm-acao); }
+@media print { body.rota-imprimindo .rota-reenq { display: none !important; } }
