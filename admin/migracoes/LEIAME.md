@@ -1536,3 +1536,35 @@ Arquivo: `044_rota_marcacao_horarios.sql`. Requer 013 (`texto_seguro`), 014 (`eh
 - Testada em PG 18 local (aplicada 2x): admin e vendedor com `marca_rota` marcam; vendedor sem a marca lê e recebe 42501/0 linhas; anon 42501; Márcio não consegue mudar `admins` nem `rota_config`; fluxo padrão × só neste pedido × sempre × desmarcar; janela invertida, dia 7, `<script>`, 201 caracteres e documento inválido recusados; normalização de dias/observação; limpeza apaga só o que deve.
 - Testes do núcleo (Node 24): `node --test supabase/tests/rota-core.test.js` (arquivo explícito; `node --test supabase/tests/` dá MODULE_NOT_FOUND).
 - Rollback: `select cron.unschedule('rota-limpeza');` `drop function public.rota_044_marcar(bigint,text,text), public.rota_044_limpar(); drop table public.rota_pedido_veiculo, public.rota_cliente_regras; drop function public.rota_044_regras_normalizar();` recriar as políticas `rota_040_admin_*` da 040 em `rota_cliente_veiculo`, `drop function public.pode_marcar_rota(); alter table public.admins drop column marca_rota; alter table public.rota_config drop column hora_saida, drop column velocidade_kmh, drop column minutos_parada;`
+
+## 045 — Rotas v3: "Tirar da rota" por pedido — NÃO APLICADA
+
+Arquivo: `045_rota_pedido_ignorado.sql`. Requer 013 (`texto_seguro`), 014 (`eh_equipe`), 035 e **044** (`pode_marcar_rota`). Idempotente, `lock_timeout 5s`. pg_cron opcional (só a limpeza).
+
+- `rota_pedido_ignorado` (`cd_pedido` PK): pedido tirado da rota **até reativar** (apagar a linha = "Voltar para a rota"). `motivo` opcional (≤ 120, `texto_seguro`; o gatilho colapsa espaços e vazio vira NULL), `atualizado_em/por` (gatilho, `auth.uid()`).
+- Pedido ignorado não entra na rota, nem em "Aguardando marcação", nem na mensagem do WhatsApp (`whatsapp-core` lê a tabela; ausente = ninguém ignorado; erro de leitura = "falha ao montar"). Pedido aberto antigo no ERP continua aparecendo até alguém tirar.
+- **Sem FK** para `solidcon_pedidos_erp` (mesmo motivo da 044: a coleta reinsere os pedidos). `rota_045_limpar()` (só service_role; cron `rota-limpeza-ignorados` 06:27 UTC) apaga o que foi tirado há mais de 30 dias **e** já não está pendente no ERP.
+- RLS: SELECT `(select eh_equipe())`; INSERT/UPDATE/DELETE `(select pode_marcar_rota())`; nada de FOR ALL; anon sem grant.
+- Sem a 045 o painel não mostra o botão "Tirar da rota" e nada quebra.
+- Testada em PG 18 local (aplicada 2x; precheck sem a 044 não cria nada): Márcio (`marca_rota`) tira/edita/volta com carimbo; `<script>`, 121 caracteres e `cd_pedido` 0 recusados (23514); vendedor sem a marca lê e recebe 42501/0 linhas; fora da equipe 0 linhas; anon 42501; a linha sobrevive à reinserção do pedido; a limpeza apaga só >30 dias e não pendente.
+- Rollback: `select cron.unschedule('rota-limpeza-ignorados');` `drop table public.rota_pedido_ignorado; drop function public.rota_045_limpar(), public.rota_045_ignorado_normalizar();` (o painel some com o botão sozinho).
+
+### v3 sem migração (código)
+- `rota_config.bairros_caminhao` (040) fica no banco **sem uso**: o caminhão só vai ao CEASA (CD) e a sugestão por bairro saiu. O "Configurar rota" não mostra nem regrava a coluna (o dado não é apagado).
+- Capacidade da S10: 300 cx24 = 2700 de volume (≈ 163 cx48), em `ROTA.CAPACIDADE_S10` (`rota-core.js`).
+
+## 046 — Plano da semana da S10 — NÃO APLICADA
+
+Arquivo: `046_rota_plano_semana.sql`. Requer 014 (`eh_equipe`), 035, 040 (`rota_040_veiculo_carimbar`) e **044** (`pode_marcar_rota`). Idempotente, `lock_timeout 5s`. pg_cron opcional (só a limpeza).
+
+- `rota_plano_semana` (`cd_pedido` PK → `dia`, segunda a sábado; `atualizado_em/por` pelo gatilho da 040). Guarda o plano da semana que o Márcio editou a partir da sugestão (`planejarSemana` no `rota-core.js`).
+- **Só referência** (regra do dono, 2026-11-18): cada dia é uma rota diferente. A rota do dia e o WhatsApp **não** mudam por causa do plano; o painel pode mostrar "planejado p/ qua 25/11" ao lado do pedido (`x.planoDia`).
+- `rota_046_salvar_semana(p_inicio date, p_itens jsonb)` (INVOKER; EXECUTE só `authenticated`): grava a semana inteira de uma vez (apaga o que estava salvo nos dias seg..sáb daquela semana e grava a lista; pedido salvo em outra semana muda para esta). `p_inicio` = segunda; itens `[{"cd_pedido":1,"dia":"2026-11-24"}]` (até 3000, sem repetir, dia na semana, pedido na lista do ERP). Lista vazia = limpa a semana. Retorna quantos ficaram salvos. Erros 42501 / 22023 / P0002.
+- **Sem FK** (a coleta reinsere os pedidos). `rota_046_limpar()` (só service_role; cron `rota-limpeza-plano` 06:31 UTC) apaga dias que já passaram (data de São Paulo).
+- RLS: SELECT `(select eh_equipe())`; INSERT/UPDATE/DELETE `(select pode_marcar_rota())`; nada de FOR ALL; anon sem grant. A função não usa tabela temporária (authenticated pode não ter TEMP).
+- Testada em PG 18 local (aplicada 2x; precheck sem a 044 não cria nada): Márcio salva/move/re-salva/limpa a semana, carimbo; segunda inválida, dia fora da semana, repetido, data inválida, não-array, sem cd e null = 22023; pedido inexistente = P0002; domingo direto = 23514; nada muda após erro; vendedor sem a marca lê e recebe 42501/0 linhas; fora da equipe 0; anon 42501; admin salva; sobrevive à reinserção do pedido; a limpeza apaga só o passado.
+- Rollback: `select cron.unschedule('rota-limpeza-plano');` `drop function public.rota_046_salvar_semana(date, jsonb), public.rota_046_limpar(); drop table public.rota_plano_semana;`
+
+### S10 de segunda a sexta (código, sem migração)
+- Regra do dono (2026-11-18): a S10 **não sai sábado**. `ROTA.DIAS_SEM_SAIDA_S10 = [0, 6]`, `ROTA.DIAS_SEM_SAIDA_CAMINHAO = [0]` (`rota-core.js`). Prazo, próxima saída e situação de cada pedido contam os dias úteis do veículo dele (pedido de sexta na S10 vence na terça). No sábado a rota da S10 fica vazia (pedidos em "fica" com motivo `sem_saida_s10` e a próxima saída da S10) e o WhatsApp `rota_s10` não manda nada.
+- Conferir a linha `rota_s10` de `whatsapp_rotinas`: tirar `sab` de `dias` (o código já não manda no sábado, mas o histórico registraria "sem saída").

@@ -629,3 +629,15 @@ o script pré-022. Objetos 019/020 e dados de estoque/eventos permanecem intacto
 - `rota_cliente_regras`: janela de recebimento, dias sem receber, prioridade, observação (≤ 200). Usada pelo planejador (`supabase/functions/_shared/rota-core.js`) para ordem e horário estimado.
 - `rota_config` + `hora_saida`, `velocidade_kmh`, `minutos_parada`.
 - `rota_044_marcar(cd_pedido, veiculo, escopo)`: uma chamada do painel, INVOKER (RLS vale).
+
+## 045 — Rotas v3: pedidos fora da rota (NÃO APLICADA)
+
+- `rota_pedido_ignorado` (`cd_pedido` PK, `motivo` ≤ 120 opcional, `atualizado_em/por`): pedido "tirado da rota" até alguém voltar. Sem FK (a coleta reinsere os pedidos); limpeza diária `rota_045_limpar` (>30 dias e não pendente).
+- Leitura `eh_equipe()`; escrita `pode_marcar_rota()` (044).
+- `rota_config.bairros_caminhao` (040) continua existindo, sem uso desde a v3 (caminhão só vai ao CD CEASA).
+
+## 046 — Plano da semana da S10 (NÃO APLICADA)
+
+- `rota_plano_semana` (`cd_pedido` PK → `dia` seg..sáb, `atualizado_em/por`): plano da semana editado pelo Márcio. Só referência: não muda a rota do dia nem o WhatsApp.
+- `rota_046_salvar_semana(p_inicio, p_itens)`: grava a semana inteira (INVOKER). Limpeza diária `rota_046_limpar` (dias passados).
+- Leitura `eh_equipe()`; escrita `pode_marcar_rota()` (044).

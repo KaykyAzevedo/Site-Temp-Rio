@@ -5,8 +5,8 @@ O painel monta e (quando ligado) envia pelo WhatsApp:
 | Rotina | O que manda | Padrão |
 |---|---|---|
 | `receber_diario` | Contas a receber: total vencido (parcelas e clientes), vence hoje, próximos 7 dias, 5 maiores vencidos, link do painel | 06:00, seg–sáb |
-| `rota_s10` | Rota do dia da S10: paradas em ordem (nome, bairro, caixas) + links do Google Maps por coordenadas, de 4 em 4 (3 paradas + destino, o limite do app no celular) | 06:00, seg–sáb |
-| `rota_caminhao` | Mesma coisa para o caminhão do CEASA | 06:00, seg–sáb |
+| `rota_s10` | Rota do dia da S10: paradas em ordem (nome, bairro, caixas) + links do Google Maps por coordenadas, de 4 em 4 (3 paradas + destino, o limite do app no celular). Pedido "tirado da rota" no painel (045) não vai. A S10 **não sai sábado**: nesse dia não manda nada. | 06:00, seg–sex |
+| `rota_caminhao` | Caminhão do CEASA: **uma** mensagem com a única parada, o CD CEASA (quantos clientes e o total de caixas; link da sede até o CD). O caminhão não para em bairros no caminho. | 06:00, seg–sáb |
 | `alertas_marcio` | Pedidos do ERP parados há mais de 7 dias, pedidos do site aguardando há mais de 24 h, coleta do ERP parada há mais de 30 min, estoque crítico das últimas 24 h. **Se não houver nada, não manda.** | 07:00, seg–sáb |
 
 Tudo nasce **desligado** e em **simulação**. Em simulação a mensagem é montada com os dados reais e guardada no histórico (aba **WhatsApp** do painel, só admin), mas **nada é enviado**. O envio real só acontece depois dos passos abaixo, feitos pelo dono.

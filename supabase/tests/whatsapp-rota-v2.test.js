@@ -51,7 +51,8 @@ function sbFalso(tabelas, clientes, erros) {
     };
 }
 
-// Cenário base: 4 S10 marcados, 1 sem marcação, 2 no CD do CEASA, 1 porta do caminhão (bairro), 1 que não recebe terça.
+// Cenário base: 4 S10 marcados, 1 sem marcação, 2 boxes do CEASA, 1 cliente de "bairro do caminhão" marcado CEASA (v3: vai
+// para o CD como os outros; bairros_caminhao fica no banco sem uso), 1 que não recebe terça.
 function cenario() {
     const c = {
         [docN(1)]: cli('Mercado Um', 0.010, 0.010), [docN(2)]: cli('Mercado Dois', 0.020, -0.010), [docN(3)]: cli('Mercado Tres', 0.030, 0.020),
@@ -128,16 +129,19 @@ test('S10 v2: só marcados; sem marcação e dia fechado ficam fora; hora previs
     assert.ok(cabe(m));
 });
 
-test('Caminhão v2: porta no caminho e o CD do CEASA como UM item no fim, com clientes e caixas', async () => {
+test('v3 caminhão: SÓ o CD do CEASA, UM item, com clientes e caixas (cliente do bairro do caminhão também vai ao CD)', async () => {
     const { c, tabelas } = cenario();
     const d = await W.coletarRota(sbFalso(tabelas, c));
     const m = W.montarRota(d, 'caminhao', AGORA, {});
     const it = itens(m);
-    assert.equal(m.resumo.paradas, 2);                    // porta + CD
-    assert.equal(m.resumo.cd, 2);
-    assert.match(it[0], /^1\) ~\d\d:\d\d Porta Caminhao — Bairro Do Caminhao — 2 cx24 \+ 1 cx48$/);
-    assert.match(it[1], /^2\) ~\d\d:\d\d CD CEASA — 2 clientes — 4 cx24 \+ 2 cx48$/);
-    assert.ok(!/Box Ficticio/.test(m.texto));             // a carga do CD não lista cliente por cliente
+    assert.equal(m.resumo.paradas, 1);                    // só o CD
+    assert.equal(m.resumo.cd, 3);
+    assert.equal(it.length, 1);
+    assert.match(it[0], /^1\) ~\d\d:\d\d CD CEASA — 3 clientes — 6 cx24 \+ 3 cx48$/);
+    assert.equal(m.partes[0].params[2], 'parada 1 de 1');
+    assert.ok(!/Box Ficticio|Porta Caminhao/.test(m.texto));   // a carga do CD não lista cliente por cliente
+    const o = R.ROTA.ORIGEM;
+    assert.ok(m.partes[0].params[4].includes('origin=' + o[0].toFixed(5) + ',' + o[1].toFixed(5)));
     const url = m.partes[m.partes.length - 1].params[4];
     assert.ok(url.includes('destination=' + CEASA[0].toFixed(5) + ',' + CEASA[1].toFixed(5)), url);
     assert.equal(m.partes.length, 1);
@@ -151,7 +155,7 @@ test('v2: escolha SÓ DESTE PEDIDO tira o pedido da S10 e leva para o CD', async
     const s = W.montarRota(d, 's10', AGORA, {}), k = W.montarRota(d, 'caminhao', AGORA, {});
     assert.ok(!/Mercado Um/.test(s.texto));
     assert.equal(s.resumo.paradas, 3);
-    assert.match(itens(k).pop(), /CD CEASA — 3 clientes/);
+    assert.match(itens(k).pop(), /CD CEASA — 4 clientes/);
 });
 
 test('v2: nada marcado = vazio dizendo quantos aguardam marcação', async () => {
@@ -178,8 +182,9 @@ test('v2 pior caso: 60 paradas, nomes/bairros longos, janelas: ≤ 1024, sem que
     const d = { pedidos, clientes, cfg: cfg({ bairrosCaminhao: ['Bairro Do Caminhao Com Nome Bem Comprido'] }), excecoes: padroes, porPedido: {}, regras, v2: true, coletado: null };
     for (const v of ['s10', 'caminhao']) {
         const m = W.montarRota(d, v, AGORA, {});
-        assert.ok(m.partes.length >= 3, v + ': ' + m.partes.length);
-        if (v === 'caminhao') assert.match(itens(m).filter((x) => /CD CEASA/.test(x)).join(), /^\d+\) ~\d\d:\d\d CD CEASA — 3 clientes — 297 cx24 \+ 297 cx48 \+ 2997 potes$/);
+        assert.ok(m.partes.length >= (v === 's10' ? 3 : 1), v + ': ' + m.partes.length);
+        // v3: caminhão = 1 mensagem, só o CD (20 clientes de "bairro" + 3 boxes)
+        if (v === 'caminhao') { assert.equal(m.partes.length, 1); assert.deepEqual(itens(m).map((x) => x.replace(/~\d\d:\d\d/, '~HH')), ['1) ~HH CD CEASA — 23 clientes — 317 cx24 + 317 cx48 + 3097 potes']); }
         assert.ok(cabe(m), v);
         for (const p of m.partes) for (const x of p.params[3].split('; ')) {
             assert.ok(x.length <= 115, x);
@@ -215,92 +220,69 @@ test('WA1: tabela da 044 ausente pelo código, com o nome dela = modo automátic
     }
 });
 
-// ---------- WA2: o CD do CEASA é SEMPRE a última parada ----------
-function cenarioPortaSemPino(nSemPino, comPinoPorta) {
+// ---------- v3: o caminhão é SÓ o CD (sem portas): rota grande continua 1 mensagem ----------
+function cenarioCaminhaoGrande(n, comPino) {
     const { c, pedidos, tabelas } = cenario();
-    if (!comPinoPorta) { c[docN(8)].pos = null; }
-    for (let i = 1; i <= nSemPino; i++) {
-        const d = docN(700 + i);
-        c[d] = cli('Porta Sem Pino ' + i, 0, 0, { pos: null, bairro: 'Bairro Do Caminhao' });
+    for (let i = 1; i <= n; i++) {
+        const d = docN(2000 + i);
+        c[d] = cli('Cliente Caminhao ' + i, 0.001 * (i % 20), 0.001 * Math.floor(i / 20), { bairro: 'Bairro Do Caminhao' });
+        if (!comPino) c[d].pos = null;
         pedidos.push(ped(d)); tabelas.rota_cliente_veiculo.push({ documento: d, veiculo: 'caminhao' });
     }
     return { c, tabelas };
 }
-test('WA2: porta sem posição vem ANTES do CD; CD numa mensagem própria, última, com link da última porta até o CD', async () => {
-    const { c, tabelas } = cenarioPortaSemPino(2, true);
-    const m = W.montarRota(await W.coletarRota(sbFalso(tabelas, c)), 'caminhao', AGORA, {});
-    const it = itens(m);
-    assert.equal(m.resumo.paradas, 4);
-    assert.match(it[0], /^1\) ~\d\d:\d\d Porta Caminhao /);
-    assert.match(it[1], /^2\) Porta Sem Pino /);
-    assert.match(it[2], /^3\) Porta Sem Pino /);
-    assert.match(it[3], /^4\) ~\d\d:\d\d CD CEASA — 2 clientes/);
+for (const [n, comPino] of [[500, false], [400, true]]) {
+    test('v3: caminhão com ' + n + ' clientes ' + (comPino ? 'com' : 'sem') + ' posição = 1 mensagem, só o CD, link sede -> CD', async () => {
+        const { c, tabelas } = cenarioCaminhaoGrande(n, comPino);
+        const m = W.montarRota(await W.coletarRota(sbFalso(tabelas, c)), 'caminhao', AGORA, {});
+        assert.deepEqual([m.resumo.paradas, m.resumo.semPosicao, m.resumo.links, m.resumo.omitidas, m.partes.length, m.resumo.cd], [1, 0, 1, 0, 1, n + 3]);
+        assert.match(m.partes[0].params[3], new RegExp('^1\\) ~\\d\\d:\\d\\d CD CEASA — ' + (n + 3) + ' clientes — '));
+        const o = R.ROTA.ORIGEM, url = m.partes[0].params[4];
+        assert.ok(url.includes('origin=' + o[0].toFixed(5) + ',' + o[1].toFixed(5)) && url.includes('destination=' + CEASA[0].toFixed(5) + ',' + CEASA[1].toFixed(5)), url);
+        assert.ok(cabe(m));
+    });
+}
+
+test('v3: S10 gigante (500 sem posição) continua cortada com aviso no fim (PARTES_MAX)', async () => {
+    const { c, pedidos, tabelas } = cenario();
+    for (let i = 1; i <= 500; i++) { const d = docN(4000 + i); c[d] = cli('Sem Pino ' + i, 0, 0, { pos: null }); pedidos.push(ped(d, { caixas_24: 0, caixas_48: 0 })); tabelas.rota_cliente_veiculo.push({ documento: d, veiculo: 's10' }); }
+    const m = W.montarRota(await W.coletarRota(sbFalso(tabelas, c)), 's10', AGORA, {});
+    assert.equal(m.partes.length, W.WA.PARTES_MAX);
     const ult = m.partes[m.partes.length - 1];
-    assert.equal(ult.params[2], 'parada 4 de 4 (última)');
-    const pino = c[docN(8)].pos;
-    assert.ok(ult.params[4].includes('origin=' + pino[0].toFixed(5) + ',' + pino[1].toFixed(5)), ult.params[4]);
-    assert.ok(ult.params[4].includes('destination=' + CEASA[0].toFixed(5) + ',' + CEASA[1].toFixed(5)));
-    assert.equal(m.resumo.links, 2);
-    assert.ok(cabe(m));
-    // numeração contínua 1..4 e o CD é o último item de todas as mensagens
-    assert.deepEqual(it.map((x) => Number(x.split(')')[0])), [1, 2, 3, 4]);
-});
-
-test('WA2: todas as portas sem posição: CD com link saindo da sede, ainda o último', async () => {
-    const { c, tabelas } = cenarioPortaSemPino(1, false);
-    const m = W.montarRota(await W.coletarRota(sbFalso(tabelas, c)), 'caminhao', AGORA, {});
-    const it = itens(m);
-    assert.match(it[it.length - 1], /^3\) ~\d\d:\d\d CD CEASA/);
-    const o = R.ROTA.ORIGEM;
-    assert.ok(m.partes[m.partes.length - 1].params[4].includes('origin=' + o[0].toFixed(5) + ',' + o[1].toFixed(5)));
-});
-
-test('WA2: rota gigante (500 portas sem posição): corte com aviso ANTES do CD, CD continua a última mensagem', async () => {
-    const { c, tabelas } = cenarioPortaSemPino(500, true);
-    const m = W.montarRota(await W.coletarRota(sbFalso(tabelas, c)), 'caminhao', AGORA, {});
-    assert.equal(m.partes.length, W.WA.PARTES_MAX);
-    const ult = m.partes[m.partes.length - 1], aviso = m.partes[m.partes.length - 2];
-    assert.match(ult.params[3], /^502\) ~\d\d:\d\d CD CEASA/);
-    assert.equal(aviso.params[2], 'aviso');
-    const enviadas = m.partes.slice(0, -2).reduce((a, p) => a + p.paradas, 0);
-    assert.equal(enviadas + m.resumo.omitidas + 1, 502);
-    assert.ok(aviso.params[3].includes('(' + (enviadas + 1) + ' a 501)'), aviso.params[3]);
+    assert.equal(ult.params[2], 'aviso');
+    const enviadas = m.partes.slice(0, -1).reduce((a, p) => a + p.paradas, 0);
+    assert.equal(enviadas + m.resumo.omitidas, m.resumo.paradas);
+    assert.ok(ult.params[3].includes('(' + (enviadas + 1) + ' a ' + m.resumo.paradas + ')'), ult.params[3]);
     assert.ok(cabe(m));
 });
 
-test('WA2: rota gigante SÓ com portas geolocalizadas (400 + CD): CD reservado fora do corte, aviso antes dele', async () => {
+// ---------- 045: "tirar da rota" (rota_pedido_ignorado) ----------
+test('045: pedido ignorado não vai na mensagem (S10 e CD) nem conta como aguardando; resumo.ignorados', async () => {
     const { c, pedidos, tabelas } = cenario();
-    for (let i = 1; i <= 400; i++) {
-        const d = docN(2000 + i);
-        c[d] = cli('Porta Com Pino ' + i, 0.001 * (i % 20), 0.001 * Math.floor(i / 20), { bairro: 'Bairro Do Caminhao' });
-        pedidos.push(ped(d)); tabelas.rota_cliente_veiculo.push({ documento: d, veiculo: 'caminhao' });
-    }
-    const m = W.montarRota(await W.coletarRota(sbFalso(tabelas, c)), 'caminhao', AGORA, {});
-    assert.equal(m.resumo.semPosicao, 0);
-    assert.equal(m.resumo.paradas, 402);                  // 401 portas (400 + Porta Caminhao) + CD
-    assert.equal(m.partes.length, W.WA.PARTES_MAX);
-    const ult = m.partes[m.partes.length - 1], aviso = m.partes[m.partes.length - 2];
-    assert.match(ult.params[3], /^402\) ~\d\d:\d\d CD CEASA — 2 clientes/);
-    assert.equal(ult.params[2], 'parada 402 de 402 (última)');
-    assert.ok(ult.params[4].includes('destination=' + CEASA[0].toFixed(5) + ',' + CEASA[1].toFixed(5)));
-    assert.equal(aviso.params[2], 'aviso');
-    const enviadas = m.partes.slice(0, -2).reduce((a, p) => a + p.paradas, 0);
-    assert.equal(enviadas + m.resumo.omitidas + 1, 402);
-    assert.ok(aviso.params[3].includes('(' + (enviadas + 1) + ' a 401)'), aviso.params[3]);
-    assert.ok(m.partes.slice(0, -1).every((p) => !/CD CEASA/.test(p.params[3])));
-    assert.ok(cabe(m));
+    const base = W.montarRota(await W.coletarRota(sbFalso(tabelas, c)), 's10', AGORA, {});
+    assert.equal(base.resumo.ignorados, 0);
+    tabelas.rota_pedido_ignorado = [{ cd_pedido: pedidos[0].cd_pedido }, { cd_pedido: pedidos[4].cd_pedido }, { cd_pedido: pedidos[5].cd_pedido }, { cd_pedido: 424242 }];
+    const d = await W.coletarRota(sbFalso(tabelas, c));
+    assert.deepEqual(Object.keys(d.ignorados).map(Number).sort((a, b) => a - b), [pedidos[0].cd_pedido, pedidos[4].cd_pedido, pedidos[5].cd_pedido, 424242].sort((a, b) => a - b));
+    const s10 = W.montarRota(d, 's10', AGORA, {}), cam = W.montarRota(d, 'caminhao', AGORA, {});
+    assert.ok(!/Mercado Um/.test(s10.texto));
+    assert.deepEqual([s10.resumo.paradas, s10.resumo.aguardando, s10.resumo.ignorados], [3, 0, 3]);   // Sem Marca ignorado: sai de aguardando
+    assert.match(itens(cam)[0], /CD CEASA — 2 clientes/);                                          // Box A ignorado
 });
 
-test('WA2: rota grande que CABE (CD no último link, sem mensagem separada)', async () => {
-    const { c, pedidos, tabelas } = cenario();
-    for (let i = 1; i <= 20; i++) {
-        const d = docN(3000 + i);
-        c[d] = cli('Porta Com Pino ' + i, 0.001 * i, 0.002, { bairro: 'Bairro Do Caminhao' });
-        pedidos.push(ped(d)); tabelas.rota_cliente_veiculo.push({ documento: d, veiculo: 'caminhao' });
+test('045 ausente = ninguém ignorado (e v2 continua); 045 com erro de leitura = falha ao montar', async () => {
+    const { c, tabelas } = cenario();
+    const d = await W.coletarRota(sbFalso(tabelas, c));
+    assert.deepEqual([d.v2, d.ignorados], [true, {}]);
+    for (const e of [{ code: '57014', message: 'canceling statement due to statement timeout' }, { code: '42501', message: 'permission denied for table rota_pedido_ignorado' },
+                     { message: "Could not find the table 'public.rota_pedido_ignorado' in the schema cache" }]) {
+        tabelas.rota_pedido_ignorado = [];
+        await assert.rejects(W.coletarRota(sbFalso(tabelas, c, { rota_pedido_ignorado: e })), (x) => x.message === e.message);
     }
-    const m = W.montarRota(await W.coletarRota(sbFalso(tabelas, c)), 'caminhao', AGORA, {});
-    assert.equal(m.resumo.paradas, 22);
-    assert.equal(m.partes.length, Math.ceil(22 / W.WA.LOTE_PARADAS));
-    assert.match(itens(m).pop(), /^22\) ~\d\d:\d\d CD CEASA/);
-    assert.ok(!m.partes.some((p) => /\(última\)/.test(p.params[2])));
+    // v1 (sem 044) com 045 lida: também respeita
+    delete tabelas.rota_pedido_veiculo; tabelas.rota_pedido_ignorado = [{ cd_pedido: tabelas.solidcon_pedidos_erp[4].cd_pedido }];
+    const d1 = await W.coletarRota(sbFalso(tabelas, c));
+    assert.equal(d1.v2, undefined);
+    assert.ok(/Mercado Um/.test(W.montarRota(d1, 's10', AGORA, {}).texto));
+    assert.ok(!/Sem Marca/.test(W.montarRota(d1, 's10', AGORA, {}).texto));
 });

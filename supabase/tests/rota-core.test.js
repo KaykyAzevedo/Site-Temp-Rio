@@ -83,7 +83,7 @@ test('escolha "só neste pedido" vence o padrão; padrão vale para os outros pe
     assert.equal(pl2.s10.pedidos.length, 1);
 });
 
-test('CEASA vira UMA parada (CD) no fim do caminhão, com a carga agregada; bairro do caminhão fica na porta', () => {
+test('v3: CEASA vira UMA parada (CD), a única do caminhão, com a carga agregada; bairro do caminhão NÃO vira porta', () => {
     const cfg = R.cfgDe({ bairros_caminhao: ['Vila da Penha'] });
     const clientes = {
         [docN(1)]: cli('Box Um', 0, 0, { pos: [CEASA[0] + 0.001, CEASA[1]], complemento: 'Ceasa' }),
@@ -96,16 +96,17 @@ test('CEASA vira UMA parada (CD) no fim do caminhão, com a carga agregada; bair
     const padroes = { [docN(1)]: 'caminhao', [docN(2)]: 'caminhao', [docN(3)]: 'caminhao', [docN(4)]: 'caminhao' };
     const pl = R.planejar([p1, p1b, p2, p3, p4], clientes, DIA, { marcacao: true, cfg, padroes });
     const cam = pl.caminhao;
-    assert.equal(cam.paradas.length, 2);
-    assert.equal(cam.paradas[0].documento, docN(4));                       // porta no caminho
-    const cd = cam.paradas[1];
+    assert.equal(cam.paradas.length, 1);                                  // v3: sem porta no caminho (bairros_caminhao sem uso)
+    assert.equal(cam.semPosicao.length, 0); assert.equal(cam.portas, 0);
+    const cd = cam.paradas[0];
     assert.equal(cd.cd, true); assert.equal(cam.cd, cd); assert.deepEqual(cd.pos, CEASA);
-    assert.equal(cd.carga.length, 3);                                     // 3 clientes, 4 pedidos
+    assert.equal(cd.carga.length, 4);                                     // 4 clientes (Mercado Penha também retira no CD), 5 pedidos
     const um = cd.carga.find((i) => i.documento === docN(1));
     assert.deepEqual([um.pedidos.length, um.c24, um.c48, um.avulsos, um.caixas, um.valorCentavos], [2, 4, 2, 24, 6, 20000]);
     const dois = cd.carga.find((i) => i.documento === docN(2));
     assert.equal(dois.volume, null); assert.equal(dois.desconhecidos, 1);
-    assert.deepEqual([cd.total.clientes, cd.total.pedidos, cd.total.caixas, cd.total.desconhecidos], [3, 4, 9, 1]);
+    assert.deepEqual([cd.total.clientes, cd.total.pedidos, cd.total.caixas, cd.total.desconhecidos], [4, 5, 12, 1]);
+    assert.equal(R.entregaCaminhao(clientes[docN(4)], cfg), 'cd');
     // O km do caminhão vai até o CD; o link do Maps termina no CD.
     const links = R.linksGoogleMaps(cam.paradas);
     assert.ok(links[0].url.includes('destination=' + CEASA[0].toFixed(5)));
@@ -215,7 +216,7 @@ test('desempenho: ~60 paradas com janelas e prioridades em menos de 50 ms', () =
 // ---- Achados da revisão (Sentinela) ----
 test('R1 capacidade: quem não cabe vai para a próxima saída ELEGÍVEL do cliente (não a global) e estoura', () => {
     const clientes = { [docN(1)]: cli('Enche S10', 0.01, 0.01), [docN(2)]: cli('Fecha Quarta', 0.02, 0.01) };
-    const cheio = ped(docN(1), { dt_pedido: '2026-11-22T10:00:00-03:00', caixas_24: 174, caixas_48: 0, caixas_outras: 0 });   // 1566 = S10 cheia
+    const cheio = ped(docN(1), { dt_pedido: '2026-11-22T10:00:00-03:00', caixas_24: 300, caixas_48: 0, caixas_outras: 0 });   // 2700 = S10 cheia
     const b = ped(docN(2), { caixas_24: 1, caixas_48: 0, caixas_outras: 0 });                                                // vence qua 25/11
     const pl = R.planejar([cheio, b], clientes, DIA, { marcacao: true, padroes: { [docN(1)]: 's10', [docN(2)]: 's10' },
                                                        regras: [{ documento: docN(2), dias_sem_receber: [3] }] });
@@ -269,4 +270,58 @@ test('R3 24:00: aceito só como FIM de janela (1440); hora de saída e início c
     assert.equal(R.regraDe({ janela_fim: '24:00' }).janela, 'até 24:00');
     assert.equal(R.regraDe({ janela_inicio: '24:00' }).ini, null);
     assert.equal(R.cfgDe({ hora_saida: '24:00:00' }).horaSaida, 7 * 60);   // inválida: padrão (a 044 recusa no banco)
+});
+
+// ---------- v3 (o dono, 2026-11-18) ----------
+test('v3: capacidade da S10 = 300 cx24 (2700 de volume ≈ 163 cx48); 301 cx24 não cabe', () => {
+    assert.equal(R.ROTA.CAPACIDADE_S10, 2700);
+    assert.equal(300 * R.ROTA.VOLUME_CX24, R.ROTA.CAPACIDADE_S10);
+    assert.ok(163 * R.ROTA.VOLUME_CX48 <= R.ROTA.CAPACIDADE_S10 && 164 * R.ROTA.VOLUME_CX48 > R.ROTA.CAPACIDADE_S10);
+    const clientes = { [docN(1)]: cli('Cheio', 0.01, 0.01), [docN(2)]: cli('Um a mais', 0.02, 0.01) };
+    const a = ped(docN(1), { dt_pedido: '2026-11-22T10:00:00-03:00', caixas_24: 300, caixas_48: 0 }), b = ped(docN(2), { caixas_24: 1, caixas_48: 0 });
+    const pl = R.planejar([a, b], clientes, DIA, { marcacao: true, padroes: { [docN(1)]: 's10', [docN(2)]: 's10' } });
+    assert.deepEqual([pl.s10.volume, pl.s10.c24, pl.fica.length, pl.fica[0].motivoFica], [2700, 300, 1, 'capacidade']);
+});
+
+test('v3: sugestão automática por bairro saiu (só endereço CEASA / Av. Brasil 19001 / raio)', () => {
+    const cfg = R.cfgDe({ bairros_caminhao: ['Vila da Penha'] });
+    const penha = cli('Mercado Penha', 0, 0, { pos: [-22.8400, -43.2800], bairro: 'Vila da Penha' });
+    assert.deepEqual(R.sugestaoDe(ped(docN(4)), penha, cfg), { veiculo: 's10', motivo: 'padrao', detalhe: null });
+    assert.equal(R.veiculoDe(ped(docN(4)), penha, cfg, {}).veiculo, 's10');   // v1 também
+    assert.equal(R.sugestaoDe(ped(docN(1)), cli('Box', 0, 0, { complemento: 'CEASA' }), cfg).motivo, 'ceasa');
+    assert.equal(R.sugestaoDe(ped(docN(1)), cli('Box', 0, 0, { logradouro: 'Av. Brasil', numero: '19.001' }), cfg).detalhe, 'av_brasil_19001');
+    assert.equal(R.sugestaoDe(ped(docN(1)), cli('Box', 0, 0, { pos: [CEASA[0] + 0.002, CEASA[1]] }), cfg).detalhe, 'raio');
+});
+
+test('v3/045: pedido ignorado fica FORA da rota, de aguardando e de fica (v2 e v1), e vai para res.ignorados', () => {
+    const clientes = { [docN(1)]: cli('S10 A', 0.01, 0.01), [docN(2)]: cli('Box', 0, 0, { pos: CEASA, complemento: 'CEASA' }), [docN(3)]: cli('Sem marca', 0.02, 0.02),
+                       [docN(4)]: cli('Fecha hoje', 0.03, 0.01) };
+    const a = ped(docN(1)), a2 = ped(docN(1)), b = ped(docN(2)), c = ped(docN(3)), d = ped(docN(4)), velho = ped(docN(3), { dt_pedido: '2026-10-26T10:00:00-03:00' });
+    const padroes = { [docN(1)]: 's10', [docN(2)]: 'caminhao', [docN(4)]: 's10' };
+    const regras = [{ documento: docN(4), dias_sem_receber: [R.diaSemana(DIA)] }];
+    const todos = [a, a2, b, c, d, velho];
+    const base = R.planejar(todos, clientes, DIA, { marcacao: true, padroes, regras });
+    assert.deepEqual([base.s10.pedidos.length, base.caminhao.pedidos.length, base.aguardando.length, base.fica.length, base.ignorados.length], [2, 1, 2, 1, 0]);
+    // pedido antigo 'aberto' (desde 26/10) continua aparecendo até alguém tirar
+    assert.ok(base.aguardando.some((x) => x.p.cd_pedido === velho.cd_pedido));
+    const ign = { [a2.cd_pedido]: { motivo: 'cliente cancelou' }, [b.cd_pedido]: true, [velho.cd_pedido]: true, [d.cd_pedido]: true };
+    const pl = R.planejar(todos, clientes, DIA, { marcacao: true, padroes, regras, ignorados: ign });
+    assert.deepEqual(pl.s10.pedidos.map((x) => x.p.cd_pedido), [a.cd_pedido]);
+    assert.equal(pl.caminhao.pedidos.length, 0); assert.equal(pl.caminhao.cd, null); assert.equal(pl.caminhao.paradas.length, 0);
+    assert.deepEqual(pl.aguardando.map((x) => x.p.cd_pedido), [c.cd_pedido]);
+    assert.equal(pl.fica.length, 0);
+    assert.deepEqual(pl.ignorados.map((x) => x.p.cd_pedido).sort(), [a2.cd_pedido, b.cd_pedido, d.cd_pedido, velho.cd_pedido].sort());
+    assert.equal(pl.ignorados.find((x) => x.p.cd_pedido === a2.cd_pedido).ignorado.motivo, 'cliente cancelou');
+    assert.ok(!pl.entregues[b.cd_pedido] && !pl.entregues[a2.cd_pedido]);
+    // a parada do cliente com 2 pedidos fica com 1 pedido
+    assert.equal(pl.s10.paradas[0].pedidos.length, 1);
+    // ignorado que não está pendente no ERP (saiu) não aparece em lugar nenhum
+    const saiu = ped(docN(1), { etapa: 'saiu' });
+    assert.equal(R.planejar([saiu], clientes, DIA, { marcacao: true, padroes, ignorados: { [saiu.cd_pedido]: true } }).ignorados.length, 0);
+    // v1 (sem marcação) também respeita
+    const v1 = R.planejar([a, b], clientes, DIA, { cfg: R.cfgDe(R.CFG_PADRAO), excecoes: {}, ignorados: { [b.cd_pedido]: true } });
+    assert.deepEqual([v1.caminhao.pedidos.length, v1.s10.pedidos.length, v1.ignorados.length], [0, 1, 1]);
+    // sem ignorados: idêntico a não passar nada
+    assert.deepEqual(JSON.stringify(R.planejar(todos, clientes, DIA, { marcacao: true, padroes, regras, ignorados: {} }).s10.paradas.map((s) => s.chave)),
+                     JSON.stringify(base.s10.paradas.map((s) => s.chave)));
 });

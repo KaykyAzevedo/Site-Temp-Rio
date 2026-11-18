@@ -15,18 +15,22 @@
         // admin.js (duplicado aqui para o módulo ser independente; se um mudar, mude os dois).
         ORIGEM: [-23.0030, -43.3264],
         // S10 (caminhonete + carreta): capacidade em VOLUME. Caixa de 24 un = 9; caixa de 48 un = 16,5.
-        // 174 cx24 × 9 = 1566 (≈ 95 cx48 × 16,5 = 1567,5). Carga mista = soma dos volumes.
-        CAPACIDADE_S10: 1566,
+        // v3 (o dono, 2026-11-18): 300 cx24 × 9 = 2700 (≈ 163 cx48 × 16,5 = 2689,5). Carga mista = soma dos volumes.
+        CAPACIDADE_S10: 2700,
         VOLUME_CX24: 9,
         VOLUME_CX48: 16.5,
         // POTES AVULSOS: a coluna caixas_outras (039) traz UNIDADES (potes) de produtos com código próprio, fora do
         // espelho 24/48 — conferido em produção: pedido 1497 = 530 × R$ 3,30. 24 potes ocupam o espaço de 1 caixa
         // de 24, então cada pote = 9/24 = 0,375 de volume.
         VOLUME_POTE: 9 / 24,
-        // Prazo de entrega: 2 dias ÚTEIS a partir do pedido. Dia útil = segunda a sábado (os dois veículos
-        // rodam sábado), menos feriado quando a configuração (rota_config.feriados_sem_saida) disser que não tem saída.
+        // Prazo de entrega: 2 dias ÚTEIS a partir do pedido. Dia útil = dia em que o VEÍCULO do pedido sai, menos
+        // feriado quando a configuração (rota_config.feriados_sem_saida) disser que não tem saída.
+        // Por veículo (o dono, 2026-11-18): a S10 roda de SEGUNDA a SEXTA; o caminhão do CEASA de segunda a sábado.
+        // Pedido sem veículo (falta marcar) e as funções chamadas sem veículo usam DIAS_SEM_SAIDA (= o caminhão).
         PRAZO_DIAS_UTEIS: 2,
-        DIAS_SEM_SAIDA: [0],          // 0 = domingo (Date.getUTCDay sobre a data de São Paulo)
+        DIAS_SEM_SAIDA: [0],          // 0 = domingo (Date.getUTCDay sobre a data de São Paulo); padrão / caminhão
+        DIAS_SEM_SAIDA_S10: [0, 6],   // S10: sem saída domingo e sábado
+        DIAS_SEM_SAIDA_CAMINHAO: [0], // caminhão do CEASA: sem saída só domingo
         // Feriados nacionais FIXOS (MM-DD). Os móveis (Carnaval seg/ter, Sexta-feira Santa, Corpus Christi) saem da
         // Páscoa; feriado estadual/municipal/ponte entra em rota_config.feriados_extras.
         FERIADOS_FIXOS: ['01-01', '04-21', '05-01', '09-07', '10-12', '11-02', '11-15', '11-20', '12-25'],
@@ -45,8 +49,9 @@
         CEASA_TEXTO: /\bc\.?\s?e\.?\s?a\.?\s?s\.?\s?a\b/i,
         CEASA_AV_BRASIL: /\b(av|avenida|av\.)\s*brasil\b/i,
         CEASA_NUMERO: '19001',
-        // Rotas v2 (044): o caminhão leva TUDO de quem é "CEASA" a UM centro de distribuição no CEASA; cada cliente
-        // retira lá. Na rota é UMA parada (a última do caminhão), com a lista de carga agregada por cliente.
+        // Rotas v2 (044) / v3: o caminhão leva TUDO o que está marcado CEASA a UM centro de distribuição no CEASA; cada
+        // cliente retira lá. Na rota é UMA parada (a única do caminhão), com a lista de carga agregada por cliente.
+        // v3: o caminhão NÃO para em bairros no caminho ("não é regra", o dono 2026-11-18).
         CEASA_CD_NOME: 'CD CEASA',
         // Ordenação com janela de horário (044): limite de rodadas de melhoria (realocar + 2-opt) — rápido o bastante
         // para recalcular a cada marcação no navegador (~60 paradas).
@@ -64,6 +69,8 @@
     // ===================== configuração (rota_config / migração 040) =====================
     // Sem a 040 aplicada valem estes padrões (o módulo funciona igual a antes, agora com feriados nacionais).
     // 044: horaSaida ('HH:MM' ou minutos), velocidadeKmh e minutosParada para o horário estimado das paradas.
+    // v3: rota_config.bairros_caminhao (040) fica no banco SEM USO (o caminhão só vai ao CEASA); cfgDe ainda o lê em
+    // cfg.bairrosCaminhao só por compatibilidade, e nenhuma regra o consulta.
     var CFG_PADRAO = { bairrosCaminhao: [], corteHora: null, voltaSede: false, feriadosSemSaida: true, feriadosExtras: [],
                        horaSaida: '07:00', velocidadeKmh: 25, minutosParada: 10 };
     // 'HH:MM' / 'HH:MM:SS' (time do Postgres) ou número de minutos -> minutos desde 00:00. Inválido -> null.
@@ -167,34 +174,37 @@
         if (!cfg.feriadosSemSaida) return false;
         return !!feriadosDoAno(Number(dia.slice(0, 4)))[dia] || !!cfg.feriadosExtras[dia];
     }
-    function temSaida(dia, cfg) { return ROTA.DIAS_SEM_SAIDA.indexOf(diaSemana(dia)) < 0 && !ehFeriado(dia, cfg); }
+    // veiculo (opcional): 's10' | 'caminhao'. Sem veículo: ROTA.DIAS_SEM_SAIDA (dias de saída de pelo menos um veículo).
+    function diasSemSaida(veiculo) { return veiculo === 's10' ? ROTA.DIAS_SEM_SAIDA_S10 : veiculo === 'caminhao' ? ROTA.DIAS_SEM_SAIDA_CAMINHAO : ROTA.DIAS_SEM_SAIDA; }
+    function temSaida(dia, cfg, veiculo) { return diasSemSaida(veiculo).indexOf(diaSemana(dia)) < 0 && !ehFeriado(dia, cfg); }
     function dataBr(dia) { var p = String(dia).split('-'); return p[2] + '/' + p[1]; }
     var DIAS_NOME = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
     function nomeDia(dia) { return DIAS_NOME[diaSemana(dia)]; }
     // Próximo dia com saída, a partir de 'dia' (inclusive se incluir=true). null = nenhum nos próximos
     // ROTA.BUSCA_SAIDA_DIAS dias (configuração com feriados demais): quem chama mostra "sem saída nos próximos N dias".
-    function proximaSaida(dia, incluir, cfg) {
+    function proximaSaida(dia, incluir, cfg, veiculo) {
         var d = incluir ? dia : somaDias(dia, 1);
-        for (var i = 0; i < ROTA.BUSCA_SAIDA_DIAS; i++) { if (temSaida(d, cfg)) return d; d = somaDias(d, 1); }
+        for (var i = 0; i < ROTA.BUSCA_SAIDA_DIAS; i++) { if (temSaida(d, cfg, veiculo)) return d; d = somaDias(d, 1); }
         return null;
     }
     // Prazo = dia do pedido + N dias úteis (dia com saída). Pedido feito a partir de corteHora (São Paulo) conta como
-    // do dia seguinte. Pedido de sábado: segunda e terça. De domingo: idem.
-    function prazoDe(dtPedido, cfg) {
+    // do dia seguinte. Pedido de sábado: segunda e terça. De domingo: idem. veiculo (opcional): dias úteis DELE (S10:
+    // seg..sex, então pedido de sexta vence na terça; caminhão/sem veículo: seg..sáb).
+    function prazoDe(dtPedido, cfg, veiculo) {
         cfg = cfgOk(cfg);
         var d = diaSP(dtPedido);
         if (!d) return null;
         if (cfg.corteHora != null) { var h = horaSP(dtPedido); if (h != null && h >= cfg.corteHora) d = somaDias(d, 1); }
         var n = 0;
-        for (var guarda = 0; n < ROTA.PRAZO_DIAS_UTEIS && guarda < ROTA.BUSCA_SAIDA_DIAS; guarda++) { d = somaDias(d, 1); if (temSaida(d, cfg)) n++; }
+        for (var guarda = 0; n < ROTA.PRAZO_DIAS_UTEIS && guarda < ROTA.BUSCA_SAIDA_DIAS; guarda++) { d = somaDias(d, 1); if (temSaida(d, cfg, veiculo)) n++; }
         return n < ROTA.PRAZO_DIAS_UTEIS ? null : d;   // não achou os dias úteis no limite: prazo indisponível (sem_data)
     }
     // Situação do prazo em relação ao dia da saída D.
-    function situacaoPrazo(prazo, dia, cfg) {
+    function situacaoPrazo(prazo, dia, cfg, veiculo) {
         if (!prazo) return 'sem_data';
         if (prazo < dia) return 'vencido';
         if (prazo === dia) return 'hoje';
-        var prox = proximaSaida(dia, false, cfg);
+        var prox = proximaSaida(dia, false, cfg, veiculo);
         if (prox && prazo === prox) return 'amanha';
         return 'ok';
     }
@@ -407,15 +417,15 @@
     // Próxima saída ELEGÍVEL (depois de 'dia'): dia com saída E em que o cliente recebe. Percorre dia a dia até
     // ROTA.BUSCA_SAIDA_DIAS (o mesmo limite de proximaSaida), então feriados seguidos nos dias de recebimento não cortam
     // a busca. Sem regra = proximaSaida. null = nenhuma no limite (ou o cliente não recebe dia nenhum).
-    function proximaSaidaCliente(dia, regra, cfg) {
-        if (!regra) return proximaSaida(dia, false, cfg);
+    function proximaSaidaCliente(dia, regra, cfg, veiculo) {
+        if (!regra) return proximaSaida(dia, false, cfg, veiculo);
         var algum = false;
         for (var w = 0; w < 7; w++) if (!regra.dias[w]) { algum = true; break; }
         if (!algum) return null;
         var d = dia;
         for (var i = 0; i < ROTA.BUSCA_SAIDA_DIAS; i++) {
             d = somaDias(d, 1);
-            if (temSaida(d, cfg) && !naoRecebe(regra, d)) return d;
+            if (temSaida(d, cfg, veiculo) && !naoRecebe(regra, d)) return d;
         }
         return null;
     }
@@ -432,17 +442,15 @@
     }
 
     // ===================== VEÍCULO =====================
-    // Ordem de decisão (o dono, 2026-11-16): exceção por cliente (rota_cliente_veiculo) > regra do CEASA > bairro
-    // atendido pelo caminhão no caminho (rota_config.bairros_caminhao, comparação sem acento) > S10.
-    // Retorna { veiculo: 'caminhao'|'s10', motivo: 'excecao'|'ceasa'|'bairro'|'padrao', detalhe }.
+    // Ordem de decisão: exceção por cliente (rota_cliente_veiculo) > regra do CEASA > S10. (v3: o "bairro atendido pelo
+    // caminhão no caminho" saiu — o caminhão só vai ao CEASA.)
+    // Retorna { veiculo: 'caminhao'|'s10', motivo: 'excecao'|'ceasa'|'padrao', detalhe }.
     function veiculoDe(p, c, cfg, excecoes) {
         cfg = cfgOk(cfg);
         var ex = p && p.documento && excecoes ? excecoes[p.documento] : null;
         if (ex === 'caminhao' || ex === 's10') return { veiculo: ex, motivo: 'excecao', detalhe: null };
         var mc = motivoCeasa(c);
         if (mc) return { veiculo: 'caminhao', motivo: 'ceasa', detalhe: mc };
-        var b = c ? normBairro(c.bairro) : '';
-        if (b && cfg.bairrosCaminhao[b]) return { veiculo: 'caminhao', motivo: 'bairro', detalhe: b };
         return { veiculo: 's10', motivo: 'padrao', detalhe: null };
     }
 
@@ -458,16 +466,11 @@
         if (v === 'caminhao' || v === 's10') return { veiculo: v, origem: 'padrao' };
         return null;
     }
-    // Só a regra automática (endereço CEASA / Av. Brasil 19001 / raio / bairro do caminhão / S10), sem exceção: na v2
-    // vira SUGESTÃO exibida para quem marca.
+    // Só a regra automática (endereço CEASA / Av. Brasil 19001 / raio / S10), sem exceção: na v2 vira SUGESTÃO exibida
+    // para quem marca.
     function sugestaoDe(p, c, cfg) { return veiculoDe(p, c, cfg, null); }
-    // Caminhão na v2: parada NA PORTA se o cliente é de um bairro do caminhão (e não é do CEASA); senão vai para o CD.
-    function entregaCaminhao(c, cfg) {
-        cfg = cfgOk(cfg);
-        if (motivoCeasa(c)) return 'cd';
-        var b = c ? normBairro(c.bairro) : '';
-        return b && cfg.bairrosCaminhao[b] ? 'porta' : 'cd';
-    }
+    // Caminhão na v2/v3: TUDO vai para o CD do CEASA (sem parada na porta). Mantida por compatibilidade.
+    function entregaCaminhao() { return 'cd'; }
     // Lista de carga do CD: um item por cliente (vários pedidos somados). volume null se algum pedido não tem caixas.
     function cargaCd(lista) {
         var porChave = {}, itens = [];
@@ -531,9 +534,17 @@
     // pedidos: linhas de solidcon_pedidos_erp. clientes: { documento -> {nome, bairro, cidade, logradouro, numero,
     // complemento, pos:[lat,lng]|null, precisao} }. dia: 'YYYY-MM-DD' da saída.
     // opts: { excluir: { cd_pedido: true }, cfg: linha de rota_config (opcional), excecoes: { documento: 'caminhao'|'s10' } }.
+    // opts.ignorados (045, opcional): { cd_pedido: true | {motivo, atualizado_em} } = "tirado da rota" até reativar: não
+    //   entra na rota, nem em aguardando, nem em fica; vai para res.ignorados (lista "Fora da rota").
+    // Dias por veículo: res.semSaida = nenhum veículo sai (domingo/feriado). res.s10.semSaida = a S10 não sai (sábado):
+    //   os pedidos S10 vão para fica com motivoFica 'sem_saida_s10' e a próxima saída da S10 (estoura se passar do prazo).
+    //   Prazo, situação e próxima saída de cada pedido contam os dias úteis do veículo dele.
+    // opts.plano (046, opcional): { cd_pedido: 'YYYY-MM-DD' } = dia salvo no "Plano da semana". SÓ INFORMAÇÃO (o dono,
+    //   2026-11-18: cada dia é uma rota diferente; o plano é base de referência): cada pedido ganha x.planoDia (dia
+    //   salvo, se for hoje ou depois) para a tela mostrar "planejado p/ qua 25/11". NÃO muda nada no cálculo.
     // opts (044, todos opcionais):
     //   marcacao: true  -> MODO v2: veículo só pela marcação (porPedido > padrões). Sem marcação: res.aguardando (fora
-    //                      da rota) com a sugestão automática. Caminhão: portas (bairros) no caminho + CD do CEASA no fim.
+    //                      da rota) com a sugestão automática. Caminhão: UMA parada, o CD do CEASA (lista de carga).
     //                      Sem 'marcacao': modo automático de antes (whatsapp-rotinas publicado usa assim).
     //   padroes: { documento: 'caminhao'|'s10' } (rota_cliente_veiculo; se ausente usa opts.excecoes);
     //   porPedido: { cd_pedido: 'caminhao'|'s10' } (rota_pedido_veiculo);
@@ -541,33 +552,41 @@
     //           próxima saída em que recebe), janela e prioridade (ordem + horário).
     function planejar(pedidos, clientes, dia, opts) {
         opts = opts || {};
-        var excluir = opts.excluir || {}, cfg = cfgOk(opts.cfg), excecoes = opts.excecoes || {};
+        var excluir = opts.excluir || {}, ignorados = opts.ignorados || {}, plano = opts.plano || {}, cfg = cfgOk(opts.cfg), excecoes = opts.excecoes || {};
         var v2 = !!opts.marcacao, padroes = opts.padroes || excecoes, porPedido = opts.porPedido || {};
         var regras = regrasDe(opts.regras), tempo = tempoDe(cfg);
         var res = { dia: dia, semSaida: !temSaida(dia, cfg), feriado: ehFeriado(dia, cfg), cfg: cfg, modo: v2 ? 'marcacao' : 'auto',
                     caminhao: { pedidos: [], paradas: [], semPosicao: [], km: 0, kmReta: 0, c24: 0, c48: 0, avulsos: 0, desconhecidos: 0, cd: null, horario: null },
-                    s10: { pedidos: [], paradas: [], semPosicao: [], volume: 0, c24: 0, c48: 0, desconhecidos: 0, avulsos: 0, km: 0, kmReta: 0, volta: cfg.voltaSede, horario: null },
-                    fica: [], aguardando: [], entregues: {} };
+                    s10: { pedidos: [], paradas: [], semPosicao: [], volume: 0, c24: 0, c48: 0, desconhecidos: 0, avulsos: 0, km: 0, kmReta: 0, volta: cfg.voltaSede, horario: null,
+                           semSaida: !temSaida(dia, cfg, 's10') },
+                    fica: [], aguardando: [], ignorados: [], entregues: {} };
         res.ceasa = res.caminhao.pedidos;   // nome antigo (compatibilidade)
         if (res.semSaida) return res;
-        var proxima = proximaSaida(dia, false, cfg);   // null = sem saída no limite: o que fica não tem data (e estoura)
+        // próxima saída DA S10 (só a S10 tem "fica"; o caminhão não tem limite). null = sem saída no limite (estoura).
+        var proxima = proximaSaida(dia, false, cfg, 's10');
         res.semProxima = !proxima;
         var cands = [];
         (pedidos || []).forEach(function (p) {
             if (ROTA.ETAPAS_PENDENTES.indexOf(p.etapa) < 0 || excluir[p.cd_pedido]) return;
             var c = p.documento ? clientes[p.documento] || null : null;
-            var prazo = prazoDe(p.dt_pedido, cfg), v = volumePedido(p), ve, x;
+            var v = volumePedido(p), ve, x, prazo, vq;
             if (v2) {
                 var m = marcacaoDe(p, padroes, porPedido), sug = sugestaoDe(p, c, cfg);
-                x = { p: p, c: c, prazo: prazo, situacao: situacaoPrazo(prazo, dia, cfg), v: v, sugestao: sug, marcacao: m ? m.origem : null,
+                vq = m ? m.veiculo : null; prazo = prazoDe(p.dt_pedido, cfg, vq);
+                x = { p: p, c: c, prazo: prazo, situacao: situacaoPrazo(prazo, dia, cfg, vq), v: v, sugestao: sug, marcacao: m ? m.origem : null,
                       veiculo: m ? m.veiculo : null, motivo: m ? 'marcado' : null, detalhe: m ? m.origem : null, ceasa: motivoCeasa(c) };
                 if (m && m.veiculo === 'caminhao') x.entrega = entregaCaminhao(c, cfg);
             } else {
                 ve = veiculoDe(p, c, cfg, excecoes);
-                x = { p: p, c: c, prazo: prazo, situacao: situacaoPrazo(prazo, dia, cfg), v: v,
+                vq = ve.veiculo; prazo = prazoDe(p.dt_pedido, cfg, vq);
+                x = { p: p, c: c, prazo: prazo, situacao: situacaoPrazo(prazo, dia, cfg, vq), v: v,
                       veiculo: ve.veiculo, motivo: ve.motivo, detalhe: ve.detalhe, ceasa: ve.motivo === 'ceasa' ? ve.detalhe : null };
             }
             x.regra = p.documento ? regras[p.documento] || null : null;
+            var ig = ignorados[p.cd_pedido];
+            if (ig) { x.ignorado = ig === true ? {} : ig; res.ignorados.push(x); return; }   // 045: fora da rota até reativar
+            var pd = plano[p.cd_pedido];
+            if (pd && /^\d{4}-\d{2}-\d{2}$/.test(String(pd)) && String(pd) >= dia) x.planoDia = String(pd);   // 046: só informação
             cands.push(x);
         });
         // Prioridade: prazo (mais antigo primeiro), depois o pedido mais antigo, depois o código (estável).
@@ -581,14 +600,19 @@
         var usado = 0, cam = res.caminhao;
         cands.forEach(function (x) {
             if (v2 && !x.veiculo) { res.aguardando.push(x); return; }   // falta marcar: fora da rota
+            if (x.veiculo === 's10' && res.s10.semSaida) {   // a S10 não sai hoje (sábado): próxima saída DELA em que o cliente recebe
+                var ps = proximaSaidaCliente(dia, x.regra, cfg, 's10');
+                x.motivoFica = 'sem_saida_s10'; x.proxima = ps; x.estoura = !ps || (!!x.prazo && x.prazo < ps);
+                res.fica.push(x); return;
+            }
             if (naoRecebe(x.regra, dia)) {   // o cliente não recebe neste dia da semana: próxima saída em que recebe
-                var pc = proximaSaidaCliente(dia, x.regra, cfg);
+                var pc = proximaSaidaCliente(dia, x.regra, cfg, x.veiculo);
                 x.motivoFica = 'dia_fechado'; x.proxima = pc; x.estoura = !pc || (!!x.prazo && x.prazo < pc);
                 res.fica.push(x); return;
             }
             // Próxima saída ELEGÍVEL para este cliente (dia com saída em que ele recebe): é ela que decide segurar o
             // volume desconhecido, a data de quem fica e se estoura o prazo. Sem regra: a próxima saída de todos.
-            var proxCli = x.regra ? proximaSaidaCliente(dia, x.regra, cfg) : proxima;
+            var proxCli = x.regra ? proximaSaidaCliente(dia, x.regra, cfg, 's10') : proxima;   // (caminhão retorna antes)
             if (x.veiculo === 'caminhao') {   // caminhão: sem limite de capacidade
                 cam.pedidos.push(x); res.entregues[x.p.cd_pedido] = true;
                 if (x.v.vol == null) cam.desconhecidos++; else { cam.c24 += x.v.c24; cam.c48 += x.v.c48; cam.avulsos += x.v.avulsos; }
@@ -621,15 +645,211 @@
             var mc = montarParadas(cam.pedidos, false, om);
             cam.paradas = mc.paradas; cam.semPosicao = mc.semPosicao; cam.kmReta = mc.kmReta; cam.km = mc.km;
         } else {
-            // v2: portas (bairros do caminhão) no caminho até o CD; o CD do CEASA é a última parada, com a carga.
-            var portas = [], noCd = [];
-            cam.pedidos.forEach(function (x) { (x.entrega === 'porta' ? portas : noCd).push(x); });
-            var mp = montarParadas(portas, false, { regras: regras, tempo: tempo, fim: noCd.length ? ROTA.CEASA_CENTRO : null });
-            cam.paradas = mp.paradas; cam.semPosicao = mp.semPosicao; cam.portas = portas.length;
-            if (noCd.length) { cam.cd = paradaCd(noCd); cam.paradas = mp.paradas.concat([cam.cd]); }
+            // v2/v3: o caminhão só vai ao CD do CEASA: UMA parada com a lista de carga (sem portas no caminho).
+            cam.paradas = []; cam.semPosicao = []; cam.portas = 0;
+            if (cam.pedidos.length) { cam.cd = paradaCd(cam.pedidos); cam.paradas = [cam.cd]; }
             cam.kmReta = comprimento(ROTA.ORIGEM, cam.paradas, false); cam.km = cam.kmReta * ROTA.FATOR_ESTRADA;
         }
         cam.horario = calcularHorarios(ROTA.ORIGEM, cam.paradas, tempo, false);
+        return res;
+    }
+
+    // ===================== PLANO DA SEMANA (046) =====================
+    // Segunda-feira da semana SEGUINTE a 'dia' (a semana que o Márcio planeja).
+    function proximaSemana(dia) { var d = somaDias(dia, 1); while (diaSemana(d) !== 1) d = somaDias(d, 1); return d; }
+    // Segunda-feira da semana de 'dia' (domingo conta como fim da semana anterior).
+    function segundaDe(dia) { var w = diaSemana(dia); return somaDias(dia, w === 0 ? -6 : 1 - w); }
+    // Direção a partir da sede, em graus 0..360 (0 = norte, 90 = leste). Aproximação plana: suficiente para separar setores.
+    function anguloDe(pos) {
+        var o = ROTA.ORIGEM, dy = pos[0] - o[0], dx = (pos[1] - o[1]) * Math.cos(o[0] * Math.PI / 180);
+        var a = Math.atan2(dx, dy) * 180 / Math.PI;
+        return a < 0 ? a + 360 : a;
+    }
+    function difAng(a, b) { var d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d; }
+    function mediaAng(lista) {
+        var sx = 0, sy = 0; lista.forEach(function (a) { sx += Math.sin(a * Math.PI / 180); sy += Math.cos(a * Math.PI / 180); });
+        if (Math.abs(sx) < 1e-12 && Math.abs(sy) < 1e-12) return lista.length ? lista[0] : null;
+        var m = Math.atan2(sx, sy) * 180 / Math.PI; return m < 0 ? m + 360 : m;
+    }
+    // REGIÕES = SETORES POR ÂNGULO a partir da sede (não k-means): toda rota sai da sede, então clientes na mesma direção
+    // ficam no mesmo "raio" de viagem. O círculo é aberto no MAIOR vão angular entre clientes e cortado em k arcos
+    // contíguos (k = dias com saída da S10, no máximo 1 por cliente) escolhendo os cortes por programação dinâmica:
+    //   custo = Σ desequilíbrio de volume ((V - média)/média)² + 4·Σ excesso sobre a capacidade ((V - CAP)/CAP)²
+    //           − Σ (vão angular no corte / 30°).
+    // Resultado: corta nos VÃOS naturais entre grupos de clientes (estável: um pedido a mais num grupo não move a fronteira)
+    // e, onde não há vão, equilibra o volume. Determinístico (sem semente/iteração aleatória; empate = corte mais cedo).
+    // k-means foi descartado: depende da semente, não garante contiguidade a partir da sede e muda com pequenas variações.
+    function setores(unidades, k) {
+        var us = unidades.slice().sort(function (a, b) { return a.ang - b.ang || (a.chave < b.chave ? -1 : a.chave > b.chave ? 1 : 0); });
+        var n = us.length; if (!n || k < 1) return [];
+        var ini = 0, maior = -1;
+        for (var i = 0; i < n; i++) { var prox = i + 1 < n ? us[i + 1].ang : us[0].ang + 360, vao = prox - us[i].ang; if (vao > maior + 1e-9) { maior = vao; ini = (i + 1) % n; } }
+        var ord = us.slice(ini).concat(us.slice(0, ini)), kk = Math.min(k, n), CAP = ROTA.CAPACIDADE_S10;
+        var pre = [0]; ord.forEach(function (u, q) { pre.push(pre[q] + Math.max(u.vol || 0, ROTA.VOLUME_CX24)); });
+        var media = pre[n] / kk;
+        var gap = []; for (var g0 = 0; g0 < n - 1; g0++) { var dg = ord[g0 + 1].ang - ord[g0].ang; gap.push(dg < 0 ? dg + 360 : dg); }
+        function custo(a, b) {   // grupo = ord[a..b-1]
+            var v = pre[b] - pre[a], c = Math.pow((v - media) / media, 2);
+            if (v > CAP) c += 4 * Math.pow((v - CAP) / CAP, 2);
+            return c;
+        }
+        var f = [], de = [];
+        for (var g = 0; g <= kk; g++) { f.push(new Array(n + 1).fill(Infinity)); de.push(new Array(n + 1).fill(-1)); }
+        f[0][0] = 0;
+        for (var gg = 1; gg <= kk; gg++) {
+            for (var b = gg; b <= n - (kk - gg); b++) {
+                for (var a = gg - 1; a < b; a++) {
+                    if (f[gg - 1][a] === Infinity) continue;
+                    var v2 = f[gg - 1][a] + custo(a, b) - (a > 0 ? gap[a - 1] / 30 : 0);
+                    if (v2 < f[gg][b] - 1e-12) { f[gg][b] = v2; de[gg][b] = a; }
+                }
+            }
+        }
+        var cortes = [], fim = n;
+        for (var g2 = kk; g2 >= 1; g2--) { var a2 = de[g2][fim]; cortes.unshift([a2, fim]); fim = a2; }
+        return cortes.map(function (cb) {
+            var gr = ord.slice(cb[0], cb[1]);
+            return { unidades: gr, angIni: gr[0].ang, angFim: gr[gr.length - 1].ang, centro: mediaAng(gr.map(function (u) { return u.ang; })),
+                     prazoMin: gr.reduce(function (m, u) { return u.prazo && (!m || u.prazo < m) ? u.prazo : m; }, null),
+                     volume: gr.reduce(function (t, u) { return t + (u.vol || 0); }, 0) };
+        });
+    }
+    // planejarSemana(pedidos, clientes, semanaInicio, opts) — SUGESTÃO editável do plano da S10 nos dias em que ELA sai
+    // (ROTA.DIAS_SEM_SAIDA_S10: seg a sex). semanaInicio: qualquer dia da semana desejada ('YYYY-MM-DD'); usa a segunda
+    // dela. Dia útil da S10 com feriado (config) fica em res.semSaida; sábado/domingo nem entram. res.fim = último dia
+    // da semana com dia útil da S10 (sexta). Base: pedidos PENDENTES, não ignorados (045), marcados S10 (044). Sem marcação: res.faltaMarcar
+    // (com a sugestão; NÃO ocupam capacidade). Marcados CEASA: res.cd (lista de carga do CD, à parte).
+    // opts: { cfg, padroes, porPedido, regras, ignorados, plano: { cd_pedido: 'YYYY-MM-DD' } (046: vence a sugestão), excluir }.
+    // Regras, nesta ordem:
+    //   1. plano salvo com dia válido desta semana: o pedido vai nele (origemDia 'salvo'), mesmo passando da capacidade
+    //      (dia.excesso) ou do prazo (estoura) ou em dia que o cliente não recebe (x.diaFechado) — o Márcio decidiu;
+    //      dia salvo de OUTRA semana futura: res.foraDaSemana; dia passado / sem saída: ignorado (vale a sugestão);
+    //   2. sugestão: cliente (todos os pedidos dele juntos) -> setor por ângulo -> dia do setor; setores com prazo mais
+    //      cedo ficam nos dias mais cedo;
+    //   3. dia em que o cliente não recebe (044) e prazo: se o dia do setor não serve, o dia permitido (até o prazo, se
+    //      houver) cujo setor está mais perto em ângulo; nenhum até o prazo: o 1º dia permitido, estoura;
+    //   4. capacidade S10 (ROTA.CAPACIDADE_S10 por dia), enchendo na ordem: prioridade, prazo, pedido mais antigo; não
+    //      coube: o dia permitido de setor mais perto (respeitando o prazo, se possível); nenhum: res.sobra (motivo
+    //      'capacidade'); volume desconhecido conta 0 (dia.desconhecidos);
+    //   5. sem posição: setor do BAIRRO (média dos clientes com posição do mesmo bairro); sem isso: res.semPosicao.
+    // Cada dia: { dia, nome, pedidos, paradas, semPosicao, horario, km, volume, ocupacao (0..1+), c24, c48, avulsos,
+    // desconhecidos, excesso, regiao }. Cada pedido (x): { p, c, prazo, situacao (no dia dele), v, veiculo, marcacao,
+    // regra, dia, origemDia 'salvo'|'sugestao', diaSugerido, estoura, diaFechado, regiao, ang }.
+    function planejarSemana(pedidos, clientes, semanaInicio, opts) {
+        opts = opts || {};
+        var cfg = cfgOk(opts.cfg), padroes = opts.padroes || opts.excecoes || {}, porPedido = opts.porPedido || {};
+        var regras = regrasDe(opts.regras), ignorados = opts.ignorados || {}, plano = opts.plano || {}, excluir = opts.excluir || {};
+        var tempo = tempoDe(cfg), CAP = ROTA.CAPACIDADE_S10;
+        var ini = segundaDe(semanaInicio), todos = [], dias = [], semSaida = [], idx = {};
+        for (var i = 0; i < 7; i++) {
+            var d = somaDias(ini, i);
+            if (diasSemSaida('s10').indexOf(diaSemana(d)) >= 0) continue;   // sábado/domingo: a S10 não roda
+            todos.push(d);
+            if (temSaida(d, cfg, 's10')) { idx[d] = dias.length; dias.push(d); } else semSaida.push({ dia: d, feriado: ehFeriado(d, cfg) });
+        }
+        var res = { inicio: ini, fim: todos.length ? todos[todos.length - 1] : ini, dias: [], semSaida: semSaida, faltaMarcar: [], cd: null, cdPedidos: [], semPosicao: [], sobra: [], foraDaSemana: [], regioes: [],
+                    resumo: { pedidos: 0, estouram: 0, volume: 0, salvos: 0 } };
+        var dd = dias.map(function (d) { return { dia: d, nome: nomeDia(d), lista: [], usado: 0, regiao: null, centro: null }; });
+        var s10 = [];
+        (pedidos || []).forEach(function (p) {
+            if (ROTA.ETAPAS_PENDENTES.indexOf(p.etapa) < 0 || excluir[p.cd_pedido] || ignorados[p.cd_pedido]) return;
+            var c = p.documento ? clientes[p.documento] || null : null, m = marcacaoDe(p, padroes, porPedido);
+            var x = { p: p, c: c, prazo: prazoDe(p.dt_pedido, cfg, m ? m.veiculo : null), v: volumePedido(p), veiculo: m ? m.veiculo : null, marcacao: m ? m.origem : null,
+                      regra: p.documento ? regras[p.documento] || null : null, dia: null, origemDia: null, diaSugerido: null, estoura: false, diaFechado: false, regiao: null, ang: null };
+            if (!m) { x.sugestao = sugestaoDe(p, c, cfg); res.faltaMarcar.push(x); return; }
+            if (m.veiculo === 'caminhao') { res.cdPedidos.push(x); return; }
+            s10.push(x);
+        });
+        if (res.cdPedidos.length) res.cd = paradaCd(res.cdPedidos.map(function (x) { return { p: x.p, c: x.c, v: x.v }; }));
+        function ordX(a, b) { var pa = a.prazo || '9999', pb = b.prazo || '9999'; if (pa !== pb) return pa < pb ? -1 : 1; var da = String(a.p.dt_pedido), db = String(b.p.dt_pedido); if (da !== db) return da < db ? -1 : 1; return Number(a.p.cd_pedido) - Number(b.p.cd_pedido); }
+        // ---- unidades (cliente; pedidos salvos ficam à parte, por dia) ----
+        var porBairro = {};
+        Object.keys(clientes || {}).forEach(function (doc) { var c = clientes[doc]; if (c && c.pos && c.bairro) { var b = normBairro(c.bairro); (porBairro[b] || (porBairro[b] = [])).push(anguloDe(c.pos)); } });
+        var unid = {}, salvos = [], lista = [];
+        s10.sort(ordX).forEach(function (x) {
+            var pd = plano[x.p.cd_pedido]; pd = pd && /^\d{4}-\d{2}-\d{2}$/.test(String(pd)) ? String(pd) : null;
+            if (pd && idx[pd] != null) { x.origemDia = 'salvo'; salvos.push({ x: x, dia: pd }); return; }
+            if (pd && pd > somaDias(ini, 6)) { x.origemDia = 'salvo'; x.dia = pd; res.foraDaSemana.push(x); return; }
+            if (pd && pd >= ini) x.salvoInvalido = pd;   // salvo num dia desta semana sem saída da S10 (sábado/feriado): vale a sugestão
+            var ch = x.p.documento ? 'd:' + x.p.documento : 'p:' + x.p.cd_pedido, u = unid[ch];
+            if (!u) { u = unid[ch] = { chave: ch, xs: [], vol: 0, prazo: null, regra: x.regra, pri: !!(x.regra && x.regra.prioridade), ang: null, semVol: 0 }; lista.push(u);
+                      if (x.c && x.c.pos) u.ang = anguloDe(x.c.pos);
+                      else if (x.c && x.c.bairro && porBairro[normBairro(x.c.bairro)]) { u.ang = mediaAng(porBairro[normBairro(x.c.bairro)]); u.pelaBairro = true; } }
+            u.xs.push(x); if (x.v.vol == null) u.semVol++; else u.vol += x.v.vol;
+            if (x.prazo && (!u.prazo || x.prazo < u.prazo)) u.prazo = x.prazo;
+        });
+        // ---- salvos primeiro (vencem a sugestão) ----
+        salvos.forEach(function (sv) { var di = dd[idx[sv.dia]]; sv.x.dia = sv.dia; di.lista.push(sv.x); if (sv.x.v.vol != null) di.usado += sv.x.v.vol; });
+        // ---- regiões ----
+        var comAng = lista.filter(function (u) { return u.ang != null && !u.pelaBairro; });
+        var regs = setores(comAng, dias.length);
+        // regiões com prazo mais cedo -> dias mais cedo (empate: ângulo)
+        // (com a base = pedidos já em aberto, quase todos vencem antes da semana: desempata pelo nº de clientes vencidos)
+        regs.forEach(function (r) { r.vencidos = r.unidades.filter(function (u) { return u.prazo && u.prazo < ini; }).length; });
+        regs.sort(function (a, b) { var pa = a.prazoMin || '9999', pb = b.prazoMin || '9999'; return pa < pb ? -1 : pa > pb ? 1 : (b.vencidos - a.vencidos) || (a.angIni - b.angIni); });
+        regs.forEach(function (r, ri) { r.dia = dias[ri]; dd[ri].regiao = ri; dd[ri].centro = r.centro; r.unidades.forEach(function (u) { u.reg = ri; }); });
+        lista.forEach(function (u) {   // sem posição (pelo bairro): região do cliente com posição mais perto em ângulo
+            if (u.reg != null || u.ang == null || !comAng.length) return;
+            var m = null; comAng.forEach(function (v) { if (!m || difAng(v.ang, u.ang) < difAng(m.ang, u.ang) - 1e-9) m = v; }); u.reg = m.reg;
+        });
+        res.regioes = regs.map(function (r, ri) { return { indice: ri, dia: r.dia, angIni: Math.round(r.angIni), angFim: Math.round(r.angFim), centro: Math.round(r.centro), clientes: r.unidades.length }; });
+        // ---- dia de cada unidade: prazo, dia fechado, capacidade ----
+        function permitidos(u) { return dias.filter(function (d) { return !naoRecebe(u.regra, d); }); }
+        function pertoDe(u, cands) {   // ordena dias candidatos pelo setor mais perto em ângulo (dia sem setor: por último), depois data
+            return cands.slice().sort(function (a, b) {
+                var ca = dd[idx[a]].centro, cb = dd[idx[b]].centro;
+                var xa = ca == null || u.ang == null ? 999 : difAng(ca, u.ang), xb = cb == null || u.ang == null ? 999 : difAng(cb, u.ang);
+                return xa - xb || (a < b ? -1 : 1);
+            });
+        }
+        var semAng = lista.filter(function (u) { return u.reg == null; });
+        semAng.forEach(function (u) { u.xs.forEach(function (x) { x.motivoSemPosicao = 'sem_posicao'; res.semPosicao.push(x); }); });
+        var aloca = lista.filter(function (u) { return u.reg != null; });
+        aloca.sort(function (a, b) {
+            if (a.pri !== b.pri) return a.pri ? -1 : 1;
+            var pa = a.prazo || '9999', pb = b.prazo || '9999'; if (pa !== pb) return pa < pb ? -1 : 1;
+            // mesmo prazo: a região do dia mais cedo primeiro (quem é da região de segunda pega a segunda antes de quem
+            // só foi puxado para ela pelo prazo) — evita misturar regiões quando a capacidade aperta
+            if (a.reg !== b.reg) return a.reg - b.reg;
+            return ordX(a.xs[0], b.xs[0]) || (a.chave < b.chave ? -1 : 1);
+        });
+        aloca.forEach(function (u) {
+            var alvo = dias[u.reg], perm = permitidos(u);
+            if (!perm.length) { u.xs.forEach(function (x) { x.motivoSobra = 'dia_fechado'; x.diaSugerido = alvo; res.sobra.push(x); }); return; }
+            var noPrazo = u.prazo ? perm.filter(function (d) { return d <= u.prazo; }) : perm;
+            var base = noPrazo.length ? noPrazo : perm, estoura = !noPrazo.length && !!u.prazo;
+            var ordem = base.indexOf(alvo) >= 0 ? [alvo].concat(pertoDe(u, base.filter(function (d) { return d !== alvo; }))) : pertoDe(u, base);
+            // já vencido (nenhum dia permitido até o prazo): fica no dia da região mesmo assim, marcado (estoura)
+            var sugerido = ordem[0], escolhido = null;
+            for (var k = 0; k < ordem.length && !escolhido; k++) if (dd[idx[ordem[k]]].usado + u.vol <= CAP + 1e-9) escolhido = ordem[k];
+            if (!escolhido && !estoura && noPrazo.length < perm.length) {   // não coube até o prazo: dia depois do prazo (estoura)
+                var depois = pertoDe(u, perm.filter(function (d) { return noPrazo.indexOf(d) < 0; }));
+                for (var q = 0; q < depois.length && !escolhido; q++) if (dd[idx[depois[q]]].usado + u.vol <= CAP + 1e-9) escolhido = depois[q];
+            }
+            if (!escolhido) { u.xs.forEach(function (x) { x.motivoSobra = 'capacidade'; x.diaSugerido = sugerido; res.sobra.push(x); }); return; }
+            var di = dd[idx[escolhido]]; di.usado += u.vol;
+            u.xs.forEach(function (x) { x.dia = escolhido; x.origemDia = 'sugestao'; x.diaSugerido = escolhido; x.regiao = u.reg; x.ang = u.ang == null ? null : Math.round(u.ang); di.lista.push(x); });
+        });
+        // ---- montar os dias ----
+        dd.forEach(function (di) {
+            di.lista.forEach(function (x) {
+                x.situacao = situacaoPrazo(x.prazo, di.dia, cfg, 's10'); x.estoura = !!x.prazo && x.prazo < di.dia; x.diaFechado = naoRecebe(x.regra, di.dia);
+                if (x.ang == null && x.c && x.c.pos) x.ang = Math.round(anguloDe(x.c.pos));
+            });
+            di.lista.sort(ordX);
+            var mp = montarParadas(di.lista, cfg.voltaSede, { regras: regras, tempo: tempo });
+            var t = { c24: 0, c48: 0, avulsos: 0, desconhecidos: 0, volume: 0 };
+            di.lista.forEach(function (x) { if (x.v.vol == null) t.desconhecidos++; else { t.c24 += x.v.c24; t.c48 += x.v.c48; t.avulsos += x.v.avulsos; t.volume += x.v.vol; } });
+            res.dias.push({ dia: di.dia, nome: di.nome, pedidos: di.lista, paradas: mp.paradas, semPosicao: mp.semPosicao, km: mp.km, kmReta: mp.kmReta,
+                            horario: calcularHorarios(ROTA.ORIGEM, mp.paradas, tempo, cfg.voltaSede), volume: t.volume, ocupacao: t.volume / CAP,
+                            c24: t.c24, c48: t.c48, avulsos: t.avulsos, desconhecidos: t.desconhecidos, excesso: t.volume > CAP + 1e-9, regiao: di.regiao });
+            res.resumo.pedidos += di.lista.length; res.resumo.volume += t.volume;
+            res.resumo.estouram += di.lista.filter(function (x) { return x.estoura; }).length;
+            res.resumo.salvos += di.lista.filter(function (x) { return x.origemDia === 'salvo'; }).length;
+        });
+        res.sobra.forEach(function (x) { x.estoura = !!x.prazo && x.prazo <= res.fim; });
+        res.semPosicao.forEach(function (x) { x.estoura = !!x.prazo && x.prazo < ini; });
+        res.resumo.sobra = res.sobra.length; res.resumo.semPosicao = res.semPosicao.length; res.resumo.faltaMarcar = res.faltaMarcar.length;
         return res;
     }
 
@@ -662,6 +882,7 @@
         feriadosDoAno: feriadosDoAno,
         ehFeriado: ehFeriado,
         temSaida: temSaida,
+        diasSemSaida: diasSemSaida,
         dataBr: dataBr,
         nomeDia: nomeDia,
         proximaSaida: proximaSaida,
@@ -692,7 +913,12 @@
         marcacaoDe: marcacaoDe,
         sugestaoDe: sugestaoDe,
         entregaCaminhao: entregaCaminhao,
-        cargaCd: cargaCd
+        cargaCd: cargaCd,
+        // 046
+        planejarSemana: planejarSemana,
+        proximaSemana: proximaSemana,
+        segundaDe: segundaDe,
+        anguloDe: anguloDe
     };
     raiz.TempRioRotaCore = Core;
     if (typeof module !== 'undefined' && module.exports) module.exports = Core;

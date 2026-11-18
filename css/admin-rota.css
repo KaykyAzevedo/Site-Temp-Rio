@@ -18,7 +18,7 @@
 .rota-kpis { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; font-size: 0.85rem; color: var(--adm-tinta-2); }
 .rota-kpis strong { color: var(--adm-tinta); }
 
-/* Ocupação da S10 (volume / 1566) */
+/* Ocupação da S10 (volume / 2700 = 300 cx24) */
 .rota-ocup { height: 0.85rem; border-radius: 999px; background: var(--adm-neutro-fundo-2, rgba(255, 255, 255, 0.08)); overflow: hidden; border: 1px solid var(--adm-borda); }
 .rota-ocup-barra { height: 100%; background: linear-gradient(90deg, #5fc28a, #f0915a); border-radius: 999px; transition: width 0.3s; }
 .rota-ocup-barra.is-cheia { background: linear-gradient(90deg, #f0915a, #f08a80); }
@@ -117,19 +117,30 @@
 /* sr-only próprio (não depende do Tailwind ter gerado a classe) */
 #painel-rotas .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
-/* ---------- 044 (Rotas v2): marcação CEASA/S10, horários, regras por cliente e CD CEASA ---------- */
+/* ---------- 044/045 (Rotas v2/v3): marcação CEASA/S10, 2 colunas S10 | CEASA, horários, regras e Fora da rota ---------- */
+#painel-rotas .rota-cartao.adm-anim:not(.is-vista) { opacity: 1; }
+.rota-grade-principal { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 1.15rem; align-items: start; }
+.rota-col-s10, .rota-col-ceasa, .rota-cartao { min-width: 0; max-width: 100%; }
+@media (max-width: 1179px) { .rota-grade-principal { grid-template-columns: minmax(0, 1fr); } }
+
+.rota-cab-compacto { align-items: center; margin-bottom: 0.65rem; }
 .rota-cartao-aguardando { border-color: var(--adm-atencao-borda); }
-.rota-marc-item + .rota-marc-item { margin-top: 0.45rem; padding-top: 0.45rem; border-top: 1px dashed var(--adm-borda); }
-.rota-marc-bloco { display: flex; flex-direction: column; align-items: flex-start; gap: 0.25rem; }
+.rota-marc-item + .rota-marc-item { margin-top: 0.4rem; padding-top: 0.4rem; border-top: 1px dashed var(--adm-borda); }
+.rota-marc-linha { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; }
+.rota-marc-linha .rota-veic { margin-top: 0; }
+.rota-marc-linha .rota-veic select { padding: 0.24rem 0.45rem; font-size: 0.76rem; }
+.rota-tag-sohoje { font-size: 0.68rem; font-weight: 700; color: var(--adm-atencao); background: var(--adm-atencao-fundo); border: 1px solid var(--adm-atencao-borda);
+    border-radius: 999px; padding: 0.08rem 0.4rem; white-space: nowrap; }
+.rota-imp-veic { display: none; }
 .rota-dica-sug { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.74rem; color: var(--adm-tinta-2); }
 .rota-dica-sug i { color: var(--adm-atencao); }
-.rota-ped-tag { display: inline-block; font-size: 0.72rem; font-weight: 700; color: var(--adm-tinta-3); margin-right: 0.25rem; }
+.rota-ped-tag { display: inline-block; font-size: 0.72rem; font-weight: 700; color: var(--adm-tinta-3); }
 
-.rota-col-horario { display: flex; flex-direction: column; align-items: flex-start; gap: 0.22rem; min-width: 6.5rem; }
-.rota-eta { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.85rem; color: var(--adm-tinta); white-space: nowrap; }
-.rota-eta i { color: var(--adm-acao); font-size: 0.78rem; }
+.rota-col-horario { display: flex; flex-direction: column; align-items: flex-start; gap: 0.2rem; min-width: 5.5rem; }
+.rota-eta { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.85rem; color: var(--adm-tinta); white-space: nowrap; }
 
-.rota-regras-cli { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; margin-top: 0.3rem; }
+.rota-cli-linha { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; }
+.rota-regras-cli { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; margin-top: 0.25rem; }
 .rota-selo { display: inline-flex; align-items: center; gap: 0.28rem; padding: 0.1rem 0.48rem; border-radius: 999px; font-size: 0.71rem; font-weight: 700;
     color: var(--adm-tinta-2); background: var(--adm-neutro-fundo); border: 1px solid var(--adm-borda); white-space: nowrap; }
 .rota-selo i { color: var(--adm-acao); }
@@ -139,16 +150,21 @@
 .rota-selo-fechado { color: var(--adm-atencao); background: var(--adm-atencao-fundo); border-color: var(--adm-atencao-borda); }
 .rota-selo-fechado i { color: var(--adm-atencao); }
 .rota-obs { display: inline-flex; align-items: center; gap: 0.28rem; font-size: 0.74rem; color: var(--adm-tinta-2); background: var(--adm-neutro-fundo);
-    border: 1px dashed var(--adm-borda); border-radius: 0.45rem; padding: 0.1rem 0.45rem; max-width: 26rem; }
+    border: 1px dashed var(--adm-borda); border-radius: 0.45rem; padding: 0.1rem 0.45rem; max-width: 24rem; }
 .rota-obs i { color: var(--adm-tinta-3); }
-.rota-btn-regra { display: inline-flex; align-items: center; gap: 0.28rem; padding: 0.12rem 0.5rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700;
-    color: var(--adm-tinta); background: transparent; border: 1px solid var(--adm-borda); cursor: pointer; transition: border-color 0.15s, background 0.15s; }
+.rota-btn-regra { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.16rem 0.5rem; border-radius: 999px; font-size: 0.72rem; font-weight: 700;
+    color: var(--adm-tinta-2); background: transparent; border: 1px solid var(--adm-borda); cursor: pointer; transition: border-color 0.15s, background 0.15s, color 0.15s; }
 .rota-btn-regra i { color: var(--adm-acao); }
-.rota-btn-regra:hover, .rota-btn-regra:focus-visible { border-color: var(--adm-acao); background: var(--adm-neutro-fundo); }
+.rota-btn-regra:hover, .rota-btn-regra:focus-visible { border-color: var(--adm-acao); color: var(--adm-tinta); background: var(--adm-neutro-fundo); }
+.rota-btn-regra-ic { width: 1.55rem; height: 1.55rem; padding: 0; justify-content: center; color: var(--adm-tinta-3); }
+.rota-btn-regra-ic i { color: inherit; font-size: 0.74rem; }
+.rota-btn-regra-ic.is-ativa { color: var(--adm-atencao); border-color: var(--adm-atencao-borda); background: var(--adm-atencao-fundo); }
+.rota-btn-tirar:hover, .rota-btn-tirar:focus-visible { border-color: var(--adm-ruim-borda); color: var(--adm-ruim); background: var(--adm-ruim-fundo); }
+.rota-btn-tirar:hover i, .rota-btn-tirar:focus-visible i { color: var(--adm-ruim); }
 
-.rota-cd-bloco { border: 1px solid var(--adm-borda); border-radius: 0.75rem; padding: 0.9rem 1rem; background: var(--adm-neutro-fundo); }
-.rota-cd-cab { display: flex; align-items: flex-start; gap: 0.65rem; margin-bottom: 0.75rem; }
-.rota-num-cd { flex-shrink: 0; margin-top: 0.1rem; }
+.rota-fora summary { cursor: pointer; list-style: none; }
+.rota-fora summary::-webkit-details-marker { display: none; }
+.rota-fora[open] summary { margin-bottom: 0.5rem; }
 .rota-cd-total td { border-top: 2px solid var(--adm-borda); background: var(--adm-neutro-fundo-2, rgba(255, 255, 255, 0.04)); }
 
 .rota-dialogo-curto { width: min(30rem, calc(100vw - 2rem)); }
@@ -164,4 +180,12 @@
 .rota-banner-erro i { color: var(--adm-ruim); }
 .rota-reenq { width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center; background: var(--adm-superficie); color: var(--adm-tinta); cursor: pointer; }
 .rota-reenq:hover, .rota-reenq:focus-visible { color: var(--adm-acao); }
-@media print { body.rota-imprimindo .rota-reenq { display: none !important; } }
+@media (max-width: 640px) {
+    .rota-acoes .adm-chip, .rota-acoes .adm-botao-fantasma { font-size: 0.74rem; padding: 0.3rem 0.55rem; }
+    .rota-tabela th, .rota-tabela td { padding: 0.45rem 0.4rem; font-size: 0.78rem; }
+}
+@media print {
+    body.rota-imprimindo .rota-grade-principal { display: block !important; }
+    body.rota-imprimindo .rota-reenq, body.rota-imprimindo .rota-fora { display: none !important; }
+    body.rota-imprimindo .rota-imp-veic { display: inline !important; font-weight: 700; }
+}
