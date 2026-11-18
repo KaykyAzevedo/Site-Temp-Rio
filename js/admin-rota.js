@@ -74,7 +74,7 @@
                // Mapa: enquadramento escolhido pelo usuário, por vista ('hoje' | 'proxima'). Vazio = enquadra a rota.
                mapaVista: {}, mapaAberto: false, focoMapa: false,
                // 045 (Tirar da rota): tabela lida? pedidos ignorados { cd_pedido: {motivo, atualizado_em} }, lista aberta
-               ign045: false, ignorados: {}, foraAberto: false, focoFora: false,
+               ign045: false, ignorados: {}, foraAberto: false, focoFora: false, focoTirar: null,
                // 046 (Plano da semana da S10): tabela lida? plano salvo { cd_pedido: 'YYYY-MM-DD' }, rascunho local e semana alvo
                pln046: false, plano: {}, rascSemana: {}, semanaIni: null, semSalvando: false, msgSemana: '', focoSem: null };
     var NUM = new Intl.NumberFormat('pt-BR'), NUM1 = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 });
@@ -1045,7 +1045,13 @@
         if (!dlg._ligado) {
             dlg._ligado = true;
             var msg = dlg.querySelector('#rota-tirar-msg');
-            var cancelar = function () { var b = dlg._btn; dlg._p = null; if (dlg.open) dlg.close(); if (b && b.isConnected) b.focus(); };
+            var cancelar = function () {
+                var b = dlg._btn, pAlvo = dlg._p;
+                dlg._p = null;
+                if (st.redesenhoPendente && pAlvo) st.focoTirar = String(pAlvo.cd_pedido);
+                if (dlg.open) dlg.close();
+                if (b && b.isConnected) b.focus();
+            };
             var confirmar = function () {
                 var alvoP = dlg._p; if (!alvoP) return;
                 var motivo = String(dlg.querySelector('#rota-tirar-motivo').value || '').replace(/\s+/g, ' ').trim();
@@ -1800,10 +1806,17 @@
             st.focoVeiculo = null;
             if (alvoFoco) alvoFoco.focus();
         }
-        if (st.focoRegra) {
+        if (st.focoTirar) {
+            var alvoTirar = alvo.querySelector('[data-rota-tirar="' + st.focoTirar + '"]');
+            st.focoTirar = null;
+            st.focoPedido = null;
+            st.focoFora = false;
+            if (alvoTirar) alvoTirar.focus();
+        } else if (st.focoRegra) {
             var alvoReg = alvo.querySelector('[data-rota-regra="' + st.focoRegra + '"]');
             st.focoRegra = null;
             st.focoPedido = null;
+            st.focoFora = false;
             if (alvoReg) alvoReg.focus();
         } else if (st.focoPedido) {
             var alvoPed = alvo.querySelector('[data-rota-marcar="' + st.focoPedido + '"]');
@@ -1861,7 +1874,7 @@
             st.focoVeiculo = null; st.focoPedido = null; st.focoRegra = null; st.regraSalvando = false; st.redesenhoPendente = false;
             st.mut = 0; st.recargaPendente = false; st.erroV2 = null; st.desatualizado = false; st.ultimoV2 = null; st.avisoPerm = null;
             st.mapaVista = {}; st.mapaAberto = false; st.focoMapa = false;
-            st.ign045 = false; st.ignorados = {}; st.foraAberto = false; st.focoFora = false;
+            st.ign045 = false; st.ignorados = {}; st.foraAberto = false; st.focoFora = false; st.focoTirar = null;
             st.pln046 = false; st.plano = {}; st.rascSemana = {}; st.semanaIni = null; st.semSalvando = false; st.msgSemana = ''; st.focoSem = null;
         },
         planejador: Planejador
