@@ -421,7 +421,7 @@
     }
 
     // ===================== CEASA =====================
-    function norm(s) { return String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim(); }
+    function norm(s) { return String(s == null ? '' : s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim(); }
     // Retorna o motivo ('endereco' | 'av_brasil_19001' | 'raio') ou null.
     function motivoCeasa(c) {
         if (!c) return null;
