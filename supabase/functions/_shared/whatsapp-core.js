@@ -242,15 +242,16 @@
     var MODELOS = {
         relatorio_diario: 'Resumo das contas a receber de {{1}}.\nTotal vencido em aberto: {{2}}.\nTotal que vence hoje: {{3}}.\nTotal a vencer nos próximos 7 dias: {{4}}.\nMaiores valores vencidos por cliente: {{5}}.\nDados do ERP: {{6}}.\nMais detalhes no painel: {{7}}\nMensagem automática do Temp Rio.',
         rota_do_dia: 'Rota do dia do veículo {{1}}, saída de {{2}}.\nTrecho desta mensagem: {{3}}.\nParadas em ordem de entrega: {{4}}\nMapa ou painel deste trecho: {{5}}\nMensagem automática do Temp Rio.',
-        alertas_operacao: 'Alertas da operação do Temp Rio em {{1}}.\nPontos que precisam de atenção: {{2}}\nConfira os detalhes no painel: {{3}}\nMensagem automática do Temp Rio.'
+        // _v2: a Meta classificou o 1º texto como MARKETING; este é seco/operacional para ficar UTILITY (o antigo fica parado lá).
+        alertas_operacao_v2: 'Aviso de operação do Temp Rio em {{1}}.\nItens para conferir hoje: {{2}}\nDetalhes no painel interno: {{3}}\nMensagem automática do Temp Rio.'
     };
     WA.CORPO_MAX = 1024;   // limite do corpo do template na Meta (texto fixo + parâmetros)
     // Orçamento de caracteres por parâmetro ({{1}}, {{2}}, ...): texto fixo + soma dos limites <= CORPO_MAX no PIOR caso
-    // (fixo: relatorio 236, rota 153, alertas 134). parte() aplica estes limites a todo parâmetro (corte com '…').
+    // (fixo: relatorio 236, rota 153, alertas_v2 126). parte() aplica estes limites a todo parâmetro (corte com '…').
     WA.LIMITES = {
         relatorio_diario: [25, 140, 60, 60, 300, 60, 140],
         rota_do_dia: [20, 25, 40, 480, 300],
-        alertas_operacao: [25, 750, 110]
+        alertas_operacao_v2: [25, 750, 110]
     };
     function renderizar(parte) {
         return MODELOS[parte.modelo].replace(/\{\{(\d+)\}\}/g, function (_, n) { return parte.params[Number(n) - 1]; });
@@ -273,8 +274,12 @@
         if (!msg || !msg.partes || !msg.partes.length) return [{ parte: null, partes: null, corpo: msg && msg.texto ? corpoLog(msg.texto) : null }];
         return msg.partes.map(function (p, i) { return { parte: i + 1, partes: msg.partes.length, corpo: corpoLog(renderizar(p)) }; });
     }
+    // Nomes de template aposentados na Meta -> o atual. Rotina ainda gravada com o nome antigo manda o novo, e a prévia
+    // continua idêntica ao que a Meta entrega (o texto renderizado é sempre o de MODELOS[modelo]).
+    var APOSENTADOS = { alertas_operacao: 'alertas_operacao_v2' };
     function parte(modelo, template, params) {
         var lim = WA.LIMITES[modelo] || [];
+        if (template && APOSENTADOS[template]) template = APOSENTADOS[template];
         return { modelo: modelo, template: template || modelo, params: params.map(function (v, i) { return param(v, lim[i]); }) };
     }
     // Empacota itens inteiros (nunca corta um item no meio) em grupos de até maxItens e maxChars (juntos com sep).
@@ -446,29 +451,29 @@
                     : nomeNeutro(p.cliente_tipo);
                 return '#' + p.cd_pedido + ' ' + nm + ' (' + Math.floor((t - new Date(p.dt_pedido).getTime()) / 864e5) + 'd)';
             });
-            itens.push('📦 ' + plural(d.parados.length, 'pedido do ERP parado', 'pedidos do ERP parados') + ' há mais de ' + WA.PARADO_ERP_DIAS + ' dias: ' + ex.join(', ') + (d.parados.length > 3 ? '…' : ''));
+            itens.push(plural(d.parados.length, 'pedido do ERP parado', 'pedidos do ERP parados') + ' há mais de ' + WA.PARADO_ERP_DIAS + ' dias: ' + ex.join(', ') + (d.parados.length > 3 ? '…' : ''));
         }
         if (d.siteAguardando && d.siteAguardando.length) {
             var h = Math.floor((t - new Date(d.siteAguardando[0].criado_em).getTime()) / 36e5);
-            itens.push('🛒 ' + plural(d.siteAguardando.length, 'pedido do site aguardando', 'pedidos do site aguardando') + ' há mais de ' + WA.AGUARDANDO_SITE_HORAS + ' h (o mais antigo: ' + (h >= 48 ? Math.floor(h / 24) + ' dias' : h + ' h') + ')');
+            itens.push(plural(d.siteAguardando.length, 'pedido do site aguardando', 'pedidos do site aguardando') + ' há mais de ' + WA.AGUARDANDO_SITE_HORAS + ' h (o mais antigo: ' + (h >= 48 ? Math.floor(h / 24) + ' dias' : h + ' h') + ')');
         }
         var parados = (d.coletas || []).map(function (c) {
             if (!c.ultima) return c.nome + ' (nenhuma coleta ok registrada)';
             var min = Math.floor((t - new Date(c.ultima).getTime()) / 6e4);
             return min > c.limiteMin ? c.nome + ' (há ' + quantoTempo(min) + ', última ' + core.dataBr(core.diaSP(c.ultima)) + ' ' + horaMin(c.ultima) + ')' : null;
         }).filter(Boolean);
-        if (parados.length) itens.push('🔌 Coleta do ERP parada: ' + parados.join('; '));
+        if (parados.length) itens.push('Coleta do ERP parada: ' + parados.join('; '));
         if (d.estoque && d.estoque.length) {
             var vistos = {}, nomes = [];
             d.estoque.forEach(function (e) { var k = String(e.nome); if (!vistos[k]) { vistos[k] = 1; nomes.push(nomeCurto(e.nome, 28) + (e.tipo === 'esgotou' ? ' (esgotou)' : ' (baixo)')); } });
-            itens.push('📉 Estoque crítico (24 h): ' + nomes.slice(0, 5).join(', ') + (nomes.length > 5 ? ' e mais ' + (nomes.length - 5) : ''));
+            itens.push('Estoque crítico (24 h): ' + nomes.slice(0, 5).join(', ') + (nomes.length > 5 ? ' e mais ' + (nomes.length - 5) : ''));
         }
-        if (!itens.length) return { vazio: 'nada a alertar', texto: 'Alertas — ' + dataLonga(hoje) + ': nada a alertar.', partes: [] };
+        if (!itens.length) return { vazio: 'nada a alertar', texto: 'Aviso de operação — ' + dataLonga(hoje) + ': nada a conferir.', partes: [] };
         // Itens inteiros (cada um até 300), juntos até 750; o que não couber vira "+N no painel" (nunca corta no meio).
         var cab = itens.map(function (i) { return nomeCurto(i, 300); }), cabe = [], tam = 0;
         cab.forEach(function (i, k) { var add = (cabe.length ? 3 : 0) + i.length; if (tam + add <= 720 && cabe.length === k) { cabe.push(i); tam += add; } });
         var lista = cabe.join(' | ') + (cabe.length < cab.length ? ' | (+' + (cab.length - cabe.length) + ' no painel)' : '');
-        var partes = [parte('alertas_operacao', opts.template, [param(dataLonga(hoje) + ' ' + horaMin(agora), 40), param(lista, 750),
+        var partes = [parte('alertas_operacao_v2', opts.template, [param(dataLonga(hoje) + ' ' + horaMin(agora), 40), param(lista, 750),
                                                                  param(linkPainel(opts.painelUrl, '') || 'abra o painel', 150)])];
         return { texto: textoDe(partes), partes: partes, resumo: { itens: itens.length } };
     }

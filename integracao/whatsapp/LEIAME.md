@@ -124,16 +124,16 @@ Arquivos:
      - `{{3}}` paradas 1–3 de 3 (outros casos: "sem posição no mapa, 5–6 de 6", "parada 7 de 7 (última)", "aviso")
      - `{{4}}` 1) ~07:04 Mercado Exemplo — Barra da Tijuca — 5 cx24; 2) ~07:24 Hortifruti Ficticio — Jacarepaguá — 3 cx24; 3) ~07:57 Padaria Modelo — Recreio dos Bandeiran… — 2 cx24 + 1 cx48 — recebe 08:00–11:00
      - `{{5}}` https://www.google.com/maps/dir/?api=1&travelmode=driving&origin=-23.00300,-43.32640&destination=-22.99900,-43.38640&waypoints=-22.99100%2C-43.33040%7C-22.96300%2C-43.32640 (sem posição: "sem link (cliente sem posição no mapa)"; no aviso de rota longa: o link do painel)
-   - **`alertas_operacao`**
+   - **`alertas_operacao_v2`**: categoria **Utility**. O 1º texto (`alertas_operacao`) foi reclassificado pela Meta como Marketing e fica parado lá; por isso o tom é seco, sem emoji e sem palavra de chamada. Rotina ainda gravada com `alertas_operacao` manda `alertas_operacao_v2`.
      ```
-     Alertas da operação do Temp Rio em {{1}}.
-     Pontos que precisam de atenção: {{2}}
-     Confira os detalhes no painel: {{3}}
+     Aviso de operação do Temp Rio em {{1}}.
+     Itens para conferir hoje: {{2}}
+     Detalhes no painel interno: {{3}}
      Mensagem automática do Temp Rio.
      ```
      Exemplos:
      - `{{1}}` segunda, 16/11 06:10
-     - `{{2}}` 📦 1 pedido do ERP parado há mais de 7 dias: #48120 Padaria Modelo (13d) | 🔌 Coleta do ERP parada: pedidos (há 70 min, última 16/11 05:00)
+     - `{{2}}` 1 pedido do ERP parado há mais de 7 dias: #48120 Padaria Modelo (13d) | Coleta do ERP parada: pedidos (há 70 min, última 16/11 05:00)
      - `{{3}}` https://www.exemplo.com.br/admin.html
 
    Se usar outro nome de template, troque no campo "Template na Meta" da rotina, no painel.

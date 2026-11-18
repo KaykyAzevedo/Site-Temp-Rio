@@ -132,3 +132,31 @@ test('T1: montarRota (v1 e v2) com emoji na fronteira do nome/bairro: parâmetro
         assert.ok(ok(m.texto));
     }
 });
+
+// ---------- alertas_operacao_v2: a Meta reclassificou o 1º texto como MARKETING; o v2 tem de parecer aviso operacional (UTILITY) ----------
+const EMOJI = /\p{Extended_Pictographic}/u;
+const PROMO = /\b(alertas?|oferta|promo\w*|desconto|grátis|aproveite|imperd\w*|novidade|compre|urgente|atenção)\b/iu;
+test('alertas_operacao_v2: nome novo, antigo fora de MODELOS/LIMITES, tom seco sem emoji nem chamada', () => {
+    assert.ok(W.MODELOS.alertas_operacao_v2 && W.WA.LIMITES.alertas_operacao_v2);
+    assert.equal(W.MODELOS.alertas_operacao, undefined);
+    assert.equal(W.WA.LIMITES.alertas_operacao, undefined);
+    for (const corpo of Object.values(W.MODELOS)) assert.ok(!EMOJI.test(corpo), corpo);
+    assert.ok(!PROMO.test(W.MODELOS.alertas_operacao_v2), W.MODELOS.alertas_operacao_v2);
+});
+test('alertas_operacao_v2: montarAlertas usa o v2, itens sem emoji; rotina gravada com o nome antigo manda o v2', () => {
+    const agora = new Date('2026-11-16T09:10:00Z');
+    const d = { parados: [{ cd_pedido: 48120, dt_pedido: '2026-11-02T10:00:00Z', cliente_tipo: 'cnpj', documento: '11222333000181' }], nomes: { '11222333000181': { nome: 'Padaria Modelo' } },
+        siteAguardando: [{ criado_em: '2026-11-14T12:00:00Z' }], coletas: [{ nome: 'pedidos', limiteMin: 30, ultima: '2026-11-16T08:00:00Z' }], estoque: [{ nome: 'Sorvete Ficticio', tipo: 'esgotou' }] };
+    for (const [tpl, esperado] of [[undefined, 'alertas_operacao_v2'], ['alertas_operacao', 'alertas_operacao_v2'], ['alertas_operacao_v2', 'alertas_operacao_v2'], ['outro_nome', 'outro_nome']]) {
+        const m = W.montarAlertas(d, agora, { template: tpl, painelUrl: 'https://www.exemplo.com.br' });
+        assert.equal(m.partes.length, 1);
+        assert.equal(m.partes[0].modelo, 'alertas_operacao_v2');
+        assert.equal(m.partes[0].template, esperado, String(tpl));
+        assert.equal(m.resumo.itens, 4);
+        assert.ok(!EMOJI.test(m.texto), m.texto);
+        assert.ok(m.texto.startsWith('Aviso de operação do Temp Rio em segunda, 16/11 06:10.\nItens para conferir hoje: 1 pedido do ERP parado há mais de 7 dias: #48120 Padaria Modelo (13d) | 1 pedido do site aguardando'), m.texto);
+        assert.equal(m.texto, W.renderizar(m.partes[0]));
+    }
+    // as outras rotinas não são afetadas pelo mapa de nomes aposentados
+    assert.equal(W.montarReceber({ titulos: [], nomes: {}, coletado: null }, agora, { template: 'relatorio_diario' }).partes[0].template, 'relatorio_diario');
+});
