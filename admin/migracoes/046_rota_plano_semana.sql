@@ -50,6 +50,27 @@ drop trigger if exists rota_046_plano_carimbar on public.rota_plano_semana;
 create trigger rota_046_plano_carimbar before insert or update on public.rota_plano_semana
   for each row execute function public.rota_040_veiculo_carimbar();
 
+-- Trava comum de TODA gravacao do plano (PS-1): a RPC e o insert/update/delete direto (mover um pedido, inclusive
+-- entre semanas) pegam o mesmo advisory lock de transacao. Sem ela, duas gravacoes da semana ao mesmo tempo viravam a
+-- uniao das duas listas (o DELETE de uma nao enxerga o INSERT ainda nao confirmado da outra, em Read Committed).
+-- Com ela, a segunda espera a primeira confirmar e substitui o que a primeira gravou (o ultimo salvamento vence).
+-- Gatilho por COMANDO (nao por linha): 1 lock por comando, solto no fim da transacao.
+create or replace function public.rota_046_plano_travar()
+returns trigger
+language plpgsql
+set search_path = pg_catalog
+as $$
+begin
+  perform pg_catalog.pg_advisory_xact_lock(5100, 4601);
+  return null;
+end;
+$$;
+revoke all on function public.rota_046_plano_travar() from public, anon, authenticated;
+
+drop trigger if exists rota_046_plano_travar on public.rota_plano_semana;
+create trigger rota_046_plano_travar before insert or update or delete on public.rota_plano_semana
+  for each statement execute function public.rota_046_plano_travar();
+
 alter table public.rota_plano_semana enable row level security;
 revoke all on public.rota_plano_semana from public, anon, authenticated;
 grant select, insert, update, delete on public.rota_plano_semana to authenticated;
@@ -87,6 +108,8 @@ begin
   if not public.pode_marcar_rota() then
     raise exception 'sem permissao para salvar o plano' using errcode = '42501';
   end if;
+  -- Trava comum das gravacoes do plano (a mesma do gatilho rota_046_plano_travar), ANTES de ler/apagar a semana.
+  perform pg_catalog.pg_advisory_xact_lock(5100, 4601);
   if p_inicio is null or extract(isodow from p_inicio) <> 1 or p_itens is null or jsonb_typeof(p_itens) <> 'array'
      or jsonb_array_length(p_itens) > 3000 then
     raise exception 'parametro invalido' using errcode = '22023';

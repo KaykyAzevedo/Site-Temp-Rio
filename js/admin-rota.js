@@ -18,7 +18,8 @@
  *   solidcon_clientes (logradouro/número/bairro para a regra do CEASA e a lista),
  *   rota_config e rota_cliente_veiculo (040),
  *   rota_pedido_veiculo, rota_cliente_regras, pode_marcar_rota() e rota_044_marcar (044),
- *   rota_pedido_ignorado (045, opcional: sem ela o botão "Tirar da rota" não aparece).
+ *   rota_pedido_ignorado (045, opcional: sem ela o botão "Tirar da rota" não aparece),
+ *   rota_plano_semana e rota_046_salvar_semana (046, opcional: plano de referência seg–sex da S10).
  * ===================================================================== */
 (function (raiz) {
     'use strict';
@@ -38,9 +39,12 @@
     var dataBr = core.dataBr;
     var nomeDia = core.nomeDia;
     var proximaSaida = core.proximaSaida;
+    var proximaSemana = core.proximaSemana;
+    var segundaDe = core.segundaDe;
     var km = core.km;
     var norm = core.norm;
     var planejar = core.planejar;
+    var planejarSemana = core.planejarSemana;
     var linksGoogleMaps = core.linksGoogleMaps;
     var hhmm = core.hhmm;
     var minutosDe = core.minutosDe;
@@ -70,7 +74,9 @@
                // Mapa: enquadramento escolhido pelo usuário, por vista ('hoje' | 'proxima'). Vazio = enquadra a rota.
                mapaVista: {}, mapaAberto: false, focoMapa: false,
                // 045 (Tirar da rota): tabela lida? pedidos ignorados { cd_pedido: {motivo, atualizado_em} }, lista aberta
-               ign045: false, ignorados: {}, foraAberto: false, focoFora: false };
+               ign045: false, ignorados: {}, foraAberto: false, focoFora: false,
+               // 046 (Plano da semana da S10): tabela lida? plano salvo { cd_pedido: 'YYYY-MM-DD' }, rascunho local e semana alvo
+               pln046: false, plano: {}, rascSemana: {}, semanaIni: null, semSalvando: false, msgSemana: '', focoSem: null };
     var NUM = new Intl.NumberFormat('pt-BR'), NUM1 = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 });
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
     function brl(c) { return c == null ? '—' : (Number(c) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
@@ -100,9 +106,9 @@
         if (st.mapa) { try { st.mapa.remove(); } catch (e) { /* já removido */ } st.mapa = null; }
     }
 
-    // Gravação em andamento (marcação, exceção v1, regra ou configuração)?
+    // Gravação em andamento (marcação, exceção v1, regra, configuração ou plano da semana)?
     var MSG_ESPERA = 'Atualizando assim que a gravação em andamento terminar…';
-    function pendentes() { return Object.keys(st.gravandoVeiculo).length > 0 || !!st.regraSalvando || !!st.dlgSalvando; }
+    function pendentes() { return Object.keys(st.gravandoVeiculo).length > 0 || !!st.regraSalvando || !!st.dlgSalvando || !!st.semSalvando; }
     // Chamada quando QUALQUER gravação termina (ok ou erro), antes do redesenho: sobe a versão e solta a recarga adiada.
     function aposMutacao() {
         st.mut++;
@@ -129,7 +135,9 @@
             paginar(function () { return sb.from('rota_cliente_regras').select('documento,janela_inicio,janela_fim,dias_sem_receber,prioridade,observacao').order('documento', { ascending: true }); }, 20000),
             sb.rpc('pode_marcar_rota'),
             // 045 (opcional): pedidos tirados da rota até reativar. Ausente = ninguém ignorado e sem o botão.
-            paginar(function () { return sb.from('rota_pedido_ignorado').select('cd_pedido,motivo,atualizado_em').order('cd_pedido', { ascending: true }); }, 20000)
+            paginar(function () { return sb.from('rota_pedido_ignorado').select('cd_pedido,motivo,atualizado_em').order('cd_pedido', { ascending: true }); }, 20000),
+            // 046 (opcional): plano de referência da semana da S10. Ausente = sub-aba mostra sugestão sem salvar.
+            paginar(function () { return sb.from('rota_plano_semana').select('cd_pedido,dia').order('cd_pedido', { ascending: true }); }, 20000)
         ]).then(function (rs) {
             if (seq !== st.seq) return;
             if (rs[0].error) throw rs[0].error;
@@ -178,7 +186,7 @@
                 var sy = rs[1] && !rs[1].error && rs[1].data && rs[1].data[0];
                 st.coletado = sy ? sy.coletado_em : null;
                 st.posErro = rp && rp.erro ? rp.erro : (!rp && rs[2] && rs[2].error ? String(rs[2].error.message || rs[2].error) : null);
-                lerConfig(rs[3], rs[4], rs[5], rs[6], rs[7], rs[8]);
+                lerConfig(rs[3], rs[4], rs[5], rs[6], rs[7], rs[8], rs[9]);
                 st.carregando = false; st.carregado = true; desenhar();
             });
         }).catch(function (e) {
@@ -189,7 +197,7 @@
 
     // Função inexistente (041/044 não aplicada): PostgREST PGRST202 / Postgres 42883.
     function rpcAusente(err) { return !!err && /PGRST202|42883|Could not find the function/i.test(String(err.code || '') + ' ' + String(err.message || '')); }
-    // Tabela inexistente (040/044/045 não aplicada): SÓ PostgREST PGRST205 ou Postgres 42P01 referente à própria tabela.
+    // Tabela inexistente (040/044/045/046 não aplicada): SÓ PostgREST PGRST205 ou Postgres 42P01 referente à própria tabela.
     // Coluna ausente (42703 / PGRST204), outra relação ou erro sem código NÃO são ausência: viram erro (mesmo critério de whatsapp-core).
     function tabelaAusente(err, tabela) {
         if (!err) return false;
@@ -199,7 +207,7 @@
         var m = msg.match(/table '([^']+)'/i) || msg.match(/relation "([^"]+)"/i) || msg.match(/table ([^\s']+)/i);
         return !m || m[1] === tabela || m[1] === 'public.' + tabela;
     }
-    function lerConfig(rc, rx, rp, rr, pm, rg) {
+    function lerConfig(rc, rx, rp, rr, pm, rg, rpl) {
         st.cfgAusente = false; st.cfgErro = null;
         if (rc && rc.error) {
             if (tabelaAusente(rc.error, 'rota_config')) st.cfgAusente = true; else st.cfgErro = String(rc.error.message || rc.error);
@@ -228,8 +236,9 @@
             st.regras = {};
             st.podeMarcar = false;
             st.ign045 = false; st.ignorados = {};
+            st.pln046 = false; st.plano = {};
             st.erroV2 = null; st.desatualizado = false; st.avisoPerm = null;
-            if (!st.v2) { st.ultimoV2 = null; return; }   // a 045 depende da 044: sem v2, sem o botao Tirar da rota
+            if (!st.v2) { st.ultimoV2 = null; return; }   // a 045/046 dependem da 044: sem v2, sem Tirar e sem Semana
             // UI2: erro de leitura que NÃO é 044 ausente (timeout 57014, rede, RLS...) não pode virar "mapa vazio".
             var erros = [];
             if (erroPadroes) erros.push('padrões por cliente: ' + erroPadroes);
@@ -245,6 +254,16 @@
                 st.ign045 = true;
                 erros.push('pedidos fora da rota: ' + String(rg.error.message || rg.error));
             }
+            // 046: tabela ausente (PGRST205/42P01 da própria rota_plano_semana) = sugestão sem salvar; qualquer outro erro = UI2.
+            if (rpl && !rpl.error) {
+                st.pln046 = true;
+                (rpl.data || []).forEach(function (l) {
+                    if (l && l.cd_pedido != null && /^\d{4}-\d{2}-\d{2}/.test(String(l.dia || ''))) st.plano[l.cd_pedido] = String(l.dia).slice(0, 10);
+                });
+            } else if (rpl && rpl.error && !tabelaAusente(rpl.error, 'rota_plano_semana')) {
+                st.pln046 = true;
+                erros.push('plano da semana: ' + String(rpl.error.message || rpl.error));
+            }
             if (pm && !pm.error) st.podeMarcar = !!pm.data;
             else st.avisoPerm = 'Não foi possível conferir a permissão de marcar (' + String((pm && pm.error && (pm.error.message || pm.error)) || 'sem resposta') + '): edição desligada até atualizar.';
             if (erros.length) {
@@ -252,12 +271,13 @@
                 if (st.ultimoV2) {   // mostra o último retrato completo, marcado como desatualizado, sem edição
                     st.excecoes = st.ultimoV2.excecoes; st.porPedido = st.ultimoV2.porPedido; st.regras = st.ultimoV2.regras;
                     st.ignorados = st.ultimoV2.ignorados || {};
+                    st.plano = st.ultimoV2.plano || {};
                     st.desatualizado = true;
                 }
                 return;
             }
             // Leitura completa: vira o "último retrato" (referências: as gravações confirmadas mexem nos mesmos objetos).
-            st.ultimoV2 = { excecoes: st.excecoes, porPedido: st.porPedido, regras: st.regras, ignorados: st.ignorados, em: new Date() };
+            st.ultimoV2 = { excecoes: st.excecoes, porPedido: st.porPedido, regras: st.regras, ignorados: st.ignorados, plano: st.plano, em: new Date() };
         }
     }
     // "Configurar rota" (rota_config): sempre só admin (RLS eh_admin()).
@@ -267,6 +287,8 @@
     function podeEditar() { return st.v2 ? !!st.podeMarcar && !st.erroV2 : podeConfigurar(); }
     // 045: "Tirar da rota" / "Voltar para a rota" — só com a 045 lida e quem pode marcar.
     function podeTirar() { return st.v2 && st.ign045 && podeEditar(); }
+    // 046: salvar plano da semana no banco — só com a 046 lida e quem pode marcar.
+    function podeSalvarSemana() { return st.v2 && st.pln046 && podeEditar(); }
 
     var SIT = { vencido: ['Vencido', 'rota-sit-vencido', 'fa-triangle-exclamation'], hoje: ['Vence hoje', 'rota-sit-hoje', 'fa-hourglass-end'],
                 amanha: ['Vence na próxima saída', 'rota-sit-amanha', 'fa-hourglass-half'], ok: ['No prazo', 'rota-sit-ok', 'fa-check'], sem_data: ['Sem data', 'rota-sit-ok', 'fa-question'] };
@@ -417,6 +439,23 @@
         return '<div class="rota-col-horario">' + partes.join(' ') + '</div>';
     }
 
+    // 046: selo informativo "planejado p/ qua 25/11" na rota do dia (só referência).
+    function seloPlanoDia(x) {
+        if (!st.v2 || !x || !x.planoDia) return '';
+        var rot = (DIAS_ROTULO[diaSemana(x.planoDia)] || nomeDia(x.planoDia)) + ' ' + dataBr(x.planoDia);
+        return '<span class="rota-selo rota-selo-plano" title="Referência do plano da semana"><i class="fa-regular fa-calendar" aria-hidden="true"></i>planejado p/ ' + esc(rot) + '</span>';
+    }
+    function selosPlanoParada(sp) {
+        if (!st.v2 || !sp || !sp.pedidos) return '';
+        var vistos = {}, out = [];
+        sp.pedidos.forEach(function (x) {
+            if (!x.planoDia || vistos[x.planoDia]) return;
+            vistos[x.planoDia] = true;
+            out.push(seloPlanoDia(x));
+        });
+        return out.join(' ');
+    }
+
     function htmlParada(sp, n) {
         var cx = sp.pedidos.map(function (x) { return txtCaixas(x.v); }).join('<br>');
         var val = sp.pedidos.reduce(function (a, x) { return a + (Number(x.p.valor_centavos) || 0); }, 0);
@@ -433,13 +472,14 @@
                 '<td data-rotulo="Veículo">' + celulaVeiculoParada(sp, nome) + '</td></tr>';
         }
         var prazoRuim = seloPrazo(pior, true);
+        var plDia = selosPlanoParada(sp);
         return '<tr' + (atrasada ? ' class="rota-linha-ruim"' : '') + '><td class="rota-n">' + (n == null ? '—' : n) + '</td>' +
             '<td data-rotulo="Hora">' + celulaHorarioParada(sp) + '</td>' +
             '<td><div class="rota-cli-linha"><strong>' + esc(nome) + '</strong>' + botaoRegraCliente(sp.documento, nome) + '</div>' +
             '<div class="rota-sub">' + esc([sp.bairro, sp.cidade].filter(Boolean).join(' · ') || 'sem bairro') +
             ' · #' + sp.pedidos.map(function (x) { return esc(x.p.cd_pedido); }).join(', #') +
             (sp.precisao === 'bairro' ? ' · <span class="rota-aviso-txt">pos. aprox.</span>' : '') +
-            (prazoRuim ? ' ' + prazoRuim : '') + '</div>' +
+            (prazoRuim ? ' ' + prazoRuim : '') + (plDia ? ' ' + plDia : '') + '</div>' +
             htmlRegrasCliente(sp.documento, nome, false, false) + '</td>' +
             '<td data-rotulo="Caixas">' + cx + '</td>' +
             '<td data-rotulo="Veículo">' + celulaVeiculoParada(sp, nome) + '</td></tr>';
@@ -526,10 +566,14 @@
             (avisos.length ? '<ul class="rota-avisos">' + avisos.map(function (a) { return '<li><i class="fa-solid fa-circle-exclamation" aria-hidden="true"></i> ' + esc(a) + '</li>'; }).join('') + '</ul>' : '') +
             (barraGmaps ? '<div class="rota-gmaps mt-2 no-print">' + barraGmaps + '</div>' : '') +
             (st.mapaAberto && s.paradas.length ? '<div id="rota-mapa" class="adm-mapa-escuro rota-mapa" role="img" aria-label="Mapa da rota da S10 com ' + NUM.format(s.paradas.length) + ' paradas numeradas"></div>' : '') +
-            tabelaParadas(s, 'Nada para a S10 neste dia') + '</section>';
+            tabelaParadas(s, s.semSaida ? 'A S10 não sai sábado' : 'Nada para a S10 neste dia') + '</section>';
     }
 
     function seloMotivoFica(x) {
+        if (x.motivoFica === 'sem_saida_s10') {
+            return '<span class="rota-selo rota-selo-fechado"><i class="fa-solid fa-calendar-xmark" aria-hidden="true"></i>a S10 não sai sábado' +
+                (x.proxima ? ' · próxima: ' + esc(nomeDia(x.proxima) + ' ' + dataBr(x.proxima)) : '') + '</span>';
+        }
         if (x.motivoFica === 'dia_fechado') {
             return '<span class="rota-selo rota-selo-fechado"><i class="fa-solid fa-calendar-xmark" aria-hidden="true"></i>não recebe neste dia' +
                 (x.proxima ? ' · próxima: ' + esc(nomeDia(x.proxima) + ' ' + dataBr(x.proxima)) : ' · sem próxima data') + '</span>';
@@ -542,7 +586,7 @@
     function htmlFica(pl) {
         if (!pl.fica.length) return '';
         var estouram = pl.fica.filter(function (x) { return x.estoura; }).length;
-        var proxPadrao = proximaSaida(pl.dia, false, pl.cfg);
+        var proxPadrao = proximaSaida(pl.dia, false, pl.cfg, 's10');
         var datasDif = pl.fica.some(function (x) { return x.proxima !== proxPadrao; });
         var titProx = datasDif ? 'próxima data elegível'
             : proxPadrao ? esc(nomeDia(proxPadrao)) + ' ' + esc(dataBr(proxPadrao)) : 'sem saída nos próximos ' + NUM.format(ROTA.BUSCA_SAIDA_DIAS) + ' dias';
@@ -553,11 +597,12 @@
             pl.fica.map(function (x) {
                 var nome = nomeCliente(x.c, x);
                 var prazoRuim = seloPrazo(x, true);
+                var plDia = seloPlanoDia(x);
                 return '<tr' + (x.estoura ? ' class="rota-linha-ruim"' : '') + '><td><div class="rota-cli-linha"><strong>' + esc(nome) + '</strong>' + botaoRegraCliente(x.p.documento, nome) + '</div>' +
                     '<div class="rota-sub">' + esc((x.c && x.c.bairro) || 'sem bairro') +
                     ' · #' + esc(x.p.cd_pedido) + ' · ' + seloMotivoFica(x) +
-                    (x.motivoFica !== 'dia_fechado' && x.proxima !== proxPadrao ? ' · sai ' + (x.proxima ? esc(nomeDia(x.proxima) + ' ' + dataBr(x.proxima)) : 'sem data') : '') +
-                    (prazoRuim ? ' ' + prazoRuim : '') +
+                    (x.motivoFica !== 'dia_fechado' && x.motivoFica !== 'sem_saida_s10' && x.proxima !== proxPadrao ? ' · sai ' + (x.proxima ? esc(nomeDia(x.proxima) + ' ' + dataBr(x.proxima)) : 'sem data') : '') +
+                    (prazoRuim ? ' ' + prazoRuim : '') + (plDia ? ' ' + plDia : '') +
                     (x.estoura ? ' · <strong class="rota-txt-ruim">passa do prazo</strong>' : '') + '</div>' +
                     (st.v2 ? htmlRegrasCliente(x.p.documento, nome, true, true) : '') + '</td><td data-rotulo="Caixas">' + txtCaixas(x.v) + '</td>' +
                     '<td data-rotulo="Veículo">' + (st.v2 ? seletorPedidoV2(x, nome, false) : seloMotivo(x) + menuVeiculo(x.p.documento, nome)) + '</td></tr>';
@@ -658,6 +703,7 @@
         var cfg = pl.cfg, extras = Object.keys(cfg.feriadosExtras).sort();
         var nRegras = Object.keys(st.regras).filter(function (d) { return temRegraAtiva(st.regras[d]); }).length;
         return [
+            'Saídas: S10 de segunda a sexta · caminhão (CEASA) de segunda a sábado',
             'Caminhão: ' + (st.v2 ? 'só o Centro de distribuição CEASA (sem paradas em bairros no caminho)' : 'só o CEASA'),
             st.v2 ? 'Horário estimado: saída às ' + esc(hhmm(cfg.horaSaida) || '07:00') + ' · velocidade média ' + NUM1.format(cfg.velocidadeKmh) + ' km/h · ' + NUM.format(cfg.minutosParada) + ' min por parada' : null,
             'Feriados: ' + (cfg.feriadosSemSaida ? 'sem saída (nacionais, Carnaval, Sexta-feira Santa, Corpus Christi' + (extras.length ? ' e ' + esc(extras.map(dataBr).join(', ')) : '') + ')' : 'têm saída normal'),
@@ -666,7 +712,8 @@
             st.v2
                 ? 'Clientes com padrão CEASA/S10: ' + NUM.format(Object.keys(st.excecoes).length) + ' · escolhas só neste pedido: ' + NUM.format(Object.keys(st.porPedido).length) + ' · clientes com regras de entrega: ' + NUM.format(nRegras)
                 : 'Exceções por cliente: ' + NUM.format(Object.keys(st.excecoes).length),
-            st.v2 && st.ign045 ? 'Pedidos fora da rota: ' + NUM.format(Object.keys(st.ignorados).length) : null
+            st.v2 && st.ign045 ? 'Pedidos fora da rota: ' + NUM.format(Object.keys(st.ignorados).length) : null,
+            st.v2 && st.pln046 ? 'Pedidos com dia fixado na semana (046): ' + NUM.format(Object.keys(st.plano).length) : null
         ].filter(function (t) { return t != null; });
     }
     function htmlConfigResumo(pl) {
@@ -678,7 +725,7 @@
             '<ul>' + itens.map(function (t) { return '<li>' + t + '</li>'; }).join('') +
             '<li>Candidatos: pedidos do ERP nas etapas aberto, na carga, separando, separado ou conferido.</li>' +
             (st.v2 ? htmlAjudaV2() : htmlAjudaV1()) +
-            '<li>Prazo: data do pedido + ' + ROTA.PRAZO_DIAS_UTEIS + ' dias úteis (segunda a sábado; feriado conforme as regras acima; pedido depois do corte conta do dia seguinte).</li>' +
+            '<li>Prazo: data do pedido + ' + ROTA.PRAZO_DIAS_UTEIS + ' dias úteis (S10 sai de segunda a sexta; caminhão do CEASA de segunda a sábado; feriado conforme as regras acima; pedido depois do corte conta do dia seguinte).</li>' +
             '</ul>' + aviso + '</details>';
     }
     function htmlDialogo() {
@@ -1200,10 +1247,303 @@
         q.then(function (r) { fim(r.error ? (r.error.message || String(r.error)) : null); }, function (e) { fim(String((e && e.message) || e)); });
     }
 
+    // ===================== PLANO DA SEMANA DA S10 (046: referência seg–sex) =====================
+    function cap(s) { var t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1) : ''; }
+    function semanaAlvo() {
+        var ini = st.semanaIni && /^\d{4}-\d{2}-\d{2}$/.test(st.semanaIni) ? segundaDe(st.semanaIni) : null;
+        return ini || proximaSemana(hojeSP());
+    }
+    // Mapa efetivo { cd_pedido: 'YYYY-MM-DD' }: junta o salvo no banco (st.plano) com o rascunho da sessão (st.rascSemana).
+    // Valor null no rascunho significa "Voltar à sugestão" para um pedido que estava salvo.
+    function planoEfetivo() {
+        var m = {}, k;
+        for (k in st.plano) if (Object.prototype.hasOwnProperty.call(st.plano, k) && st.plano[k]) m[k] = st.plano[k];
+        for (k in st.rascSemana) {
+            if (!Object.prototype.hasOwnProperty.call(st.rascSemana, k)) continue;
+            if (st.rascSemana[k] === null) delete m[k];
+            else if (st.rascSemana[k]) m[k] = st.rascSemana[k];
+        }
+        return m;
+    }
+    function temRascunhoSemana() { return Object.keys(st.rascSemana).length > 0; }
+    function temSalvoSemana(sem) {
+        if (!sem || !st.pln046) return false;
+        var ini = sem.inicio, fim = somaDias(ini, 5), k;
+        for (k in st.plano) {
+            if (Object.prototype.hasOwnProperty.call(st.plano, k) && st.plano[k] >= ini && st.plano[k] <= fim) return true;
+        }
+        return false;
+    }
+    var CARDEAIS = ['Norte', 'Nordeste', 'Leste', 'Sudeste', 'Sul', 'Sudoeste', 'Oeste', 'Noroeste'];
+    function dirCardeal(graus) {
+        if (graus == null || !isFinite(graus)) return '';
+        var g = ((Number(graus) % 360) + 360) % 360;
+        return CARDEAIS[Math.round(g / 45) % 8];
+    }
+    function anguloMedioPedidos(pedidos) {
+        var sx = 0, sy = 0, n = 0;
+        (pedidos || []).forEach(function (x) {
+            if (x && x.ang != null && isFinite(x.ang)) {
+                var rad = Number(x.ang) * Math.PI / 180;
+                sx += Math.cos(rad); sy += Math.sin(rad); n++;
+            }
+        });
+        return n ? ((Math.atan2(sy, sx) * 180 / Math.PI) + 360) % 360 : null;
+    }
+    function resumoRegiaoDia(d, regioes) {
+        var reg = null;
+        (regioes || []).forEach(function (r) { if (r.dia === d.dia || (d.regiao != null && r.indice === d.regiao)) reg = r; });
+        var centro = reg && reg.centro != null ? reg.centro : anguloMedioPedidos(d.pedidos);
+        var dir = centro != null ? 'Setor ' + dirCardeal(centro) : '';
+        var cont = {}, ordem = [];
+        (d.pedidos || []).forEach(function (x) {
+            var b = (x.c && x.c.bairro) ? String(x.c.bairro).trim() : '';
+            if (!b) return;
+            if (!cont[b]) { cont[b] = 0; ordem.push(b); }
+            cont[b]++;
+        });
+        ordem.sort(function (a, b) { return cont[b] - cont[a] || (a < b ? -1 : 1); });
+        var bairros = ordem.slice(0, 3).join(', ') + (ordem.length > 3 ? ' (+' + (ordem.length - 3) + ')' : '');
+        if (dir && bairros) return dir + ' · ' + bairros;
+        return bairros || dir || (d.pedidos && d.pedidos.length ? 'Sem bairro' : 'Sem entregas');
+    }
+    function seletorDiaSemana(x, dias, nome) {
+        var cd = x.p.cd_pedido;
+        if (!podeEditar()) {
+            return x.origemDia === 'salvo'
+                ? '<span class="rota-selo rota-selo-plano"><i class="fa-solid fa-thumbtack" aria-hidden="true"></i>fixado</span>'
+                : '';
+        }
+        var rot = 'Dia da semana para o pedido ' + cd + ' de ' + nome;
+        var temDia = dias.some(function (d) { return d.dia === x.dia; });
+        var ops = (!temDia ? '<option value="" selected>Escolher dia…</option>' : '') +
+            dias.map(function (d) {
+                var r = cap(DIAS_ROTULO[diaSemana(d.dia)] || d.nome) + ' ' + dataBr(d.dia);
+                return '<option value="' + esc(d.dia) + '"' + (x.dia === d.dia ? ' selected' : '') + '>' + esc(r) + '</option>';
+            }).join('') +
+            (x.origemDia === 'salvo' ? '<option value="sugestao">Voltar à sugestão</option>' : '');
+        return '<label class="rota-veic rota-sem-veic no-print"><span class="sr-only">' + esc(rot) + '</span>' +
+            '<select class="adm-input rota-sem-sel" data-rota-sem-dia="' + esc(cd) + '" aria-label="' + esc(rot) + '"' + (st.semSalvando ? ' disabled aria-busy="true"' : '') + '>' +
+            ops + '</select></label>';
+    }
+    function htmlLinhaPedidoSemana(x, n, eta, dias) {
+        var nome = nomeCliente(x.c, x);
+        var bairro = (x.c && x.c.bairro) || 'sem bairro';
+        var prazoRuim = seloPrazo(x, true);
+        var alertas = [];
+        if (x.estoura) alertas.push('<span class="rota-sit rota-sit-vencido"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>passa do prazo</span>');
+        else if (prazoRuim) alertas.push(prazoRuim);
+        if (x.diaFechado) alertas.push('<span class="rota-selo rota-selo-fechado"><i class="fa-solid fa-calendar-xmark" aria-hidden="true"></i>não recebe neste dia</span>');
+        if (x.salvoInvalido) alertas.push('<span class="rota-selo rota-selo-fechado"><i class="fa-solid fa-calendar-xmark" aria-hidden="true"></i>salvo em dia sem saída (' + esc(dataBr(x.salvoInvalido)) + ')</span>');
+        if (x.regra && x.regra.prioridade) alertas.push('<span class="rota-selo rota-selo-pri"><i class="fa-solid fa-bolt" aria-hidden="true"></i>Prioridade</span>');
+        if (x.origemDia === 'salvo') alertas.push('<span class="rota-selo rota-selo-plano" title="Dia escolhido/fixado"><i class="fa-solid fa-thumbtack" aria-hidden="true"></i>fixado</span>');
+        var ruim = x.estoura || x.diaFechado;
+        return '<li class="rota-sem-item' + (ruim ? ' is-ruim' : '') + '">' +
+            '<div class="rota-sem-item-topo">' +
+                '<div class="rota-cli-linha">' +
+                    (n != null ? '<span class="rota-sem-ord">' + n + '.</span>' : '') +
+                    (eta ? '<span class="rota-eta">~' + esc(eta) + '</span>' : '') +
+                    '<strong>' + esc(nome) + '</strong>' + botaoRegraCliente(x.p.documento, nome) +
+                '</div>' +
+                seletorDiaSemana(x, dias, nome) +
+            '</div>' +
+            '<div class="rota-sub">' + esc(bairro) + ' · #' + esc(x.p.cd_pedido) + ' · <strong>' + txtCaixas(x.v) + '</strong></div>' +
+            (alertas.length ? '<div class="rota-regras-cli">' + alertas.join(' ') + '</div>' : '') +
+            '</li>';
+    }
+    function htmlCardDiaSemana(d, sem) {
+        var capCx = Math.round(ROTA.CAPACIDADE_S10 / ROTA.VOLUME_CX24);
+        var usadoCx = Math.round(d.volume / ROTA.VOLUME_CX24);
+        var pctTotal = Math.round(d.ocupacao * 100);
+        var pctBarra = Math.min(100, pctTotal);
+        var cheio = d.excesso || d.ocupacao > 0.95;
+        var estouram = d.pedidos.filter(function (x) { return x.estoura; }).length;
+        var fechados = d.pedidos.filter(function (x) { return x.diaFechado; }).length;
+        var nParadas = d.paradas.length + d.semPosicao.length;
+        var regTxt = resumoRegiaoDia(d, sem.regioes);
+        var alertasDia = [];
+        if (d.excesso) alertasDia.push('<span class="rota-sit rota-sit-vencido"><i class="fa-solid fa-box" aria-hidden="true"></i>acima de ' + NUM.format(capCx) + ' cx24</span>');
+        if (estouram) alertasDia.push('<span class="rota-sit rota-sit-vencido"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>' + NUM.format(estouram) + (estouram === 1 ? ' passa do prazo' : ' passam do prazo') + '</span>');
+        if (fechados) alertasDia.push('<span class="rota-selo rota-selo-fechado"><i class="fa-solid fa-calendar-xmark" aria-hidden="true"></i>' + NUM.format(fechados) + (fechados === 1 ? ' não recebe neste dia' : ' não recebem neste dia') + '</span>');
+        if (d.horario && d.horario.atrasos) alertasDia.push('<span class="rota-sit rota-sit-vencido"><i class="fa-solid fa-clock" aria-hidden="true"></i>' + NUM.format(d.horario.atrasos) + ' fora do horário</span>');
+        var itens = [];
+        d.paradas.forEach(function (sp, idx) {
+            sp.pedidos.forEach(function (x) { itens.push(htmlLinhaPedidoSemana(x, idx + 1, sp.eta, sem.dias)); });
+        });
+        d.semPosicao.forEach(function (sp) {
+            sp.pedidos.forEach(function (x) { itens.push(htmlLinhaPedidoSemana(x, null, null, sem.dias)); });
+        });
+        return '<section class="adm-card p-3 rota-cartao rota-sem-dia' + (d.excesso || estouram ? ' rota-cartao-alerta' : '') + '" data-rota-sem-card="' + esc(d.dia) + '" aria-labelledby="rota-sem-tit-' + esc(d.dia) + '">' +
+            '<div class="rota-sem-dia-cab">' +
+                '<p class="rota-tit" id="rota-sem-tit-' + esc(d.dia) + '"><i class="fa-regular fa-calendar-check" aria-hidden="true"></i> ' + esc(cap(d.nome)) + ' · ' + esc(dataBr(d.dia)) + '</p>' +
+                '<p class="rota-sub rota-sem-regiao"><i class="fa-solid fa-compass" aria-hidden="true"></i> <strong>Região:</strong> ' + esc(regTxt) + '</p>' +
+                '<div class="rota-kpis">' +
+                    '<span><strong>' + NUM.format(d.pedidos.length) + '</strong> ' + (d.pedidos.length === 1 ? 'pedido' : 'pedidos') + ' (' + NUM.format(nParadas) + (nParadas === 1 ? ' parada' : ' paradas') + ')</span>' +
+                    '<span><strong>~' + NUM.format(Math.round(d.km)) + ' km</strong></span>' +
+                    (d.horario && d.paradas.length && d.horario.fim ? '<span>' + esc(d.horario.saida) + ' → <strong>~' + esc(d.horario.fim) + '</strong></span>' : '') +
+                '</div>' +
+            '</div>' +
+            '<div class="rota-ocup mt-2" role="img" aria-label="Ocupação de ' + esc(d.nome) + ': ' + NUM.format(usadoCx) + ' de ' + NUM.format(capCx) + ' cx24 (' + pctTotal + '%)">' +
+                '<div class="rota-ocup-barra' + (cheio ? ' is-cheia' : '') + '" style="width:' + pctBarra + '%"></div></div>' +
+            '<p class="rota-sub mt-1"><strong>' + NUM.format(usadoCx) + ' / ' + NUM.format(capCx) + ' cx24</strong> (' + pctTotal + '%)' +
+                (d.desconhecidos ? ' · <span class="rota-aviso-txt">' + NUM.format(d.desconhecidos) + ' sem volume</span>' : '') + '</p>' +
+            (alertasDia.length ? '<div class="rota-regras-cli mt-1">' + alertasDia.join(' ') + '</div>' : '') +
+            (itens.length ? '<ol class="rota-sem-lista">' + itens.join('') + '</ol>' : '<p class="adm-vazio-linha"><span class="adm-vazio-titulo">Nenhum pedido neste dia</span></p>') +
+            '</section>';
+    }
+    function htmlListaExtraSemana(id, icone, titulo, sub, lista, dias, motivoFn) {
+        if (!lista || !lista.length) return '';
+        return '<section class="adm-card p-4 mb-4 rota-cartao" id="' + esc(id) + '" aria-labelledby="' + esc(id) + '-tit">' +
+            '<div class="rota-cab rota-cab-compacto"><p class="rota-tit" id="' + esc(id) + '-tit"><i class="fa-solid ' + icone + '" aria-hidden="true"></i> ' + esc(titulo) + ' (' + NUM.format(lista.length) + ')</p>' +
+            '<span class="rota-sub">' + esc(sub) + '</span></div>' +
+            '<div class="overflow-x-auto"><table class="adm-tabela rota-tabela"><thead><tr><th>Cliente</th><th>Caixas</th><th>Situação</th><th>Dia na semana</th></tr></thead><tbody>' +
+            lista.map(function (x) {
+                var nome = nomeCliente(x.c, x);
+                var prazoRuim = seloPrazo(x, true);
+                return '<tr' + (x.estoura ? ' class="rota-linha-ruim"' : '') + '><td><div class="rota-cli-linha"><strong>' + esc(nome) + '</strong>' + botaoRegraCliente(x.p.documento, nome) + '</div>' +
+                    '<div class="rota-sub">' + esc((x.c && x.c.bairro) || 'sem bairro') + ' · #' + esc(x.p.cd_pedido) + (prazoRuim ? ' ' + prazoRuim : '') + '</div>' +
+                    htmlRegrasCliente(x.p.documento, nome, true, true) + '</td>' +
+                    '<td data-rotulo="Caixas">' + txtCaixas(x.v) + '</td>' +
+                    '<td data-rotulo="Situação">' + motivoFn(x) + '</td>' +
+                    '<td data-rotulo="Dia na semana">' + seletorDiaSemana(x, dias, nome) + '</td></tr>';
+            }).join('') + '</tbody></table></div></section>';
+    }
+    function htmlSemana(sem) {
+        var padraoIni = proximaSemana(hojeSP());
+        var capCx = Math.round(ROTA.CAPACIDADE_S10 / ROTA.VOLUME_CX24);
+        var totCx = Math.round((sem.resumo.volume || 0) / ROTA.VOLUME_CX24);
+        var temRasc = temRascunhoSemana();
+        var temSalvo = temSalvoSemana(sem);
+        var temPedidosDias = sem.dias.some(function (d) { return d.pedidos.length > 0; });
+        var feriadosTxt = sem.semSaida.length
+            ? sem.semSaida.map(function (f) { return cap(DIAS_ROTULO[diaSemana(f.dia)] || nomeDia(f.dia)) + ' ' + dataBr(f.dia); }).join(', ')
+            : '';
+        var botoesAcao = [];
+        if (podeEditar() && temRasc) {
+            botoesAcao.push('<button type="button" class="adm-botao-fantasma" id="rota-sem-sugestao"' + (st.semSalvando ? ' disabled' : '') + '><i class="fa-solid fa-rotate-left" aria-hidden="true"></i> Desfazer alterações</button>');
+        }
+        if (podeSalvarSemana()) {
+            if (temSalvo) {
+                botoesAcao.push('<button type="button" class="adm-botao-fantasma" id="rota-sem-limpar"' + (st.semSalvando ? ' disabled' : '') + '><i class="fa-regular fa-trash-can" aria-hidden="true"></i> Limpar plano salvo</button>');
+            }
+            botoesAcao.push('<button type="button" class="adm-botao" id="rota-sem-salvar"' + (st.semSalvando || !temPedidosDias ? ' disabled' : '') + '><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> ' + (st.semSalvando ? 'Salvando…' : 'Salvar semana') + '</button>');
+        } else if (!st.pln046) {
+            botoesAcao.push('<span class="rota-sub"><i class="fa-solid fa-circle-info" aria-hidden="true"></i> Sugestão (sem migração 046: visualização sem salvar no banco)</span>');
+        }
+        var cdResumo = '';
+        if (sem.cd && sem.cd.total && sem.cd.total.pedidos) {
+            var tCd = sem.cd.total;
+            cdResumo = '<section class="adm-card p-3 mb-4 rota-cartao" id="rota-sem-ceasa" aria-labelledby="rota-sem-ceasa-tit">' +
+                '<div class="rota-cab rota-cab-compacto mb-0"><p class="rota-tit" id="rota-sem-ceasa-tit"><i class="fa-solid fa-warehouse" aria-hidden="true"></i> CEASA (CD) — pedidos em aberto</p>' +
+                '<div class="rota-kpis"><span><strong>' + NUM.format(tCd.clientes) + '</strong> ' + (tCd.clientes === 1 ? 'cliente' : 'clientes') + ' · <strong>' + NUM.format(tCd.pedidos) + '</strong> ' + (tCd.pedidos === 1 ? 'pedido' : 'pedidos') + ' · <strong>' + NUM.format(tCd.caixas) + ' cx</strong> (' + esc(brl(tCd.valorCentavos)) + ')</span>' +
+                '<span class="rota-sub">O caminhão do CEASA sai seg–sáb na rota do dia</span></div></div></section>';
+        }
+        return '<section class="adm-card p-4 mb-4 rota-cartao" id="rota-semana-topo" aria-labelledby="rota-sem-topo-tit">' +
+                '<div class="rota-cab rota-cab-compacto">' +
+                    '<div><p class="rota-tit" id="rota-sem-topo-tit"><i class="fa-solid fa-calendar-week" aria-hidden="true"></i> Plano da semana da S10 · seg ' + esc(dataBr(sem.inicio)) + ' a sex ' + esc(dataBr(sem.fim)) + '</p>' +
+                    '<p class="rota-sub">Referência para organizar a semana por região e capacidade (' + NUM.format(capCx) + ' cx24/dia). Todo dia a rota do dia é calculada separadamente.</p></div>' +
+                    '<div class="rota-sem-nav no-print">' +
+                        '<button type="button" class="adm-botao-fantasma" id="rota-sem-ant" title="Semana anterior"><i class="fa-solid fa-chevron-left" aria-hidden="true"></i> Anterior</button>' +
+                        (sem.inicio !== padraoIni ? '<button type="button" class="adm-botao-fantasma" id="rota-sem-padrao">Próxima semana (' + esc(dataBr(padraoIni)) + ')</button>' : '') +
+                        '<button type="button" class="adm-botao-fantasma" id="rota-sem-prox" title="Semana seguinte">Seguinte <i class="fa-solid fa-chevron-right" aria-hidden="true"></i></button>' +
+                    '</div>' +
+                '</div>' +
+                '<div class="rota-sem-barra">' +
+                    '<div class="rota-kpis">' +
+                        '<span><strong>' + NUM.format(sem.resumo.pedidos) + '</strong> ' + (sem.resumo.pedidos === 1 ? 'pedido S10 nos dias' : 'pedidos S10 nos dias') + '</span>' +
+                        '<span><strong>~' + NUM.format(totCx) + ' cx24</strong> na semana</span>' +
+                        (sem.resumo.salvos ? '<span><strong>' + NUM.format(sem.resumo.salvos) + '</strong> ' + (sem.resumo.salvos === 1 ? 'fixado' : 'fixados') + (temRasc ? ' (com edição não salva)' : '') + '</span>' : '') +
+                        (sem.resumo.faltaMarcar ? '<span class="rota-sit rota-sit-hoje"><i class="fa-solid fa-hand-pointer" aria-hidden="true"></i>' + NUM.format(sem.resumo.faltaMarcar) + ' falta(m) marcar</span>' : '') +
+                        (sem.resumo.estouram ? '<span class="rota-sit rota-sit-vencido"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>' + NUM.format(sem.resumo.estouram) + (sem.resumo.estouram === 1 ? ' passa do prazo' : ' passam do prazo') + '</span>' : '') +
+                        (feriadosTxt ? '<span class="rota-selo rota-selo-fechado"><i class="fa-solid fa-calendar-xmark" aria-hidden="true"></i>Feriado sem saída: ' + esc(feriadosTxt) + '</span>' : '') +
+                    '</div>' +
+                    '<div class="rota-sem-acoes no-print">' + botoesAcao.join('') + '</div>' +
+                '</div>' +
+                (st.msgSemana ? '<p class="rota-sub mt-2" id="rota-sem-msg" role="status"><i class="fa-solid fa-circle-info" aria-hidden="true"></i> ' + esc(st.msgSemana) + '</p>' : '') +
+            '</section>' +
+            (sem.dias.length
+                ? '<div class="rota-semana-grade mb-4">' + sem.dias.map(function (d) { return htmlCardDiaSemana(d, sem); }).join('') + '</div>'
+                : '<div class="adm-card p-6 mb-4"><p class="adm-vazio-linha"><span class="adm-vazio-titulo">Nenhum dia útil com saída da S10 nesta semana</span></p></div>') +
+            htmlListaExtraSemana('rota-sem-sobra', 'fa-clock-rotate-left', 'Fora dos dias da semana / Sobra',
+                'Não couberam nos 300 cx24/dia ou o cliente não recebe de segunda a sexta — escolha um dia para incluir.',
+                sem.sobra, sem.dias, function (x) {
+                    if (x.motivoSobra === 'dia_fechado') return '<span class="rota-selo rota-selo-fechado"><i class="fa-solid fa-calendar-xmark" aria-hidden="true"></i>não recebe nos dias com saída</span>';
+                    return '<span class="rota-selo"><i class="fa-solid fa-box" aria-hidden="true"></i>excede capacidade (' + NUM.format(capCx) + ' cx24)' + (x.diaSugerido ? ' · setor de ' + esc(DIAS_ROTULO[diaSemana(x.diaSugerido)] + ' ' + dataBr(x.diaSugerido)) : '') + '</span>';
+                }) +
+            htmlListaExtraSemana('rota-sem-sempos', 'fa-location-dot', 'Sem posição no mapa',
+                'Pedidos S10 sem coordenadas nem bairro localizado — escolha o dia da semana manualmente.',
+                sem.semPosicao, sem.dias, function () {
+                    return '<span class="rota-selo"><i class="fa-solid fa-circle-question" aria-hidden="true"></i>sem coordenadas para setorizar</span>';
+                }) +
+            htmlListaExtraSemana('rota-sem-outra', 'fa-calendar-days', 'Salvos em outra semana',
+                'Pedidos S10 com dia fixado fora desta semana.',
+                sem.foraDaSemana, sem.dias, function (x) {
+                    return seloPlanoDia({ planoDia: x.dia });
+                }) +
+            htmlAguardando({ aguardando: sem.faltaMarcar }) +
+            cdResumo;
+    }
+    function aoMudarDiaSemana(sel) {
+        if (!podeEditar() || st.semSalvando) return;
+        var cd = Number(sel.getAttribute('data-rota-sem-dia'));
+        var val = sel.value || '';
+        if (!cd) return;
+        if (val === 'sugestao' || !val) {
+            if (st.plano[cd]) st.rascSemana[cd] = null;
+            else delete st.rascSemana[cd];
+        } else if (/^\d{4}-\d{2}-\d{2}$/.test(val)) {
+            if (st.plano[cd] === val) delete st.rascSemana[cd];
+            else st.rascSemana[cd] = val;
+        }
+        st.msgSemana = '';
+        st.focoSem = 'ped:' + cd;
+        desenhar();
+    }
+    function salvarSemana(sem, limpar) {
+        if (!podeSalvarSemana() || st.semSalvando || !sem) return;
+        var ini = sem.inicio, fim = somaDias(ini, 5);
+        var itens = [];
+        if (!limpar) {
+            sem.dias.forEach(function (d) {
+                d.pedidos.forEach(function (x) { itens.push({ cd_pedido: Number(x.p.cd_pedido), dia: d.dia }); });
+            });
+        }
+        st.semSalvando = true;
+        st.msgSemana = '';
+        desenhar();
+        st.sb.rpc('rota_046_salvar_semana', { p_inicio: ini, p_itens: itens }).then(function (r) {
+            st.semSalvando = false;
+            if (r.error) {
+                var cod = String(r.error.code || '');
+                st.msgSemana = cod === '42501' ? 'Não foi possível salvar a semana: sem permissão.'
+                    : cod === 'P0002' ? 'Um pedido mudou de etapa no ERP. Atualize a aba e tente de novo.'
+                    : 'Não foi possível salvar a semana: ' + String(r.error.message || r.error);
+            } else {
+                Object.keys(st.plano).forEach(function (k) {
+                    if (st.plano[k] >= ini && st.plano[k] <= fim) delete st.plano[k];
+                });
+                itens.forEach(function (it) { st.plano[it.cd_pedido] = it.dia; });
+                st.rascSemana = {};
+                st.msgSemana = limpar
+                    ? 'Plano salvo da semana removido (voltou à sugestão automática).'
+                    : 'Plano da semana salvo (' + NUM.format(itens.length) + (itens.length === 1 ? ' pedido).' : ' pedidos).');
+            }
+            st.focoSem = limpar ? '#rota-sem-salvar' : '#rota-sem-salvar';
+            aposMutacao();
+            desenhar();
+        }, function (e) {
+            st.semSalvando = false;
+            st.msgSemana = 'Não foi possível salvar a semana: ' + String((e && e.message) || e);
+            st.focoSem = '#rota-sem-salvar';
+            aposMutacao();
+            desenhar();
+        });
+    }
+
     function planos() {
-        var hoje = hojeSP(), pl = {};
+        var hoje = hojeSP(), pl = {}, mapaPlano = st.v2 ? planoEfetivo() : {};
         var o = { cfg: st.cfg, excecoes: st.excecoes, marcacao: st.v2, padroes: st.excecoes, porPedido: st.porPedido, regras: st.regras,
-                  ignorados: st.v2 && st.ign045 ? st.ignorados : {} };
+                  ignorados: st.v2 && st.ign045 ? st.ignorados : {}, plano: mapaPlano };
         pl.hoje = planejar(st.pedidos, st.clientes, hoje, o);
         var prox = proximaSaida(hoje, false, st.cfg);
         pl.proxima = prox ? planejar(st.pedidos, st.clientes, prox, Object.assign({}, o, { excluir: pl.hoje.semSaida ? {} : pl.hoje.entregues })) : null;
@@ -1280,7 +1620,7 @@
         liberarMapa();                     // o HTML abaixo substitui o contêiner do mapa (carregando/erro/rota)
         var cab = '<div class="rota-topo"><div><h2 class="rota-titulo"><i class="fa-solid fa-route" aria-hidden="true"></i> Rota do dia</h2>' +
             '<p class="rota-sub">' + (st.coletado ? 'ERP às ' + esc(new Date(st.coletado).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: ROTA.TZ })) + ' · ' : '') +
-            'prazo de ' + ROTA.PRAZO_DIAS_UTEIS + ' dias úteis (seg–sáb' + (st.cfg && st.cfg.feriadosSemSaida ? ', sem feriados' : '') + ')</p></div>';
+            'S10 seg–sex · CEASA seg–sáb · prazo de ' + ROTA.PRAZO_DIAS_UTEIS + ' dias úteis' + (st.cfg && st.cfg.feriadosSemSaida ? ' (sem feriados)' : '') + '</p></div>';
         if (st.carregando && !st.carregado) { alvo.innerHTML = cab + '</div><p class="adm-vazio-linha"><i class="fa-solid fa-spinner fa-spin"></i><span class="adm-vazio-texto">Carregando pedidos e posições…</span></p>'; return; }
         if (st.erro) {
             alvo.innerHTML = cab + '</div><div class="adm-card p-6"><p class="text-sm mb-3">Não foi possível carregar a rota: ' + esc(st.erro) + '</p><button type="button" class="adm-botao-fantasma" id="rota-tentar">Tentar de novo</button></div>';
@@ -1309,18 +1649,31 @@
             var cb0 = alvo.querySelector('#rota-configurar'); if (cb0) cb0.addEventListener('click', abrirDialogo);
             return;
         }
-        if (!pl.proxima) st.vista = 'hoje';
+        if (!st.v2 && st.vista === 'semana') st.vista = 'hoje';
+        if (st.vista !== 'semana') {
+            if (!pl.proxima) st.vista = 'hoje';
+            if (pl.hoje.semSaida && pl.proxima) st.vista = 'proxima';
+        }
         var atual = (st.vista === 'proxima' || pl.hoje.semSaida) && pl.proxima ? pl.proxima : pl.hoje;
-        if (pl.hoje.semSaida) st.vista = 'proxima';
+        var semIni = semanaAlvo();
+        var sem = st.v2 && st.vista === 'semana'
+            ? planejarSemana(st.pedidos, st.clientes, semIni, { cfg: st.cfg, padroes: st.excecoes, porPedido: st.porPedido, regras: st.regras,
+                ignorados: st.ign045 ? st.ignorados : {}, plano: planoEfetivo() })
+            : null;
         var motivoSem = pl.hoje.feriado ? 'feriado' : 'domingo';
         var nFora = st.v2 && st.ign045 && atual.ignorados ? atual.ignorados.length : 0;
-        var seletor = '<div class="rota-acoes no-print"><div class="flex gap-1" role="group" aria-label="Dia da rota">' +
+        var chipSemana = st.v2
+            ? '<button type="button" class="adm-chip' + (st.vista === 'semana' ? ' is-ativo' : '') + '" data-rota-vista="semana" aria-pressed="' + (st.vista === 'semana') + '">Semana · seg ' +
+                esc(dataBr(semIni)) + ' a sex ' + esc(dataBr(somaDias(semIni, 4))) + '</button>'
+            : '';
+        var seletor = '<div class="rota-acoes no-print"><div class="flex flex-wrap gap-1" role="group" aria-label="Visão da rota">' +
             '<button type="button" class="adm-chip' + (st.vista === 'hoje' ? ' is-ativo' : '') + '" data-rota-vista="hoje" aria-pressed="' + (st.vista === 'hoje') + '"' + (pl.hoje.semSaida ? ' disabled title="Sem saída (' + motivoSem + ')"' : '') + '>Hoje · ' +
                 esc(nomeDia(pl.hoje.dia)) + ' ' + esc(dataBr(pl.hoje.dia)) + (pl.hoje.semSaida ? ' (sem saída: ' + motivoSem + ')' : '') + '</button>' +
             (pl.proxima
                 ? '<button type="button" class="adm-chip' + (st.vista === 'proxima' ? ' is-ativo' : '') + '" data-rota-vista="proxima" aria-pressed="' + (st.vista === 'proxima') + '">Próxima · ' +
                     esc(nomeDia(pl.proxima.dia)) + ' ' + esc(dataBr(pl.proxima.dia)) + '</button>'
-                : '<button type="button" class="adm-chip" disabled aria-disabled="true" title="' + esc(semDias) + '">Próxima · ' + esc(semDias) + '</button>') + '</div>' +
+                : '<button type="button" class="adm-chip" disabled aria-disabled="true" title="' + esc(semDias) + '">Próxima · ' + esc(semDias) + '</button>') +
+            chipSemana + '</div>' +
             (nFora ? '<button type="button" class="adm-botao-fantasma" id="rota-atalho-fora"><i class="fa-solid fa-ban" aria-hidden="true"></i> Fora da rota (' + NUM.format(nFora) + ')</button>' : '') +
             (st.papel === 'admin' ? '<button type="button" class="adm-botao-fantasma" id="rota-configurar"' + (st.cfgAusente ? ' disabled title="Falta aplicar a migração 040"' : '') + '><i class="fa-solid fa-sliders" aria-hidden="true"></i> Configurar</button>' : '') +
             '<button type="button" class="adm-botao-fantasma" id="rota-btn-ajuda" aria-expanded="' + (st.cfgAberto ? 'true' : 'false') + '" title="Regras da rota e como funciona" aria-label="Regras da rota e como funciona"><i class="fa-regular fa-circle-question" aria-hidden="true"></i></button>' +
@@ -1338,23 +1691,28 @@
                 (st.ultimoV2 && st.ultimoV2.em ? ' (lido às ' + esc(st.ultimoV2.em.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })) + ')' : '') +
                 '; a edição fica desligada até reler.</p><button type="button" class="adm-botao mt-2" id="rota-tentar"><i class="fa-solid fa-rotate" aria-hidden="true"></i> Tentar de novo</button></div>'
             : '';
-        alvo.innerHTML = cab + seletor + bannerDesat +
-            '<p class="rota-imp-dia">Rota de ' + esc(nomeDia(atual.dia)) + ', ' + esc(dataBr(atual.dia)) + '</p>' +
-            (avisos.length ? '<div class="adm-card p-4 mb-5 rota-banner" role="status">' + avisos.map(function (a) { return '<p><i class="fa-solid fa-circle-info" aria-hidden="true"></i> ' + esc(a) + '</p>'; }).join('') + '</div>' : '') +
-            nota + htmlAguardando(atual) +
-            '<div class="rota-grade-principal"><div class="rota-col-s10">' + htmlS10(atual) + htmlFica(atual) + '</div><div class="rota-col-ceasa">' + htmlCaminhao(atual) + '</div></div>' +
+        var corpo = st.vista === 'semana' && sem
+            ? '<p class="rota-imp-dia">Plano da semana da S10 · seg ' + esc(dataBr(sem.inicio)) + ' a sex ' + esc(dataBr(sem.fim)) + '</p>' +
+              (avisos.length ? '<div class="adm-card p-4 mb-5 rota-banner" role="status">' + avisos.map(function (a) { return '<p><i class="fa-solid fa-circle-info" aria-hidden="true"></i> ' + esc(a) + '</p>'; }).join('') + '</div>' : '') +
+              htmlSemana(sem)
+            : '<p class="rota-imp-dia">Rota de ' + esc(nomeDia(atual.dia)) + ', ' + esc(dataBr(atual.dia)) + '</p>' +
+              (avisos.length ? '<div class="adm-card p-4 mb-5 rota-banner" role="status">' + avisos.map(function (a) { return '<p><i class="fa-solid fa-circle-info" aria-hidden="true"></i> ' + esc(a) + '</p>'; }).join('') + '</div>' : '') +
+              nota + htmlAguardando(atual) +
+              '<div class="rota-grade-principal"><div class="rota-col-s10">' + htmlS10(atual) + htmlFica(atual) + '</div><div class="rota-col-ceasa">' + htmlCaminhao(atual) + '</div></div>';
+        alvo.innerHTML = cab + seletor + bannerDesat + corpo +
             htmlForaDaRota(atual) + htmlConfigResumo(atual) +
             (podeConfigurar() ? htmlDialogo() : '') +
             (st.v2 && podeEditar() ? htmlDialogoEscopo() + htmlDialogoRegra() : '') + (podeTirar() ? htmlDialogoTirar() : '');
-        ligarEventos(alvo, atual);
+        ligarEventos(alvo, atual, sem);
     }
-    // Ajuda da aba — v2 (044 aplicada): marcação, regras por cliente, horários e CD CEASA.
+    // Ajuda da aba — v2 (044 aplicada): marcação, regras por cliente, horários, CD CEASA e plano da semana.
     function htmlAjudaV2() {
         return '<li>Marcação (CEASA / S10): cada pedido pendente é marcado como CEASA (caminhão) ou S10; o sistema lembra o padrão do cliente e permite exceção "só neste pedido" ou desmarcar. Sem marcação, o pedido fica em "Falta marcar" (fora da rota) com a regra automática (endereço com "CEASA", Av. Brasil 19001, até ' + NUM.format(ROTA.CEASA_RAIO_KM * 1000) + ' m do CEASA; senão S10) exibida como dica.</li>' +
                 (st.ign045 ? '<li>Tirar da rota: o pedido sai da rota, de "Falta marcar" e do WhatsApp até alguém clicar em "Voltar para a rota" (lista "Fora da rota"). Pedido aberto antigo no ERP continua aparecendo até alguém tirar.</li>' : '') +
                 '<li>Regras por cliente: dias da semana em que não recebe (o pedido fica para a próxima saída em que recebe), prioridade ("entregar primeiro"), janela de recebimento (início/fim) e observação curta.</li>' +
-                '<li>S10: por prazo (vencidos primeiro), até ' + NUM.format(Math.round(ROTA.CAPACIDADE_S10 / ROTA.VOLUME_CX24)) + ' cx24 equivalentes (volume ' + NUM.format(ROTA.CAPACIDADE_S10) + ': cx24 = ' + NUM1.format(ROTA.VOLUME_CX24) + ', cx48 = ' + NUM1.format(ROTA.VOLUME_CX48) + ', pote avulso = 9/24); o que exceder fica para a próxima saída.</li>' +
-                '<li>Caminhão: tudo o que está marcado CEASA vai para o Centro de distribuição CEASA (uma parada, com a lista de carga agregada por cliente; sem limite de capacidade). O caminhão não para em bairros no caminho.</li>' +
+                '<li>S10 (segunda a sexta): por prazo (vencidos primeiro), até ' + NUM.format(Math.round(ROTA.CAPACIDADE_S10 / ROTA.VOLUME_CX24)) + ' cx24 equivalentes (volume ' + NUM.format(ROTA.CAPACIDADE_S10) + ': cx24 = ' + NUM1.format(ROTA.VOLUME_CX24) + ', cx48 = ' + NUM1.format(ROTA.VOLUME_CX48) + ', pote avulso = 9/24); o que exceder fica para a próxima saída.</li>' +
+                '<li>Caminhão (segunda a sábado): tudo o que está marcado CEASA vai para o Centro de distribuição CEASA (uma parada, com a lista de carga agregada por cliente; sem limite de capacidade). O caminhão não para em bairros no caminho.</li>' +
+                '<li>Semana (referência): agrupa os pedidos em aberto da S10 por região nos dias de segunda a sexta da semana seguinte (até 300 cx24/dia). Permite mover pedidos entre dias e salvar; na rota do dia aparece apenas o selo informativo "planejado p/ dia DD/MM".</li>' +
                 '<li>Ordem e horários: sai da sede na hora configurada; prioritários vão primeiro, janelas de horário entram na posição de menor atraso e o percurso é otimizado (vizinho mais próximo + realocação + 2-opt, distância em linha reta × ' + NUM1.format(ROTA.FATOR_ESTRADA) + ' ÷ velocidade média + minutos por parada). Chegada antes da janela conta espera; após o fim marca "fora do horário (+N min)". Quem não dá para atender no horário nem indo direto fica na posição de menor km, com o atraso marcado. Horários são estimativa (linha reta), não trânsito real.</li>';
     }
     // Ajuda da aba — v1 (sem a 044): regra automática de antes, com exceção por cliente.
@@ -1363,7 +1721,7 @@
             '<li>S10: por prazo (vencidos primeiro), até ' + NUM.format(ROTA.CAPACIDADE_S10) + ' de volume (cx24 = ' + NUM1.format(ROTA.VOLUME_CX24) + ', cx48 = ' + NUM1.format(ROTA.VOLUME_CX48) + ', pote avulso = 9/24); o resto fica para a próxima saída. Caminhão: sem limite.</li>' +
             '<li>Ordem (S10 e caminhão): sai da sede, vai sempre para o cliente mais perto e depois desfaz cruzamentos (2-opt). Distância em linha reta × ' + NUM1.format(ROTA.FATOR_ESTRADA) + ' (estimativa).</li>';
     }
-    function ligarEventos(alvo, atual) {
+    function ligarEventos(alvo, atual, sem) {
         alvo.querySelectorAll('[data-rota-vista]').forEach(function (b) { b.addEventListener('click', function () { st.vista = b.getAttribute('data-rota-vista'); desenhar(); }); });
         alvo.querySelector('#rota-atualizar').addEventListener('click', recarregarTudo);
         var tentar = alvo.querySelector('#rota-tentar'); if (tentar) tentar.addEventListener('click', recarregarTudo);
@@ -1418,6 +1776,21 @@
         alvo.querySelectorAll('[data-rota-gmaps]').forEach(function (b) {
             b.addEventListener('click', function () { var w = window.open(b.getAttribute('data-rota-gmaps'), '_blank', 'noopener,noreferrer'); if (w) w.opener = null; });
         });
+        alvo.querySelectorAll('[data-rota-sem-dia]').forEach(function (s) {
+            s.addEventListener('change', function () { aoMudarDiaSemana(s); });
+        });
+        var bSemAnt = alvo.querySelector('#rota-sem-ant');
+        if (bSemAnt) bSemAnt.addEventListener('click', function () { st.semanaIni = somaDias(semanaAlvo(), -7); st.msgSemana = ''; st.focoSem = '#rota-sem-ant'; desenhar(); });
+        var bSemProx = alvo.querySelector('#rota-sem-prox');
+        if (bSemProx) bSemProx.addEventListener('click', function () { st.semanaIni = somaDias(semanaAlvo(), 7); st.msgSemana = ''; st.focoSem = '#rota-sem-prox'; desenhar(); });
+        var bSemPad = alvo.querySelector('#rota-sem-padrao');
+        if (bSemPad) bSemPad.addEventListener('click', function () { st.semanaIni = null; st.msgSemana = ''; st.focoSem = '#rota-sem-prox'; desenhar(); });
+        var bSemSug = alvo.querySelector('#rota-sem-sugestao');
+        if (bSemSug) bSemSug.addEventListener('click', function () { st.rascSemana = {}; st.msgSemana = 'Alterações não salvas descartadas.'; st.focoSem = '#rota-sem-salvar'; desenhar(); });
+        var bSemSalvar = alvo.querySelector('#rota-sem-salvar');
+        if (bSemSalvar && sem) bSemSalvar.addEventListener('click', function () { salvarSemana(sem, false); });
+        var bSemLimpar = alvo.querySelector('#rota-sem-limpar');
+        if (bSemLimpar && sem) bSemLimpar.addEventListener('click', function () { salvarSemana(sem, true); });
         if (st.focoMapa) {
             st.focoMapa = false;
             if (btnMapa) btnMapa.focus();
@@ -1437,12 +1810,21 @@
             st.focoPedido = null;
             if (alvoPed) { alvoPed.focus(); st.focoFora = false; }
         }
+        if (st.focoSem) {
+            var fsSem = st.focoSem;
+            st.focoSem = null;
+            var elSem = fsSem.indexOf('ped:') === 0
+                ? alvo.querySelector('[data-rota-sem-dia="' + fsSem.slice(4) + '"]')
+                : alvo.querySelector(fsSem);
+            if (!elSem || elSem.disabled) elSem = alvo.querySelector('#rota-sem-topo-tit');
+            if (elSem) { if (!elSem.hasAttribute('tabindex') && elSem.tagName === 'P') elSem.setAttribute('tabindex', '-1'); elSem.focus(); }
+        }
         if (st.focoFora) {   // 045: depois de tirar (ou voltar sem seletor visível) o foco vai para "Fora da rota" (ou o título)
             st.focoFora = false;
             var fs = alvo.querySelector('#rota-fora-sum') || alvo.querySelector('.rota-titulo');
             if (fs) { if (!fs.hasAttribute('tabindex') && fs.tagName !== 'SUMMARY') fs.setAttribute('tabindex', '-1'); fs.focus(); }
         }
-        if (st.mapaAberto) desenharMapa(atual);
+        if (st.vista !== 'semana' && st.mapaAberto) desenharMapa(atual);
     }
 
     function imprimir() {
@@ -1480,6 +1862,7 @@
             st.mut = 0; st.recargaPendente = false; st.erroV2 = null; st.desatualizado = false; st.ultimoV2 = null; st.avisoPerm = null;
             st.mapaVista = {}; st.mapaAberto = false; st.focoMapa = false;
             st.ign045 = false; st.ignorados = {}; st.foraAberto = false; st.focoFora = false;
+            st.pln046 = false; st.plano = {}; st.rascSemana = {}; st.semanaIni = null; st.semSalvando = false; st.msgSemana = ''; st.focoSem = null;
         },
         planejador: Planejador
     };

@@ -118,7 +118,7 @@
 #painel-rotas .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 /* ---------- 044/045 (Rotas v2/v3): marcação CEASA/S10, 2 colunas S10 | CEASA, horários, regras e Fora da rota ---------- */
-#painel-rotas .rota-cartao.adm-anim:not(.is-vista) { opacity: 1; }
+#painel-rotas .adm-anim, #painel-rotas .adm-anim.is-vista { opacity: 1; animation: none; }
 .rota-grade-principal { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 1.15rem; align-items: start; }
 .rota-col-s10, .rota-col-ceasa, .rota-cartao { min-width: 0; max-width: 100%; }
 @media (max-width: 1179px) { .rota-grade-principal { grid-template-columns: minmax(0, 1fr); } }
@@ -149,6 +149,25 @@
 .rota-selo-espera { color: var(--adm-tinta-2); background: var(--adm-neutro-fundo-2, var(--adm-neutro-fundo)); border-color: var(--adm-borda); }
 .rota-selo-fechado { color: var(--adm-atencao); background: var(--adm-atencao-fundo); border-color: var(--adm-atencao-borda); }
 .rota-selo-fechado i { color: var(--adm-atencao); }
+.rota-selo-plano { color: var(--adm-tinta); background: var(--adm-neutro-fundo-2, var(--adm-neutro-fundo)); border-color: var(--adm-acao); }
+.rota-selo-plano i { color: var(--adm-acao); }
+
+/* ---------- 046: Sub-aba "Semana" (grade seg–sex da S10) ---------- */
+.rota-sem-nav, .rota-sem-acoes { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem; }
+.rota-sem-barra { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem; margin-top: 0.5rem; padding-top: 0.65rem; border-top: 1px solid var(--adm-borda); }
+.rota-semana-grade { display: grid; grid-template-columns: repeat(auto-fit, minmax(13.5rem, 1fr)); gap: 0.75rem; align-items: start; }
+@media (max-width: 640px) { .rota-semana-grade { grid-template-columns: minmax(0, 1fr); } }
+.rota-sem-dia { display: flex; flex-direction: column; min-width: 0; }
+.rota-sem-dia-cab { display: grid; gap: 0.25rem; }
+.rota-sem-regiao { color: var(--adm-tinta-2); }
+.rota-sem-regiao i { color: var(--adm-acao); margin-right: 0.2rem; }
+.rota-sem-lista { margin: 0.65rem 0 0; padding: 0; list-style: none; display: grid; gap: 0.45rem; }
+.rota-sem-item { padding: 0.45rem 0.55rem; border-radius: 0.55rem; border: 1px solid var(--adm-borda); background: var(--adm-neutro-fundo); display: grid; gap: 0.2rem; min-width: 0; }
+.rota-sem-item.is-ruim { border-color: var(--adm-ruim-borda); background: var(--adm-ruim-fundo); }
+.rota-sem-item-topo { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.35rem; }
+.rota-sem-ord { font-weight: 800; color: var(--adm-acao); font-size: 0.8rem; }
+.rota-sem-veic { margin-top: 0; }
+.rota-sem-sel { padding: 0.2rem 0.4rem !important; font-size: 0.74rem !important; width: auto; max-width: 100%; }
 .rota-obs { display: inline-flex; align-items: center; gap: 0.28rem; font-size: 0.74rem; color: var(--adm-tinta-2); background: var(--adm-neutro-fundo);
     border: 1px dashed var(--adm-borda); border-radius: 0.45rem; padding: 0.1rem 0.45rem; max-width: 24rem; }
 .rota-obs i { color: var(--adm-tinta-3); }
@@ -185,7 +204,7 @@
     .rota-tabela th, .rota-tabela td { padding: 0.45rem 0.4rem; font-size: 0.78rem; }
 }
 @media print {
-    body.rota-imprimindo .rota-grade-principal { display: block !important; }
+    body.rota-imprimindo .rota-grade-principal, body.rota-imprimindo .rota-semana-grade { display: block !important; }
     body.rota-imprimindo .rota-reenq, body.rota-imprimindo .rota-fora { display: none !important; }
     body.rota-imprimindo .rota-imp-veic { display: inline !important; font-weight: 700; }
 }

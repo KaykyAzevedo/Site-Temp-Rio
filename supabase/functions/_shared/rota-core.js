@@ -732,6 +732,7 @@
     //      coube: o dia permitido de setor mais perto (respeitando o prazo, se possível); nenhum: res.sobra (motivo
     //      'capacidade'); volume desconhecido conta 0 (dia.desconhecidos);
     //   5. sem posição: setor do BAIRRO (média dos clientes com posição do mesmo bairro); sem isso: res.semPosicao.
+    //   Semana sem nenhum dia de saída da S10: res.semSaidaNaSemana = true e tudo em res.sobra (motivo 'sem_saida_semana').
     // Cada dia: { dia, nome, pedidos, paradas, semPosicao, horario, km, volume, ocupacao (0..1+), c24, c48, avulsos,
     // desconhecidos, excesso, regiao }. Cada pedido (x): { p, c, prazo, situacao (no dia dele), v, veiculo, marcacao,
     // regra, dia, origemDia 'salvo'|'sugestao', diaSugerido, estoura, diaFechado, regiao, ang }.
@@ -781,7 +782,11 @@
         // ---- salvos primeiro (vencem a sugestão) ----
         salvos.forEach(function (sv) { var di = dd[idx[sv.dia]]; sv.x.dia = sv.dia; di.lista.push(sv.x); if (sv.x.v.vol != null) di.usado += sv.x.v.vol; });
         // ---- regiões ----
+        // Âncoras das regiões: clientes com POSIÇÃO. Sem nenhum (ex.: o único geolocalizado do bairro foi salvo num dia, ou
+        // só há pedido de cliente sem pino), os de ângulo pelo BAIRRO formam as regiões (PS-2). O ângulo só decide o dia:
+        // a parada continua sem coordenada (vai para dia.semPosicao na ordem do dia; nenhum pino é inventado).
         var comAng = lista.filter(function (u) { return u.ang != null && !u.pelaBairro; });
+        if (!comAng.length) comAng = lista.filter(function (u) { return u.ang != null; });
         var regs = setores(comAng, dias.length);
         // regiões com prazo mais cedo -> dias mais cedo (empate: ângulo)
         // (com a base = pedidos já em aberto, quase todos vencem antes da semana: desempata pelo nº de clientes vencidos)
@@ -793,6 +798,12 @@
             var m = null; comAng.forEach(function (v) { if (!m || difAng(v.ang, u.ang) < difAng(m.ang, u.ang) - 1e-9) m = v; }); u.reg = m.reg;
         });
         res.regioes = regs.map(function (r, ri) { return { indice: ri, dia: r.dia, angIni: Math.round(r.angIni), angFim: Math.round(r.angFim), centro: Math.round(r.centro), clientes: r.unidades.length }; });
+        // ---- semana sem NENHUM dia de saída da S10 (recesso/feriados, PS-3): tudo em sobra com motivo próprio ----
+        if (!dias.length) {
+            lista.forEach(function (u) { u.xs.forEach(function (x) { x.motivoSobra = 'sem_saida_semana'; res.sobra.push(x); }); });
+            lista = [];
+        }
+        res.semSaidaNaSemana = !dias.length;
         // ---- dia de cada unidade: prazo, dia fechado, capacidade ----
         function permitidos(u) { return dias.filter(function (d) { return !naoRecebe(u.regra, d); }); }
         function pertoDe(u, cands) {   // ordena dias candidatos pelo setor mais perto em ângulo (dia sem setor: por último), depois data

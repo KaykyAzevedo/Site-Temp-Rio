@@ -284,3 +284,41 @@ test('semana: rápido (< 100 ms para ~150 pedidos) e determinístico', () => {
     const total = r1.dias.reduce((a, d) => a + d.pedidos.length, 0) + r1.sobra.length + r1.semPosicao.length;
     assert.equal(total, 150);
 });
+
+// ---------- revisão da Sentinela ----------
+test('PS-2: bairro conhecido sem âncora geolocalizada NÃO salva ainda forma região (sem inventar pino)', () => {
+    const A = docN(950), B = docN(951);
+    const clientes = { [A]: cliAng('Com Pino X', 45, 0.08, { bairro: 'Bairro X' }), [B]: { nome: 'Sem Pino X', bairro: 'bairro x', cidade: 'Rio', pos: null } };
+    const pa = ped(A), pb = ped(B), padroes = { [A]: 's10', [B]: 's10' };
+    // sem plano: os dois sugeridos no mesmo dia
+    const r0 = R.planejarSemana([pa, pb], clientes, SEMANA, { padroes });
+    const m0 = diaDe(r0);
+    assert.ok(m0[pa.cd_pedido] && m0[pa.cd_pedido] === m0[pb.cd_pedido]);
+    // cenário 1: A salvo num dia -> B continua com dia (pela região do bairro), não vai para semPosicao
+    const r1 = R.planejarSemana([pa, pb], clientes, SEMANA, { padroes, plano: { [pa.cd_pedido]: '2026-12-02' } });
+    const m1 = diaDe(r1);
+    assert.equal(m1[pa.cd_pedido], '2026-12-02');
+    assert.ok(m1[pb.cd_pedido], 'B ficou sem dia'); assert.equal(r1.semPosicao.length, 0);
+    const dia1 = r1.dias.find((d) => d.dia === m1[pb.cd_pedido]);
+    assert.equal(dia1.semPosicao.length, 1);   // a parada de B continua SEM coordenada
+    assert.ok(dia1.paradas.every((sp) => sp.documento !== B));
+    // cenário 2: só B tem pedido; o cadastro de A dá a posição do bairro
+    const r2 = R.planejarSemana([pb], clientes, SEMANA, { padroes });
+    assert.ok(diaDe(r2)[pb.cd_pedido]); assert.equal(r2.semPosicao.length, 0); assert.equal(r2.regioes.length, 1);
+    // sem nenhum cliente do bairro com posição: continua semPosicao
+    const r3 = R.planejarSemana([pb], { [B]: clientes[B] }, SEMANA, { padroes });
+    assert.deepEqual(r3.semPosicao.map((x) => x.p.cd_pedido), [pb.cd_pedido]);
+});
+
+test('PS-3: semana sem NENHUM dia de saída da S10 -> sobra com motivo sem_saida_semana (não "sem posição")', () => {
+    const cfg = R.cfgDe({ feriados_sem_saida: true, feriados_extras: ['2026-11-30', '2026-12-01', '2026-12-02', '2026-12-03', '2026-12-04'] });
+    const A = docN(960), B = docN(961);
+    const clientes = { [A]: cliAng('Com Pino', 30, 0.05), [B]: { nome: 'Sem Pino', bairro: 'Qualquer', pos: null } };
+    const pa = ped(A), pb = ped(B);
+    const r = R.planejarSemana([pa, pb], clientes, SEMANA, { cfg, padroes: { [A]: 's10', [B]: 's10' }, plano: { [pa.cd_pedido]: '2026-12-01' } });
+    assert.equal(r.dias.length, 0); assert.equal(r.semSaida.length, 5); assert.equal(r.semSaidaNaSemana, true);
+    assert.equal(r.semPosicao.length, 0);
+    assert.deepEqual(r.sobra.map((x) => [x.p.cd_pedido, x.motivoSobra]).sort(), [[pa.cd_pedido, 'sem_saida_semana'], [pb.cd_pedido, 'sem_saida_semana']].sort());
+    assert.equal(r.resumo.sobra, 2);
+    assert.equal(R.planejarSemana([pa], clientes, SEMANA, { padroes: { [A]: 's10' } }).semSaidaNaSemana, false);
+});
