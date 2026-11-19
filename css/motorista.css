@@ -1,0 +1,109 @@
+/* Tela do motorista (motorista.html): celular primeiro, legível no sol. Mesma identidade do painel (escuro suave,
+   laranja só para a ação principal). Sem frameworks. */
+:root {
+    --m-fundo: #181c22;
+    --m-superficie: #212730;
+    --m-linha: #313946;
+    --m-tinta: #e9eef4;
+    --m-tinta-2: #c3cdd8;
+    --m-apagado: #93a1b1;
+    --m-acao: #f0915a;
+    --m-acao-texto: #1a1410;
+    --m-atencao: #e3b14b;
+    --m-ruim: #f08a80;
+    color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--m-fundo); color: var(--m-tinta); font: 400 18px/1.45 'Lato', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    min-height: 100vh; padding-bottom: env(safe-area-inset-bottom); }
+button, input { font: inherit; }
+:focus-visible { outline: 3px solid var(--m-tinta); outline-offset: 2px; }
+[hidden] { display: none !important; }
+
+.mot-pular { position: absolute; left: -999px; top: 0; background: var(--m-tinta); color: var(--m-fundo); padding: 0.6rem 1rem; z-index: 10; }
+.mot-pular:focus { left: 0.5rem; top: 0.5rem; }
+
+.mot-topo { position: sticky; top: 0; z-index: 5; background: rgba(24, 28, 34, 0.96); border-bottom: 1px solid var(--m-linha); padding: 0.6rem 1rem; padding-top: max(0.6rem, env(safe-area-inset-top)); }
+.mot-topo-linha { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; max-width: 40rem; margin: 0 auto; }
+.mot-marca { margin: 0; font-weight: 900; font-size: 1rem; }
+.mot-marca span { font-weight: 400; color: var(--m-apagado); }
+.mot-rede { max-width: 40rem; margin: 0.5rem auto 0; padding: 0.45rem 0.7rem; border-radius: 0.6rem; background: rgba(227, 177, 75, 0.16); color: var(--m-atencao); font-weight: 700; font-size: 0.9rem; }
+
+.mot-conteudo { max-width: 40rem; margin: 0 auto; padding: 1rem 1rem 3rem; outline: none; }
+.mot-tit { font-size: 1.6rem; font-weight: 900; margin: 0 0 0.25rem; line-height: 1.15; }
+.mot-sub { margin: 0; color: var(--m-tinta-2); font-size: 0.95rem; }
+
+/* Estados (carregando, sem rota, sem vínculo, erro) */
+.mot-estado { padding: 2.5rem 0; }
+.mot-estado-tit { font-size: 1.35rem; font-weight: 900; margin: 0 0 0.4rem; }
+.mot-estado p { max-width: 32rem; }
+.mot-estado .mot-botao, .mot-estado .mot-botao-leve { margin-top: 1rem; }
+
+/* Botões: alvo grande para o polegar (>= 48px) */
+.mot-botao { display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem; min-height: 3.25rem; padding: 0.7rem 1.2rem; border: 0; border-radius: 0.8rem;
+    background: var(--m-acao); color: var(--m-acao-texto); font-weight: 900; text-decoration: none; cursor: pointer; }
+.mot-botao-leve { display: inline-flex; align-items: center; justify-content: center; min-height: 2.75rem; padding: 0.5rem 1rem; border-radius: 0.8rem; border: 1px solid var(--m-linha);
+    background: transparent; color: var(--m-tinta); font-weight: 700; text-decoration: none; cursor: pointer; }
+.mot-botao[disabled], .mot-botao-leve[disabled] { opacity: 0.55; cursor: progress; }
+
+/* Login */
+.mot-login { display: grid; gap: 1rem; padding-top: 1.5rem; }
+.mot-campo { display: grid; gap: 0.35rem; font-weight: 700; }
+.mot-campo input { min-height: 3.25rem; padding: 0.7rem 0.85rem; border-radius: 0.8rem; border: 1px solid var(--m-linha); background: var(--m-superficie); color: var(--m-tinta); }
+.mot-campo input:focus-visible { border-color: var(--m-tinta); }
+.mot-erro { margin: 0; min-height: 1.4rem; color: var(--m-ruim); font-weight: 700; }
+
+/* Cabeçalho da rota */
+.mot-cab { display: grid; gap: 0.35rem; margin-bottom: 1rem; }
+.mot-veic { display: inline-flex; align-items: center; gap: 0.5rem; color: var(--m-tinta-2); font-weight: 700; }
+.mot-veic i { width: 0.8rem; height: 0.8rem; border-radius: 50%; background: var(--veic-cor, var(--m-apagado)); display: inline-block; }
+.mot-pub { color: var(--m-apagado); font-size: 0.9rem; margin: 0; }
+.mot-dias { display: flex; gap: 0.5rem; margin: 0.25rem 0 0.75rem; }
+.mot-dias button { flex: 1; min-height: 3rem; border-radius: 0.8rem; border: 1px solid var(--m-linha); background: transparent; color: var(--m-tinta-2); font-weight: 700; cursor: pointer; }
+.mot-dias button[aria-pressed="true"] { background: var(--m-superficie); color: var(--m-tinta); border-color: var(--m-tinta-2); }
+.mot-resumo { display: flex; flex-wrap: wrap; gap: 0.3rem 1.25rem; margin: 0 0 1.25rem; padding: 0.75rem 0.9rem; border-radius: 0.8rem; background: var(--m-superficie); }
+.mot-resumo div { display: grid; }
+.mot-resumo strong { font-size: 1.35rem; font-weight: 900; line-height: 1.1; }
+.mot-resumo span { color: var(--m-apagado); font-size: 0.85rem; }
+
+/* Trilho da rota: a ordem das paradas é a informação principal */
+.mot-paradas { list-style: none; margin: 0; padding: 0; position: relative; }
+.mot-parada { position: relative; padding: 0 0 1.5rem 3.4rem; }
+.mot-parada::before { content: ""; position: absolute; left: 1.2rem; top: 2.6rem; bottom: 0; width: 3px; background: var(--m-linha); border-radius: 3px; }
+.mot-parada:last-child::before { display: none; }
+.mot-num { position: absolute; left: 0; top: 0; width: 2.6rem; height: 2.6rem; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    background: var(--m-tinta); color: var(--m-fundo); font-weight: 900; font-size: 1.2rem; }
+.mot-parada.is-cd .mot-num { background: var(--m-atencao); }
+.mot-hora { margin: 0; color: var(--m-apagado); font-weight: 700; font-size: 0.95rem; min-height: 1.2rem; }
+.mot-nome { margin: 0.05rem 0 0.2rem; font-size: 1.3rem; font-weight: 900; line-height: 1.2; overflow-wrap: anywhere; }
+.mot-end { margin: 0; color: var(--m-tinta-2); overflow-wrap: anywhere; }
+.mot-cx { margin: 0.55rem 0 0; font-size: 1.15rem; }
+.mot-cx strong { font-size: 1.6rem; font-weight: 900; }
+.mot-avisos { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.5rem 0 0; padding: 0; list-style: none; }
+.mot-avisos li { padding: 0.2rem 0.6rem; border-radius: 999px; border: 1px solid var(--m-linha); font-size: 0.9rem; font-weight: 700; color: var(--m-tinta-2); }
+.mot-avisos .is-atencao { border-color: rgba(227, 177, 75, 0.55); color: var(--m-atencao); }
+.mot-obs { margin: 0.5rem 0 0; padding: 0.5rem 0.7rem; border-left: 3px solid var(--m-atencao); background: rgba(227, 177, 75, 0.08); border-radius: 0 0.6rem 0.6rem 0; overflow-wrap: anywhere; }
+.mot-ped { margin: 0.4rem 0 0; color: var(--m-apagado); font-size: 0.85rem; }
+.mot-acoes { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+.mot-acoes .mot-botao { flex: 1 1 12rem; }
+.mot-itens { margin: 0.6rem 0 0; padding: 0; list-style: none; display: grid; gap: 0.3rem; }
+.mot-itens li { display: flex; justify-content: space-between; gap: 0.75rem; padding: 0.4rem 0; border-bottom: 1px solid var(--m-linha); }
+.mot-itens li > span:last-child { font-weight: 900; white-space: nowrap; }
+.mot-item-cli { display: grid; gap: 0.1rem; min-width: 0; overflow-wrap: anywhere; }
+.mot-item-cli .mot-ped { margin: 0; }
+.mot-rodape { margin-top: 1.5rem; display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; color: var(--m-apagado); font-size: 0.85rem; }
+
+@media (min-width: 900px) { body { font-size: 17px; } .mot-conteudo { padding-top: 1.5rem; } }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+/* Diretrizes de interface: toque sem atraso, números alinhados, títulos sem viúva, estados de hover/ativo */
+html { touch-action: manipulation; -webkit-tap-highlight-color: rgba(240, 145, 90, 0.25); }
+.mot-resumo strong, .mot-cx strong, .mot-num, .mot-hora { font-variant-numeric: tabular-nums; }
+.mot-tit, .mot-nome, .mot-estado-tit { text-wrap: balance; }
+@media (hover: hover) {
+    .mot-botao:hover { background: #f5a474; }
+    .mot-botao-leve:hover, .mot-dias button:hover { border-color: var(--m-tinta-2); background: var(--m-superficie); }
+}
+.mot-botao:active { background: #e07c44; }
+.mot-botao-leve:active, .mot-dias button:active { background: var(--m-linha); }

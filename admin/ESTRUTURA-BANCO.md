@@ -638,6 +638,9 @@ o script pré-022. Objetos 019/020 e dados de estoque/eventos permanecem intacto
 
 ## 046 — Plano da semana da S10 (NÃO APLICADA)
 
-- `rota_plano_semana` (`cd_pedido` PK → `dia` seg..sáb, `atualizado_em/por`): plano da semana editado pelo Márcio. Só referência: não muda a rota do dia nem o WhatsApp.
+- `rota_plano_semana` (`cd_pedido` PK → `dia` seg..sáb, `atualizado_em/por`): plano da semana editado pelo Márcio. Só referência: não muda a rota do dia nem o WhatsApp. 047: `veiculo_id` (FK `rota_veiculos`, padrão `'s10'`) — um plano por veículo porta a porta.
+- `rota_veiculos` (047; `id` slug PK imutável, `nome`, `modo` cd_ceasa|porta, `capacidade_volume` NULL = sem limite, `dias_sem_saida`, `volta_sede`, `cor`, `ordem`, `ativo`): a frota. Equipe lê; só admin escreve; com uso só desativa.
+- `rota_motoristas` (047; `user_id` → auth.users PK, `veiculo_id`, `nome`, `ativo`): login do motorista (fora de `admins`).
+- `rota_saida` (047; PK `data, veiculo_id`, `versao`, `paradas` jsonb validado, `resumo`, `publicado_em/por`): rota publicada para o motorista (lê só a dele, hoje e amanhã). Limpeza > 30 dias.
 - `rota_046_salvar_semana(p_inicio, p_itens)`: grava a semana inteira (INVOKER). Limpeza diária `rota_046_limpar` (dias passados).
 - Leitura `eh_equipe()`; escrita `pode_marcar_rota()` (044).

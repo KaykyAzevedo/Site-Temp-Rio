@@ -27,8 +27,15 @@
         // manda as primeiras PARTES_MAX-1 mensagens + 1 aviso com quantas paradas ficaram de fora (ver no painel).
         PARTES_MAX: 100,
         DIAS: ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'],
-        ROTINAS: ['receber_diario', 'rota_s10', 'rota_caminhao', 'alertas_marcio']
+        ROTINAS: ['receber_diario', 'rota_s10', 'rota_caminhao', 'alertas_marcio'],
+        // 047: rota de QUALQUER veículo da frota = 'rota_' + id do veículo (rota_strada...). rota_s10/rota_caminhao seguem.
+        ROTA_VEICULO: /^rota_([a-z0-9_]{2,20})$/,
+        // Rótulo na mensagem dos veículos de antes da 047 (texto aprovado/conhecido); os outros usam o nome da frota.
+        ROTULOS: { caminhao: 'Caminhão CEASA', s10: 'S10' }
     };
+    // Rotina conhecida: as fixas ou rota_<id do veículo>. Veículo da rota_<id> (null se não for rota).
+    function veiculoDaRotina(codigo) { var m = WA.ROTA_VEICULO.exec(String(codigo || '')); return m && !/^(constructor|__proto__|prototype)$/.test(m[1]) ? m[1] : null; }
+    function rotinaConhecida(codigo) { return WA.ROTINAS.indexOf(codigo) >= 0 || !!veiculoDaRotina(codigo); }
 
     // ===================== formatação =====================
     function brl(centavos) {
@@ -161,7 +168,9 @@
                 .catch(function (e) { if (ausente(e, 'rota_cliente_veiculo')) return []; throw e; }),
             opcional('rota_pedido_veiculo', function () { return sb.from('rota_pedido_veiculo').select('cd_pedido,veiculo').order('cd_pedido', { ascending: true }); }),
             opcional('rota_cliente_regras', function () { return sb.from('rota_cliente_regras').select('documento,janela_inicio,janela_fim,dias_sem_receber,prioridade,observacao').order('documento', { ascending: true }); }),
-            opcional('rota_pedido_ignorado', function () { return sb.from('rota_pedido_ignorado').select('cd_pedido').order('cd_pedido', { ascending: true }); })
+            opcional('rota_pedido_ignorado', function () { return sb.from('rota_pedido_ignorado').select('cd_pedido').order('cd_pedido', { ascending: true }); }),
+            // 047 (opcional): a frota. Ausente = os 3 padrões do rota-core; presente com erro de leitura = rejeita.
+            opcional('rota_veiculos', function () { return sb.from('rota_veiculos').select('id,nome,modo,capacidade_volume,dias_sem_saida,volta_sede,cor,ordem,ativo').order('id', { ascending: true }); })
         ]).then(function (rs) {
             var pedidos = rs[0], docs = {};
             pedidos.forEach(function (p) { if (p.documento) docs[p.documento] = true; });
@@ -169,11 +178,15 @@
             var cfgAusente = !!(rs[2] && rs[2].error);
             var cfgLinha = rs[2] && !rs[2].error && rs[2].data && rs[2].data[0] ? rs[2].data[0] : null;
             var excecoes = {};
-            rs[3].forEach(function (e) { if (e.veiculo === 'caminhao' || e.veiculo === 's10') excecoes[e.documento] = e.veiculo; });
+            // Só veículo que EXISTE: com a 047, os da rota_veiculos (inclusive desativados: o planejador põe o pedido em
+            // aguardando); sem a 047, só os dois de antes (o CHECK da 040/044 nem deixa gravar outro).
+            var frotaIds = rs[7] ? core.frotaDe(rs[7]).porId : { caminhao: true, s10: true };
+            var idOk = function (v) { return typeof v === 'string' && Object.prototype.hasOwnProperty.call(frotaIds, v); };
+            rs[3].forEach(function (e) { if (idOk(e.veiculo)) excecoes[e.documento] = e.veiculo; });
             // v2 só com a 044 inteira (mesma detecção da aba Rotas: config + as duas tabelas novas).
             var v2 = !cfgAusente && rs[4] !== null && rs[5] !== null, porPedido = {}, regras = {};
             if (v2) {
-                rs[4].forEach(function (p) { if (p.veiculo === 'caminhao' || p.veiculo === 's10') porPedido[p.cd_pedido] = p.veiculo; });
+                rs[4].forEach(function (p) { if (idOk(p.veiculo)) porPedido[p.cd_pedido] = p.veiculo; });
                 regras = core.regrasDe(rs[5]);
             }
             var ignorados = {};
@@ -189,7 +202,7 @@
                                          cidade: c.cidade, pos: tem ? [lat, lng] : null, precisao: tem ? c.precisao : null };
                 });
                 var d = { pedidos: pedidos, clientes: cli, cfg: core.cfgDe(cfgLinha || core.CFG_PADRAO), excecoes: excecoes, coletado: sy ? sy.coletado_em : null,
-                          ignorados: ignorados };
+                          ignorados: ignorados, veiculos: rs[7] };   // null = sem a 047 (padrões)
                 if (v2) { d.v2 = true; d.porPedido = porPedido; d.regras = regras; }
                 return d;
             });
@@ -348,7 +361,7 @@
         return { texto: textoDe(partes), partes: partes, resumo: { vencido: venc.v, parcelasVencidas: venc.n, clientes: nCli, hoje: hojeV.v, prox7: prox.v } };
     }
 
-    // rota_s10 / rota_caminhao. d = coletarRota(...). veiculo = 's10' | 'caminhao'. Entregador ou gestor.
+    // rota_<veículo> (rota_s10, rota_caminhao, rota_strada...). d = coletarRota(...). veiculo = id da frota. Entregador ou gestor.
     function caixasTxt(sp) {
         var c24 = 0, c48 = 0, av = 0, desc = false;
         sp.pedidos.forEach(function (x) { if (x.v.vol == null) desc = true; else { c24 += x.v.c24; c48 += x.v.c48; av += x.v.avulsos; } });
@@ -377,18 +390,24 @@
     function comParadas(pt, n) { pt.paradas = n; return pt; }
     function montarRota(d, veiculo, agora, opts) {
         opts = opts || {};
-        var hoje = core.diaSP(agora), rotulo = veiculo === 'caminhao' ? 'Caminhão CEASA' : 'S10';
+        var hoje = core.diaSP(agora), frota = core.frotaDe(d.veiculos === undefined ? null : d.veiculos);
+        var vei = Object.prototype.hasOwnProperty.call(frota.porId, veiculo) ? frota.porId[veiculo] : null;
+        var rotulo = Object.prototype.hasOwnProperty.call(WA.ROTULOS, veiculo) ? WA.ROTULOS[veiculo] : (vei ? vei.nome : String(veiculo));
+        // 047: veículo fora da frota ou desativado = não manda (o histórico mostra o motivo).
+        if (!vei || !vei.ativo) return { vazio: 'veículo ' + veiculo + (vei ? ' desativado' : ' não existe na frota'), texto: 'Rota ' + rotulo + ': veículo ' + (vei ? 'desativado' : 'inexistente') + '.', partes: [] };
         // v2 (044 legível, ver coletarRota): veículo só pela marcação (pedido > padrão do cliente); sem marcação o pedido
         // fica FORA (aguardando, como na aba Rotas); regras de entrega (dia fechado, janela, prioridade) e hora prevista.
         // 045: pedido "tirado da rota" (d.ignorados) não vai na mensagem, nem conta como aguardando.
         var v2 = !!d.v2, ign = d.ignorados || {};
+        // Sem a 044 (modo automático de antes) só existem a S10 e o caminhão.
+        if (!v2 && veiculo !== 's10' && veiculo !== 'caminhao') return { vazio: 'rota ' + rotulo + ' exige a marcação por veículo (044)', texto: 'Rota ' + rotulo + ': sem marcação por veículo.', partes: [] };
         var pl = v2
-            ? core.planejar(d.pedidos, d.clientes, hoje, { cfg: d.cfg, excecoes: d.excecoes, marcacao: true, padroes: d.excecoes, porPedido: d.porPedido || {}, regras: d.regras || {}, ignorados: ign })
-            : core.planejar(d.pedidos, d.clientes, hoje, { cfg: d.cfg, excecoes: d.excecoes, ignorados: ign });
+            ? core.planejar(d.pedidos, d.clientes, hoje, { cfg: d.cfg, excecoes: d.excecoes, marcacao: true, padroes: d.excecoes, porPedido: d.porPedido || {}, regras: d.regras || {}, ignorados: ign, veiculos: d.veiculos })
+            : core.planejar(d.pedidos, d.clientes, hoje, { cfg: d.cfg, excecoes: d.excecoes, ignorados: ign, veiculos: d.veiculos });
         if (pl.semSaida) return { vazio: 'sem saída hoje (' + (pl.feriado ? 'feriado' : 'domingo/dia sem saída') + ')', texto: 'Rota ' + rotulo + ' — ' + dataLonga(hoje) + ': sem saída hoje.', partes: [] };
-        // A S10 não sai sábado (ROTA.DIAS_SEM_SAIDA_S10): rota_s10 nesse dia = sem saída, não manda nada.
-        if (veiculo === 's10' && pl.s10.semSaida) return { vazio: 'sem saída hoje para a S10 (' + core.nomeDia(hoje) + ')', texto: 'Rota ' + rotulo + ' — ' + dataLonga(hoje) + ': a S10 não sai hoje.', partes: [] };
-        var r = veiculo === 'caminhao' ? pl.caminhao : pl.s10;
+        var r = pl.veiculos && pl.veiculos[veiculo] ? pl.veiculos[veiculo] : (veiculo === 'caminhao' ? pl.caminhao : pl.s10);
+        // Dia em que ESTE veículo não sai (S10/Strada no sábado: dias_sem_saida da frota) = sem saída, não manda nada.
+        if (r.semSaida) return { vazio: 'sem saída hoje para a ' + rotulo + ' (' + core.nomeDia(hoje) + ')', texto: 'Rota ' + rotulo + ' — ' + dataLonga(hoje) + ': a ' + rotulo + ' não sai hoje.', partes: [] };
         var total = r.paradas.length + r.semPosicao.length;
         if (!total) {
             // v2: diz quantos pedidos esperam marcação (o histórico mostra por que a rota saiu vazia).
@@ -428,7 +447,8 @@
             resumo.modo = 'marcacao'; resumo.aguardando = pl.aguardando.length; resumo.ignorados = pl.ignorados.length;
             resumo.fica = pl.fica.filter(function (x) { return x.veiculo === veiculo; }).length;
             resumo.atrasos = r.horario ? r.horario.atrasos : 0;
-            if (veiculo === 'caminhao') resumo.cd = r.cd ? r.cd.total.clientes : 0;
+            if (r.modo === 'cd_ceasa') resumo.cd = r.cd ? r.cd.total.clientes : 0;
+            if (r.semLimite && r.modo === 'porta') resumo.semLimite = true;   // carga do veículo não definida (aviso)
         }
         return { texto: textoDe(partes), partes: partes, resumo: resumo };
     }
@@ -477,13 +497,15 @@
     function gerar(sb, codigo, agora, opts) {
         opts = opts || {};
         if (codigo === 'receber_diario') return coletarReceber(sb).then(function (d) { return montarReceber(d, agora, opts); });
-        if (codigo === 'rota_s10' || codigo === 'rota_caminhao') return coletarRota(sb).then(function (d) { return montarRota(d, codigo === 'rota_s10' ? 's10' : 'caminhao', agora, opts); });
+        var vr = veiculoDaRotina(codigo);
+        if (vr) return coletarRota(sb).then(function (d) { return montarRota(d, vr, agora, opts); });
         if (codigo === 'alertas_marcio') return coletarAlertas(sb, agora).then(function (d) { return montarAlertas(d, agora, opts); });
         return Promise.reject(new Error('rotina desconhecida: ' + codigo));
     }
     // Papel x rotina (W1; mesma regra do gatilho da 042): financeiro e alertas SÓ gestor; rotas entregador ou gestor.
     var PAPEIS = { receber_diario: ['gestor'], alertas_marcio: ['gestor'], rota_s10: ['entregador', 'gestor'], rota_caminhao: ['entregador', 'gestor'] };
-    function papelPermitido(codigo, papel) { return (PAPEIS[codigo] || []).indexOf(papel) >= 0; }
+    // 047: toda rota_<veículo> = entregador ou gestor (mesma regra do gatilho whatsapp_042_rotina_validar trocado na 047).
+    function papelPermitido(codigo, papel) { return (PAPEIS[codigo] || (veiculoDaRotina(codigo) ? PAPEIS.rota_s10 : [])).indexOf(papel) >= 0; }
     // Quem pode receber: papel permitido para a rotina, ativo E com consentimento registrado (LGPD).
     // Devolve { ok: [...], pulados: [{dest, motivo}] }.
     function filtrarDestinatarios(ids, todos, codigo) {
@@ -505,7 +527,7 @@
         montarReceber: montarReceber, montarRota: montarRota, montarAlertas: montarAlertas, gerar: gerar,
         filtrarDestinatarios: filtrarDestinatarios, papelPermitido: papelPermitido, PAPEIS: PAPEIS, MODELOS: MODELOS, renderizar: renderizar,
         empacotar: empacotar, COLETORES: COLETORES, linkPainel: linkPainel, linhasDeLog: linhasDeLog, corpoLog: corpoLog, MARCA_RESUMO: MARCA_RESUMO,
-        nomeCurto: nomeCurto, corte: corte };
+        nomeCurto: nomeCurto, corte: corte, rotinaConhecida: rotinaConhecida, veiculoDaRotina: veiculoDaRotina };
     raiz.TempRioWhatsCore = WhatsCore;
     if (typeof module !== 'undefined' && module.exports) module.exports = WhatsCore;
 })(typeof globalThis !== 'undefined' ? globalThis : (typeof window !== 'undefined' ? window : this));

@@ -132,7 +132,7 @@ async function agendado(agora: Date) {
 }
 
 async function previa(jwt: string, rotina: string, agora: Date) {
-  if (!W.WA.ROTINAS.includes(rotina)) return resp(400, { erro: 'rotina desconhecida' });
+  if (!W.rotinaConhecida(rotina)) return resp(400, { erro: 'rotina desconhecida' });   // 047: tambem rota_<id do veiculo>
   // Só admin: confere com o próprio JWT do usuário (eh_admin() lê as claims), antes de usar a chave de serviço.
   const sbUsuario = createClient(URL_SB, CHAVE_ANON, { global: { headers: { Authorization: `Bearer ${jwt}` } }, auth: { persistSession: false } });
   const { data: admin, error } = await sbUsuario.rpc('eh_admin');

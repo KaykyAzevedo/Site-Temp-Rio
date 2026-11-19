@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#181c22">
+    <title>Rota do motorista | Temp Rio</title>
+    <!-- Tela interna do motorista: fora de buscadores e sem link no site público. -->
+    <meta name="robots" content="noindex, nofollow">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700;900&display=swap" rel="stylesheet">
+    <!-- Mesma biblioteca (versão fixa + SRI) e mesma configuração do painel. -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js" integrity="sha384-0w2KAL2YHP6wKOkUDzkCDGgVvfmHnj02DHeQ6XcHOgTfFsGyonKOpShMH1x6nk9o" crossorigin="anonymous"></script>
+    <script src="./js/config.js"></script>
+    <link rel="stylesheet" href="./css/motorista.css">
+</head>
+
+<body>
+    <a class="mot-pular" href="#mot-conteudo">Pular para a rota</a>
+    <header class="mot-topo">
+        <div class="mot-topo-linha">
+            <p class="mot-marca">Temp Rio <span>· rota do motorista</span></p>
+            <button type="button" class="mot-botao-leve" id="mot-sair" hidden>Sair</button>
+        </div>
+        <div class="mot-rede" id="mot-rede" role="status" aria-live="polite" hidden>Sem internet: mostrando a última rota carregada.</div>
+    </header>
+
+    <main id="mot-conteudo" class="mot-conteudo" tabindex="-1">
+        <!-- Estado inicial: carregando (o JS troca) -->
+        <section class="mot-estado" id="mot-estado" aria-live="polite">
+            <p class="mot-estado-tit">Carregando…</p>
+        </section>
+
+        <form class="mot-login" id="mot-login" hidden novalidate>
+            <h1 class="mot-tit">Entrar</h1>
+            <p class="mot-sub">Use o e-mail e a senha que o escritório passou para você.</p>
+            <label class="mot-campo"><span>E-mail</span>
+                <input type="email" id="mot-email" name="email" autocomplete="username" inputmode="email" required spellcheck="false"></label>
+            <label class="mot-campo"><span>Senha</span>
+                <input type="password" id="mot-senha" name="senha" autocomplete="current-password" required></label>
+            <p class="mot-erro" id="mot-login-msg" role="alert"></p>
+            <button type="submit" class="mot-botao" id="mot-entrar">Entrar</button>
+        </form>
+
+        <section class="mot-rota" id="mot-rota" hidden aria-labelledby="mot-rota-tit"></section>
+    </main>
+
+    <script src="./js/motorista.js"></script>
+</body>
+
+</html>

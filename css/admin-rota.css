@@ -168,6 +168,16 @@
 .rota-sem-ord { font-weight: 800; color: var(--adm-acao); font-size: 0.8rem; }
 .rota-sem-veic { margin-top: 0; }
 .rota-sem-sel { padding: 0.2rem 0.4rem !important; font-size: 0.74rem !important; width: auto; max-width: 100%; }
+
+/* ---------- Etapa 2-B: Sugestões de juntar pedido à rota S10 ---------- */
+.rota-juntar { border-color: var(--adm-borda); }
+.rota-juntar summary i { color: var(--adm-atencao); }
+.rota-sem-juntar { margin-top: 0.65rem; padding-top: 0.55rem; border-top: 1px dashed var(--adm-borda); display: grid; gap: 0.4rem; }
+.rota-sem-juntar-tit { color: var(--adm-tinta-2); }
+.rota-sem-juntar-tit i { color: var(--adm-atencao); margin-right: 0.2rem; }
+.rota-sem-juntar-lista { margin: 0; padding: 0; list-style: none; display: grid; gap: 0.4rem; }
+.rota-sem-juntar-item { padding: 0.45rem 0.55rem; border-radius: 0.55rem; border: 1px dashed var(--adm-atencao-borda); background: var(--adm-neutro-fundo); display: grid; gap: 0.2rem; min-width: 0; }
+.rota-btn-curto { font-size: 0.72rem !important; padding: 0.2rem 0.5rem !important; }
 .rota-obs { display: inline-flex; align-items: center; gap: 0.28rem; font-size: 0.74rem; color: var(--adm-tinta-2); background: var(--adm-neutro-fundo);
     border: 1px dashed var(--adm-borda); border-radius: 0.45rem; padding: 0.1rem 0.45rem; max-width: 24rem; }
 .rota-obs i { color: var(--adm-tinta-3); }
@@ -208,3 +218,50 @@
     body.rota-imprimindo .rota-reenq, body.rota-imprimindo .rota-fora { display: none !important; }
     body.rota-imprimindo .rota-imp-veic { display: inline !important; font-weight: 700; }
 }
+
+/* ---------- 047: frota (N veículos com cor), PDF por veículo, envio ao motorista, diálogo Frota ---------- */
+.rota-veic-cor { display: inline-block; width: 0.7rem; height: 0.7rem; border-radius: 999px; background: var(--veic-cor, #64748b); border: 1px solid rgba(255, 255, 255, 0.35);
+    flex: 0 0 auto; margin-right: 0.15rem; vertical-align: middle; }
+.rota-cartao-veic { border-left: 4px solid var(--veic-cor, var(--adm-borda)); }
+.rota-veic-acoes { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+.rota-pub-status { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; margin: -0.25rem 0 0.6rem; }
+.rota-dialogo-largo { width: min(58rem, calc(100vw - 2rem)); }
+.rota-dialogo-largo .rota-dlg-form { max-height: calc(100vh - 2.5rem); overflow-y: auto; }
+.rota-frota-form { display: grid; gap: 0.75rem; }
+.rota-frota-dias { display: flex !important; flex-wrap: wrap; gap: 0.4rem 1rem; }
+.rota-frota-dias legend { width: 100%; }
+.rota-frota-dias small { width: 100%; }
+.rota-input-cor { height: 2.3rem; padding: 0.15rem 0.3rem !important; cursor: pointer; }
+.rota-veic-inativo td { opacity: 0.7; }
+.rota-sem-veics { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.5rem; }
+.rota-sem-veics .adm-chip { display: inline-flex; align-items: center; gap: 0.3rem; }
+.rota-frota-mot { border-top: 1px solid var(--adm-borda); padding-top: 0.75rem; display: grid; gap: 0.5rem; }
+#rota-dlg-frota [aria-invalid="true"] { outline: 2px solid var(--adm-ruim); outline-offset: 1px; }
+
+/* PDF por veículo: documento próprio (#rota-impressao, filho do body), um veículo por documento, papel branco */
+.rota-impressao { display: none; }
+@media print {
+    @page { size: A4; margin: 12mm; }
+    html:has(body.rota-imprimindo-doc), body.rota-imprimindo-doc { background: #fff !important; color: #000 !important; color-scheme: light !important; }
+    body.rota-imprimindo-doc #rota-impressao * { visibility: visible !important; }
+    body.rota-imprimindo-doc #rota-impressao .rimp-cab, body.rota-imprimindo-doc #rota-impressao .rimp-rod, body.rota-imprimindo-doc #rota-impressao .rimp-h1 { display: block !important; }
+    body.rota-imprimindo-doc > *:not(#rota-impressao) { display: none !important; }
+    body.rota-imprimindo-doc #rota-impressao { display: block !important; color: #000; font: 10.5pt/1.35 system-ui, -apple-system, 'Segoe UI', Arial, sans-serif; }
+    .rimp-cab .rimp-h1 { color: #000; font-size: 15pt; font-weight: 800; margin: 0 0 3pt; }
+    .rimp-cab p, .rimp-sub { font-size: 9.5pt; margin: 0 0 8pt; color: #222; }
+    .rimp-tab { width: 100%; border-collapse: collapse; }
+    .rimp-tab th, .rimp-tab td { border: 1px solid #777; padding: 4pt 5pt; text-align: left; vertical-align: top; }
+    .rimp-tab th { background: #eee !important; font-size: 9pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .rimp-tab tr { break-inside: avoid; }
+    .rimp-tab td:first-child { width: 1.6em; font-weight: 800; }
+    .rimp-caixa { width: 22%; }
+    .rimp-rod { margin-top: 12pt; break-inside: avoid; }
+    .rimp-assin { display: flex; gap: 24pt; margin: 22pt 0 10pt; }
+    .rimp-assin div { flex: 1; font-size: 9pt; text-align: center; }
+    .rimp-assin span { display: block; border-top: 1px solid #000; margin-bottom: 3pt; height: 0; }
+    .rimp-obs { margin: 6pt 0 2pt; font-weight: 700; }
+    .rimp-linhas span { display: block; border-bottom: 1px solid #999; height: 16pt; }
+    .rimp-gerado { font-size: 8pt; color: #555; margin-top: 8pt; }
+}
+.rota-dialogo-largo .rota-dlg-form { overscroll-behavior: contain; }
+.rota-pub-status, .rota-kpis { font-variant-numeric: tabular-nums; }
