@@ -892,7 +892,8 @@
             '<h4 class="rota-tit" id="rota-mot-tit"><i class="fa-solid fa-id-badge" aria-hidden="true"></i> Motoristas (tela do motorista)</h4>' +
             (st.motoristasErro ? '<p class="rota-sub rota-txt-ruim">Não foi possível ler os motoristas (' + esc(st.motoristasErro) + ').</p>' : '') +
             '<p class="rota-sub">O motorista entra em <strong>motorista.html</strong> com e-mail e senha e vê só a rota publicada do veículo dele (hoje e amanhã). ' +
-            'O login é criado pelo dono no Supabase (Authentication → Users → Add user). Copie o <strong>UID</strong> do usuário e cole abaixo. O motorista não entra na equipe do painel.</p>' +
+            'O jeito mais simples: crie o motorista na aba <strong>Usuários</strong> (Mais → Usuários) — o login, a senha e o veículo saem de lá. ' +
+            'Para um login que já existe, escolha o usuário abaixo (ou cole o UID do Supabase: Authentication → Users). O motorista não entra na equipe do painel.</p>' +
             (st.motoristas.length
                 ? '<div class="overflow-x-auto"><table class="adm-tabela rota-tabela"><thead><tr><th>Motorista</th><th>Veículo</th><th>Situação</th>' + (edita ? '<th><span class="sr-only">Ação</span></th>' : '') + '</tr></thead><tbody>' +
                   st.motoristas.map(function (m) {
@@ -906,11 +907,34 @@
                   }).join('') + '</tbody></table></div>'
                 : '<p class="rota-sub">Nenhum motorista cadastrado.</p>') +
             (edita && ativos.length ? '<form id="rota-mot-form" class="rota-frota-form mt-2" novalidate><fieldset><legend>Vincular motorista</legend><div class="rota-dlg-grade3">' +
+                htmlEscolhaUsuario() +
                 '<label class="rota-dlg-campo"><span>UID do usuário (Supabase)</span><input type="text" id="rota-mot-uid" class="adm-input" maxlength="36" autocomplete="off" spellcheck="false" placeholder="00000000-0000-0000-0000-000000000000"></label>' +
                 '<label class="rota-dlg-campo"><span>Nome</span><input type="text" id="rota-mot-nome" class="adm-input" maxlength="60" autocomplete="off"></label>' +
                 '<label class="rota-dlg-campo"><span>Veículo</span><select id="rota-mot-veic" class="adm-input">' + ativos.map(function (v) { return '<option value="' + esc(v.id) + '">' + esc(v.nome) + '</option>'; }).join('') + '</select></label>' +
                 '</div></fieldset><div class="rota-dlg-acoes"><button type="submit" class="adm-botao" id="rota-mot-salvar"' + (st.frotaSalvando ? ' disabled' : '') + '><i class="fa-solid fa-link" aria-hidden="true"></i> Vincular</button></div></form>' : '') +
             '</section>';
+    }
+    // Usuários sem acesso (logins criados na aba Usuários ou no Supabase) para vincular como motorista, sem colar UID.
+    // Vem da Edge Function usuarios-admin (só admin); indisponível = só o campo UID, como antes.
+    function htmlEscolhaUsuario() {
+        if (st.usuariosFrota === undefined) return '';
+        if (st.usuariosFrota === null) return '<p class="rota-sub">Carregando usuários…</p>';
+        if (st.usuariosFrota === false) return '<p class="rota-sub">Lista de usuários indisponível (função usuarios-admin): cole o UID.</p>';
+        var jaMot = {}; (st.motoristas || []).forEach(function (m) { jaMot[m.user_id] = true; });
+        var cands = st.usuariosFrota.filter(function (u) { return u.id && !u.banido && !jaMot[u.id] && (u.tipo === 'sem_acesso' || u.tipo === 'motorista'); });
+        if (!cands.length) return '<p class="rota-sub">Nenhum login sem acesso para vincular: crie o motorista na aba Usuários.</p>';
+        return '<label class="rota-dlg-campo"><span>Usuário</span><select id="rota-mot-usuario" class="adm-input"><option value="">Escolher…</option>' +
+            cands.map(function (u) { return '<option value="' + esc(u.id) + '" data-nome="' + esc(u.nome || '') + '">' + esc((u.nome ? u.nome + ' — ' : '') + u.email) + '</option>'; }).join('') + '</select></label>';
+    }
+    function carregarUsuariosFrota(dlg) {
+        if (st.papel !== 'admin' || !st.frota047 || st.usuariosFrota !== undefined || !raiz.TempRioUsuarios) return;
+        st.usuariosFrota = null;
+        var pedido = st.pedidoUsuFrota = {};   // sair()/novo pedido invalida esta resposta
+        raiz.TempRioUsuarios.listarParaFrota(st.sb).then(function (l) {
+            if (st.pedidoUsuFrota !== pedido) return;
+            st.usuariosFrota = l || false;
+            if (dlg.isConnected && dlg.open && !st.frotaEdit && !dlg.contains(document.activeElement && document.activeElement.closest ? document.activeElement.closest('#rota-mot-form') : null)) frotaRender(dlg);
+        }, function () { if (st.pedidoUsuFrota === pedido) st.usuariosFrota = false; });
     }
     function frotaRender(dlg) {
         var corpo = dlg.querySelector('#rota-frota-corpo');
@@ -927,6 +951,7 @@
         if (!dlg._ligado) { ligarFrota(dlg); dlg._ligado = true; }
         frotaRender(dlg);
         dlg.showModal();
+        carregarUsuariosFrota(dlg);
         if (!dlg.contains(document.activeElement) || document.activeElement === dlg) {
             var p = dlg.querySelector('#rota-frota-novo') || dlg.querySelector('[data-frota-editar]') || dlg.querySelector('#rota-frota-fechar'); if (p) p.focus();
         }
@@ -1010,6 +1035,12 @@
         });
         dlg.addEventListener('change', function (ev) {
             var s = ev.target; if (!s || !s.getAttribute) return;
+            if (s.id === 'rota-mot-usuario') {   // escolheu um usuário: preenche o UID (e o nome, se vazio)
+                var uidEl = dlg.querySelector('#rota-mot-uid'), nomeEl = dlg.querySelector('#rota-mot-nome'), op = s.options[s.selectedIndex];
+                if (uidEl) uidEl.value = s.value;
+                if (nomeEl && !nomeEl.value && op) nomeEl.value = op.getAttribute('data-nome') || '';
+                return;
+            }
             var uid = s.getAttribute('data-mot-veic');
             if (uid && podeEditarFrota() && !st.frotaSalvando) gravarFrota(dlg, st.sb.from('rota_motoristas').update({ veiculo_id: s.value }).eq('user_id', uid), 'Veículo do motorista alterado.', '[data-mot-veic="' + uid + '"]');
         });
@@ -2868,6 +2899,7 @@
             st.frota047 = false; st.frotaLinhas = null; st.frotaErro = null; st.frota = core.frotaDe(VEIC_SEM047); st.mot047 = false; st.motoristas = []; st.motoristasErro = null;
             st.saida047 = false; st.saidas = {}; st.saidaErro = null; st.pubSalvando = {}; st.msgPub = {}; st.focoPub = null;
             st.planoVeic = {}; st.semVeiculo = 's10'; st.frotaSalvando = false; st.frotaEdit = null; st.msgFrota = ''; st.focoFrota = null; st.mapaVeic = 's10';
+            st.usuariosFrota = undefined; st.pedidoUsuFrota = null;
         },
         planejador: Planejador
     };

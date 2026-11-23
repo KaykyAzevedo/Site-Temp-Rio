@@ -31,6 +31,7 @@
     <script src="./js/config.js"></script>
     <link rel="stylesheet" href="./css/admin.css">
     <link rel="stylesheet" href="./css/admin-rota.css">
+    <link rel="stylesheet" href="./css/admin-usuarios.css">
 </head>
 
 <body class="admin">
@@ -121,6 +122,7 @@
                     <button type="button" class="adm-aba" data-aba="solidcon"><i class="fa-solid fa-plug"></i><span>Integração</span></button>
                     <button type="button" class="adm-aba" data-aba="lgpd"><i class="fa-solid fa-shield-halved"></i><span>LGPD</span></button>
                     <button type="button" class="adm-aba" data-aba="whatsapp"><i class="fa-brands fa-whatsapp"></i><span>WhatsApp</span></button>
+                    <button type="button" class="adm-aba" data-aba="usuarios"><i class="fa-solid fa-user-gear"></i><span>Usuários</span></button>
                 </div>
             </div>
         </nav>
@@ -238,6 +240,8 @@
             <section id="painel-rotas" class="hidden"></section>
             <!-- WhatsApp (js/admin-whatsapp.js, migração 042): só admin. -->
             <section id="painel-whatsapp" class="hidden"></section>
+            <!-- Usuários (js/admin-usuarios.js + Edge Function usuarios-admin): só admin. -->
+            <section id="painel-usuarios" class="hidden"></section>
         </main>
         </div>
     </div>
@@ -262,6 +266,7 @@
     <script src="./js/admin-rota.js"></script>
     <script src="./supabase/functions/_shared/whatsapp-core.js"></script>
     <script src="./js/admin-whatsapp.js"></script>
+    <script src="./js/admin-usuarios.js"></script>
     <script src="./js/admin.js"></script>
 </body>
 

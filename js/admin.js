@@ -366,7 +366,7 @@
     // 'pedidoserp' = Kanban do ERP + vendas do SOLIDCON (aba Pedidos). site* = blocos do site que saíram de abas mistas.
     var ABAS = ['dashboard', 'pedidoserp', 'pedidos', 'clientes', 'historico', 'vendas',
                 'espera', 'vitrine', 'regioes', 'visitas', 'solidcon', 'leads', 'lgpd', 'lojistas',
-                'siteclientes', 'siteprodutos', 'sitedash', 'sitevendas', 'rotas', 'whatsapp'];
+                'siteclientes', 'siteprodutos', 'sitedash', 'sitevendas', 'rotas', 'whatsapp', 'usuarios'];
 
     // Menu: item -> seções que ele mostra. restrito = item inteiro só admin. Na aba Site (mista), o que é só admin sai
     // seção a seção (SECOES_SO_ADMIN, em secoesDe). Histórico = vista "Encerrados" dos pedidos do site.
@@ -383,7 +383,9 @@
         // Rota do dia (js/admin-rota.js): admin e vendedor (as fontes já são eh_equipe).
         rotas:    { secoes: ['rotas'],     restrito: false },
         // WhatsApp (js/admin-whatsapp.js, migração 042): só admin (telefones, valores, modo de envio).
-        whatsapp: { secoes: ['whatsapp'],  restrito: true }
+        whatsapp: { secoes: ['whatsapp'],  restrito: true },
+        // Usuários (js/admin-usuarios.js + Edge Function usuarios-admin): só admin (cria/desativa logins).
+        usuarios: { secoes: ['usuarios'],  restrito: true }
     };
     // Nomes antigos de aba (links, atalhos, estado antigo) caem no item novo correspondente; desconhecido cai em "hoje".
     var ALIAS_ABA = { dashboard: 'hoje', historico: 'site', vitrine: 'estoque', espera: 'site', leads: 'site', visitas: 'site',
@@ -778,6 +780,7 @@
         hmDestruir(); hm.animou = false; hm.pediu = false;
         if (window.TempRioRota) window.TempRioRota.sair();   // Rota do dia: solta o mapa e esquece os dados da conta
         if (window.TempRioWhats) window.TempRioWhats.sair(); // WhatsApp: esquece telefones/textos da conta
+        if (window.TempRioUsuarios) window.TempRioUsuarios.sair(); // Usuários: esquece a lista (e qualquer senha na tela)
         saudeParar();
         if (canalRealtime) { sb.removeChannel(canalRealtime); canalRealtime = null; }
         sb.auth.signOut().then(function () {
@@ -1016,6 +1019,14 @@
         window.TempRioWhats.desenhar(alvo, { sb: sb, papel: papel, confirmar: confirmarAdmin });
     }
 
+    // Usuários: tela e chamadas à Edge Function em js/admin-usuarios.js. Aqui só o contêiner, o cliente e o confirmarAdmin.
+    function desenharUsuarios() {
+        var alvo = $('#painel-usuarios');
+        if (!alvo) return;
+        if (!window.TempRioUsuarios) { alvo.innerHTML = cartaoVazio('Usuários indisponível', 'O arquivo js/admin-usuarios.js não carregou.', 'erp'); return; }
+        window.TempRioUsuarios.desenhar(alvo, { sb: sb, papel: papel, confirmar: confirmarAdmin, usuarioId: usuario ? usuario.id : null });
+    }
+
     var DESENHAR_ABA = {
         dashboard: desenharDashboard,
         pedidos: desenharPedidos,
@@ -1036,7 +1047,8 @@
         sitedash: desenharSiteDash,
         sitevendas: desenharSiteVendas,
         rotas: desenharRotas,
-        whatsapp: desenharWhatsapp
+        whatsapp: desenharWhatsapp,
+        usuarios: desenharUsuarios
     };
 
     // aba = item do menu: redesenha, entre as seções dele, só as que estão "sujas".
@@ -2600,6 +2612,7 @@
         // Rota do dia: o módulo carrega sozinho na 1ª vez; aqui só o ATUALIZAR (forcar) relê.
         if (qual === 'rotas' && forcar && window.TempRioRota) window.TempRioRota.recarregar();
         if (qual === 'whatsapp' && forcar && window.TempRioWhats) window.TempRioWhats.recarregar();
+        if (qual === 'usuarios' && forcar && window.TempRioUsuarios) window.TempRioUsuarios.recarregar();
         if ((qual === 'clientes' || qual === 'regioes' || qual === 'vendas') && precisa(cmp)) carregarCompras();
         if (qual === 'regioes' && precisa(geo)) carregarGeoClientes();
         if (qual === 'regioes' && papel === 'admin' && precisa(gmap)) carregarMapaClientes();
