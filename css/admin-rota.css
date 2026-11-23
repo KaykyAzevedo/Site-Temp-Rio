@@ -265,3 +265,9 @@
 }
 .rota-dialogo-largo .rota-dlg-form { overscroll-behavior: contain; }
 .rota-pub-status, .rota-kpis { font-variant-numeric: tabular-nums; }
+
+/* 050: rota do dia fechada (faixa do topo, confirmação de Reabrir, "Remover de hoje") */
+.rota-fx .rota-cab { gap: 0.75rem; flex-wrap: wrap; }
+.rota-fx-confirma { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; border: 1px solid var(--adm-atencao-borda); background: var(--adm-atencao-fundo); border-radius: 0.5rem; }
+.rota-btn-remover-hoje:hover, .rota-btn-remover-hoje:focus-visible { border-color: var(--adm-atencao-borda); color: var(--adm-tinta); background: var(--adm-atencao-fundo); }
+.rota-btn-remover-hoje:hover i, .rota-btn-remover-hoje:focus-visible i { color: var(--adm-atencao); }

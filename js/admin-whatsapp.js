@@ -8,7 +8,9 @@
  * ===================================================================== */
 (function (raiz) {
     'use strict';
-    var ROTULO = { receber_diario: 'Contas a receber (diário)', rota_s10: 'Rota da S10', rota_caminhao: 'Rota do caminhão (CEASA)', alertas_marcio: 'Alertas para o Márcio' };
+    var ROTULO = { receber_diario: 'Contas a receber (diário)', rota_s10: 'Rota da S10', rota_caminhao: 'Rota do caminhão (CEASA)', alertas_marcio: 'Alertas para o Márcio',
+                  // 049 (WA-PED)
+                  pedidos_dia: 'Pedidos do dia (para o chefe)', rota_chefe: 'Rota do dia e rota sugerida (para o chefe)' };
     var DIAS = [['seg', 'Seg'], ['ter', 'Ter'], ['qua', 'Qua'], ['qui', 'Qui'], ['sex', 'Sex'], ['sab', 'Sáb'], ['dom', 'Dom']];
     var PAPEL = { gestor: 'Gestor', entregador: 'Entregador', outro: 'Outro' };
     var STATUS = { simulado: 'Simulado', enviado: 'Enviado', erro: 'Erro', pulado: 'Pulado' };
@@ -166,8 +168,10 @@
             });
         } else {
             var W = raiz.TempRioWhatsCore;
+            // mesmo template da rotina gravada (ex.: relatorio_diario_v2) = mesma prévia que a Edge Function gera e envia
+            var rot = st.rotinas.filter(function (x) { return x.codigo === codigo; })[0];
             if (!W) p = Promise.reject(new Error('whatsapp-core.js não carregou'));
-            else p = W.gerar(sb, codigo, agora, { painelUrl: raiz.location ? raiz.location.origin : '' }).then(function (m) {
+            else p = W.gerar(sb, codigo, agora, { painelUrl: raiz.location ? raiz.location.origin : '', template: (rot && rot.template) || undefined }).then(function (m) {
                 return { texto: m.texto, vazio: m.vazio || null, partes: (m.partes || []).length, origem: 'Gerada agora no painel (simulação, dados reais, sem envio)' };
             });
         }

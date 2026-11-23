@@ -645,5 +645,8 @@ o script pré-022. Objetos 019/020 e dados de estoque/eventos permanecem intacto
 - `usuarios_048_operacao` (048): reserva de 2 min de desativar/reativar enquanto a etapa no Auth acontece. Sem grant (só a RPC).
 - RPC `usuarios_048_aplicar(jsonb)` (048; definer, só service_role): única porta de mudança de acesso (admins/rota_motoristas) da tela Usuários — re-confere o ator admin, travas, estado final e log, sob lock.
 - `rota_saida` (047; PK `data, veiculo_id`, `versao`, `paradas` jsonb validado, `resumo`, `publicado_em/por`): rota publicada para o motorista (lê só a dele, hoje e amanhã). Limpeza > 30 dias.
+- `rota_dia_fechada` / `rota_dia_item` / `rota_dia_log` (050): rota do dia FECHADA (foto por dia de SP: pedido, veículo, ordem, origem previsão/adicionado, removido de hoje) e log curto dos ajustes. Escrita só pelas RPCs `rota_050_*` (definer); equipe lê. Limpeza > 60 dias (log > 180).
+- `rota_saida_progresso` (051): paradas feitas pelo motorista (data, veículo, ordem, hora). Escrita só pela RPC `rota_051_marcar` (motorista do veículo, hoje); equipe e o próprio motorista leem.
+- `pedido_canhoto` (052) + bucket privado `canhotos`: foto do canhoto por pedido (motorista na parada ou painel). `saiu` + canhoto = "Recebido" no Kanban. Escrita só por RPC; equipe lê; remover só admin.
 - `rota_046_salvar_semana(p_inicio, p_itens)`: grava a semana inteira (INVOKER). Limpeza diária `rota_046_limpar` (dias passados).
 - Leitura `eh_equipe()`; escrita `pode_marcar_rota()` (044).

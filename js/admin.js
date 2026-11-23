@@ -797,7 +797,11 @@
         sb.rpc('meu_papel').then(function (r) {
             papel = (r.data) || null;
             aplicarPapel();
-            mostrarSecoes();
+            // Link com aba (ex.: admin.html#clientes do relatório do WhatsApp): abre esse item do menu. Nome desconhecido
+            // é ignorado; item restrito para vendedor cai em "site" (regra do próprio trocarAba).
+            var abaHash = String(location.hash || '').replace(/^#/, '');
+            var temAba = function (o) { return Object.prototype.hasOwnProperty.call(o, abaHash); };
+            if (/^[a-z]{2,20}$/.test(abaHash) && (temAba(NAV) || temAba(ALIAS_ABA))) trocarAba(abaHash, true); else mostrarSecoes();
             saudeIniciar();
             carregar();
             ligarRealtime();
@@ -6747,7 +6751,12 @@
     var PE_COLS = 'cd_pedido,dt_pedido,etapa,dt_carga,dt_sep_inicio,dt_sep_fim,dt_conferencia,dt_saida,dt_atendido,cliente_tipo,documento,cliente_nome,nr_carga,valor_centavos';
     var PE_VELHO_MIN = 30;
     var PE_MODO_CHAVE = 'adm.peModo';
-    var pe = { carregado: false, carregando: false, erro: null, ausente: false, itens: [], coletado: null, seq: 0 };
+    var pe = { carregado: false, carregando: false, erro: null, ausente: false, itens: [], coletado: null, seq: 0,
+               // 052 (opcional): canhotos ativos { cd_pedido: [{caminho, enviado_em, origem}] }, tabela lida?, pode anexar?
+               canhotos: {}, can052: false, podeMarcar: false };
+    // Coluna do pedido: "saiu" COM foto do canhoto (052) = Recebido (a marca é do painel; o ERP é só leitura).
+    function peIndice(x) { return x && x.etapa === 'saiu' && pe.canhotos[x.cd_pedido] ? PE_VISUAL.atendido : peIndiceColuna(x && x.etapa); }
+    function peTemCanhoto(x) { return !!(x && pe.canhotos[x.cd_pedido]); }
     var peOrigem = null, peSegmento = 'aberto';   // peOrigem: null = automático (ERP quando não há pedidos do site)
     var peModo = (function () {
         try { return localStorage.getItem(PE_MODO_CHAVE) === 'detalhado' ? 'detalhado' : 'compacto'; }
@@ -6767,10 +6776,16 @@
         pe.carregando = true;
         return Promise.all([
             vendPaginar(function () { return sb.from('solidcon_pedidos_erp').select(PE_COLS).order('etapa', { ascending: true }).order('dt_pedido', { ascending: true }); }, 5000),
-            sb.from('solidcon_pedidos_erp_sync').select('coletado_em').eq('status', 'ok').order('coletado_em', { ascending: false }).limit(1)
+            sb.from('solidcon_pedidos_erp_sync').select('coletado_em').eq('status', 'ok').order('coletado_em', { ascending: false }).limit(1),
+            // 052 (opcional): canhotos ativos e se quem está logado pode anexar (pode_marcar_rota). Ausentes = sem canhoto.
+            vendPaginar(function () { return sb.from('pedido_canhoto').select('cd_pedido,caminho,enviado_em,origem').is('substituido_em', null).order('id', { ascending: true }); }, 50000),
+            sb.rpc('pode_marcar_rota')
         ]).then(function (rs) {
             if (seq !== pe.seq) return;
             pe.carregando = false;
+            pe.canhotos = {}; pe.can052 = !!(rs[2] && !rs[2].error);
+            if (pe.can052) (rs[2].data || []).forEach(function (c) { (pe.canhotos[c.cd_pedido] || (pe.canhotos[c.cd_pedido] = [])).push(c); });
+            pe.podeMarcar = !!(rs[3] && !rs[3].error && rs[3].data === true);
             if (rs[0].error) {
                 pe.ausente = solidTabelaAusente(rs[0].error);
                 pe.erro = pe.ausente ? null : String(rs[0].error.message || rs[0].error);
@@ -6843,14 +6858,15 @@
     function peCartaoCompacto(x) {
         var nome = String(x.cliente_tipo) === 'cnpj' && x.cliente_nome ? x.cliente_nome : 'Consumidor final';
         var dEtapa = x[PE_DATA_ETAPA[x.etapa]];
-        var col = PE_COLUNAS[peIndiceColuna(x.etapa)] || PE_COLUNAS[0];
+        var col = PE_COLUNAS[peIndice(x)] || PE_COLUNAS[0];
         var ref = x.etapa === 'aberto' ? x.dt_pedido : (dEtapa || x.dt_pedido);
         var loc = peLocalInfo(x);
         var cargaTxt = peCargaTexto(x);
         var icoCarga = cargaTxt ? '<span class="adm-pe-ico-carga" role="img" title="' + esc(cargaTxt) + '" aria-label="' + esc(cargaTxt) + '">' + icoFa('fa-truck-ramp-box') + '</span>' : '';
+        if (peTemCanhoto(x)) icoCarga += '<span class="adm-pe-ico-carga" role="img" title="Canhoto anexado" aria-label="Canhoto anexado">' + icoFa('fa-file-image') + '</span>';
         var atr = col.id === 'recebido' ? null : infoAtraso(ref);
         var ponto = atr ? '<span class="adm-pe-ponto ' + atr.cls + '" role="img" title="' + esc(atr.texto) + '" aria-label="' + esc(atr.texto) + '"></span>' : '';
-        var rotuloAria = nome + ' — ' + loc.texto + (cargaTxt ? ' — ' + cargaTxt : '') + (atr ? ' — ' + atr.texto : '') + ' (Pedido ' + x.cd_pedido + ')';
+        var rotuloAria = nome + ' — ' + loc.texto + (cargaTxt ? ' — ' + cargaTxt : '') + (peTemCanhoto(x) ? ' — canhoto anexado' : '') + (atr ? ' — ' + atr.texto : '') + ' (Pedido ' + x.cd_pedido + ')';
         return '<div class="adm-kanban-erpcartao is-compacto" role="button" tabindex="0" data-cor="' + col.cor + '" data-pe-pedido="' + esc(String(x.cd_pedido)) + '" aria-label="' + esc(rotuloAria) + '">' +
             '<div class="adm-pe-comp-topo">' +
                 '<span class="adm-pe-comp-nome" title="' + esc(nome) + '">' + esc(nome) + '</span>' +
@@ -6863,7 +6879,7 @@
     function peCartaoDetalhado(x, noModal) {
         var nome = String(x.cliente_tipo) === 'cnpj' && x.cliente_nome ? x.cliente_nome : 'Consumidor final';
         var dEtapa = x[PE_DATA_ETAPA[x.etapa]];
-        var col = PE_COLUNAS[peIndiceColuna(x.etapa)] || PE_COLUNAS[0];
+        var col = PE_COLUNAS[peIndice(x)] || PE_COLUNAS[0];
         var ref = x.etapa === 'aberto' ? x.dt_pedido : (dEtapa || x.dt_pedido);
         var loc = peLocalInfo(x);
         var cargaTxt = peCargaTexto(x);
@@ -6874,7 +6890,7 @@
             (noModal ? '<p class="adm-pe-modal-etapa"><span class="adm-kanban-ico">' + icoFa(col.icone) + '</span><span>' + esc(col.titulo) + '</span></p>' : '') +
             '<p class="text-sm font-bold adm-kc-nome" title="' + esc(nome) + '">' + icoFa('fa-store') + '<span class="adm-nome-2l">' + esc(nome) + '</span></p>' +
             linha('fa-location-dot', esc(loc.texto), loc.semBairro ? 'is-sem-bairro' : '') +
-            linha('fa-hashtag', 'Pedido ' + esc(String(x.cd_pedido)) + seloCarga) +
+            linha('fa-hashtag', 'Pedido ' + esc(String(x.cd_pedido)) + seloCarga + (peTemCanhoto(x) ? ' <span class="adm-pe-selo-carga">' + icoFa('fa-file-image') + 'canhoto</span>' : '')) +
             (peTemValor(x) ? '<p class="adm-kc-valor">' + icoFa('fa-sack-dollar') + '<span>' + esc(brl(Number(x.valor_centavos))) + '</span></p>' : '') +
             linha('fa-clock', 'Feito ' + esc(peHora(x.dt_pedido)) + ' · <strong>' + esc(peHa(x.dt_pedido)) + '</strong>') +
             (dEtapa && x.etapa !== 'aberto' ? linha('fa-calendar-check', esc(rotEtapa) + ' ' + esc(peHora(dEtapa))) : '') +
@@ -6888,7 +6904,7 @@
 
     function peItensDa(col) {
         var idxAlvo = PE_COLUNAS.indexOf(col);
-        var l = pe.itens.filter(function (x) { return peIndiceColuna(x.etapa) === idxAlvo; });
+        var l = pe.itens.filter(function (x) { return peIndice(x) === idxAlvo; });
         var desc = col.id === 'recebido';  // recebidos: mais recentes primeiro; fila e enviados: mais antigos primeiro
         l.sort(function (a, b) { return desc ? (a.dt_pedido < b.dt_pedido ? 1 : -1) : (a.dt_pedido < b.dt_pedido ? -1 : 1); });
         return l;
@@ -7011,7 +7027,8 @@
             role: lerAtr('role'), modal: lerAtr('aria-modal'), label: lerAtr('aria-label'), labelledby: lerAtr('aria-labelledby')
         };
         peModalVolta = { el: opener, id: String(x.cd_pedido), atrs: atrsAnt };
-        abrirModal(peCartaoDetalhado(x, true));
+        abrirModal(peCartaoDetalhado(x, true) + '<div id="pe-canhoto" data-pe-canhoto="' + esc(String(x.cd_pedido)) + '">' + peCanhotoHtml(x) + '</div>');
+        peLigarCanhoto(x);
         if (painel) {
             painel.classList.add('adm-modal-compacto');
             painel.setAttribute('role', 'dialog');
@@ -7021,6 +7038,91 @@
         }
         var btn = $('#btn-fechar-modal');
         if (btn) btn.focus();
+    }
+
+    // ---------- 052: canhoto no cartão do pedido (modal) ----------
+    // Ver: URL assinada curta (equipe). Anexar/trocar: quem pode_marcar_rota (a foto é reduzida no aparelho). Remover: só
+    // admin, com confirmação na própria tela. A anterior trocada fica guardada como "substituída" no banco.
+    var peCan = { msg: '', ocupado: false, confirmaRemover: null, url: {} };
+    function peCanhotoHtml(x) {
+        if (!pe.can052 || !window.TempRioCanhoto) return '';
+        var lista = pe.canhotos[x.cd_pedido] || [], cd = String(x.cd_pedido);
+        var busy = peCan.ocupado ? ' disabled aria-busy="true"' : '';
+        var itens = lista.map(function (c, i) {
+            var quem = c.origem === 'motorista' ? 'motorista' : 'escritório';
+            var img = peCan.url[c.caminho] ? '<img class="adm-pe-canhoto-img" src="' + esc(peCan.url[c.caminho]) + '" alt="' + esc('Foto do canhoto do pedido ' + cd) + '">' : '';
+            var rem = papel === 'admin'
+                ? (peCan.confirmaRemover === c.caminho
+                    ? '<span class="adm-pe-canhoto-conf" role="group" aria-label="Confirmar remoção">Remover esta foto? O pedido volta para "Enviado" se não houver outra. ' +
+                      '<button type="button" class="adm-botao adm-pe-canhoto-perigo" data-canhoto-remover-sim="' + esc(c.caminho) + '"' + busy + '>Remover</button> ' +
+                      '<button type="button" class="adm-botao-fantasma" data-canhoto-remover-nao' + busy + '>Cancelar</button></span>'
+                    : '<button type="button" class="adm-botao-fantasma" data-canhoto-remover="' + esc(c.caminho) + '"' + busy + '>' + icoFa('fa-trash-can') + 'Remover</button>')
+                : '';
+            return '<li class="adm-pe-canhoto-item"><span>' + icoFa('fa-file-image') + 'Foto ' + (i + 1) + ' · enviada pelo ' + esc(quem) + ' em ' + esc(dataHora(c.enviado_em)) + '</span>' +
+                '<span class="adm-pe-canhoto-acoes"><button type="button" class="adm-botao-fantasma" data-canhoto-ver="' + esc(c.caminho) + '"' + busy + '>' + icoFa('fa-eye') + 'Ver foto</button>' + rem + '</span>' + img + '</li>';
+        }).join('');
+        var anexar = pe.podeMarcar
+            ? '<label class="adm-botao-fantasma adm-pe-canhoto-anexar" for="pe-canhoto-in">' + icoFa('fa-camera') + (lista.length ? 'Trocar foto do canhoto' : 'Anexar foto do canhoto') + '</label>' +
+              '<input type="file" id="pe-canhoto-in" class="sr-only" accept="image/jpeg,image/png,image/webp" data-canhoto-cd="' + esc(cd) + '"' + busy + '>'
+            : '';
+        return '<section class="adm-pe-canhoto" aria-labelledby="pe-canhoto-tit"><p class="adm-pe-canhoto-tit" id="pe-canhoto-tit">' + icoFa('fa-file-signature') + 'Canhoto</p>' +
+            (lista.length ? '<ul class="adm-pe-canhoto-lista">' + itens + '</ul>' : '<p class="adm-pe-canhoto-vazio">Nenhuma foto do canhoto. ' + (x.etapa === 'saiu' ? 'Com a foto, o pedido passa para "Recebido".' : '') + '</p>') +
+            anexar + (peCan.msg ? '<p class="adm-pe-canhoto-msg" role="status" id="pe-canhoto-msg" tabindex="-1">' + esc(peCan.msg) + '</p>' : '') + '</section>';
+    }
+    function peCanhotoRedesenhar(x, foco) {
+        var el = document.getElementById('pe-canhoto');
+        if (!el || el.getAttribute('data-pe-canhoto') !== String(x.cd_pedido)) return;   // modal fechou/trocou de pedido
+        el.innerHTML = peCanhotoHtml(x); peLigarCanhoto(x);
+        var f = foco && el.querySelector(foco); if (f) f.focus();
+    }
+    function peCanhotoErro(e) {
+        var c = String((e && (e.code || e.statusCode)) || '');
+        return c === '42501' || c === '403' ? 'sem permissão' : c === 'P0002' ? 'arquivo ou pedido não encontrado' : String((e && e.message) || e);
+    }
+    function peCanhotoRecarregar(x, msg, foco) {
+        peCan.ocupado = false; peCan.msg = msg; peCan.confirmaRemover = null;
+        carregarPedidosErp().then(function () {
+            var novo = pe.itens.filter(function (y) { return String(y.cd_pedido) === String(x.cd_pedido); })[0] || x;
+            peCanhotoRedesenhar(novo, foco || '#pe-canhoto-msg');
+        });
+    }
+    function peLigarCanhoto(x) {
+        var el = document.getElementById('pe-canhoto'); if (!el) return;
+        el.querySelectorAll('[data-canhoto-ver]').forEach(function (b) {
+            b.addEventListener('click', function () {
+                var cam = b.getAttribute('data-canhoto-ver');
+                if (peCan.url[cam]) { delete peCan.url[cam]; peCanhotoRedesenhar(x, '[data-canhoto-ver="' + cam + '"]'); return; }
+                window.TempRioCanhoto.urlAssinada(sb, cam).then(function (u) { peCan.url[cam] = u; peCanhotoRedesenhar(x, '[data-canhoto-ver="' + cam + '"]'); },
+                    function (e) { peCan.msg = 'Não foi possível abrir a foto: ' + peCanhotoErro(e) + '.'; peCanhotoRedesenhar(x, '#pe-canhoto-msg'); });
+            });
+        });
+        var inp = el.querySelector('#pe-canhoto-in');
+        if (inp) inp.addEventListener('change', function () {
+            var f = inp.files && inp.files[0]; if (!f || peCan.ocupado) return;
+            var trocar = (pe.canhotos[x.cd_pedido] || []).length > 0;
+            peCan.ocupado = true; peCan.msg = 'Enviando a foto…'; peCanhotoRedesenhar(x, '#pe-canhoto-msg');
+            window.TempRioCanhoto.reduzir(f).then(function (blob) {
+                return window.TempRioCanhoto.enviar(sb, blob, [Number(x.cd_pedido)], { substituir: trocar });
+            }).then(function () { peCanhotoRecarregar(x, trocar ? 'Foto do canhoto trocada.' : 'Foto do canhoto anexada' + (x.etapa === 'saiu' ? ': o pedido passou para "Recebido".' : '.')); },
+                function (e) { peCan.ocupado = false; peCan.msg = 'Não foi possível enviar a foto: ' + peCanhotoErro(e) + '.'; peCanhotoRedesenhar(x, '#pe-canhoto-msg'); });
+        });
+        el.querySelectorAll('[data-canhoto-remover]').forEach(function (b) {
+            b.addEventListener('click', function () { peCan.confirmaRemover = b.getAttribute('data-canhoto-remover'); peCanhotoRedesenhar(x, '[data-canhoto-remover-nao]'); });
+        });
+        var nao = el.querySelector('[data-canhoto-remover-nao]');
+        if (nao) nao.addEventListener('click', function () { var cam = peCan.confirmaRemover; peCan.confirmaRemover = null; peCanhotoRedesenhar(x, '[data-canhoto-remover="' + cam + '"]'); });
+        var sim = el.querySelector('[data-canhoto-remover-sim]');
+        if (sim) sim.addEventListener('click', function () {
+            if (peCan.ocupado || papel !== 'admin') return;
+            var cam = sim.getAttribute('data-canhoto-remover-sim');
+            peCan.ocupado = true; peCanhotoRedesenhar(x);
+            sb.rpc('rota_052_remover', { p_cd: Number(x.cd_pedido), p_caminho: cam }).then(function (r) {
+                if (r.error) throw r.error;
+                // o arquivo só sai do Storage quando nenhum outro pedido usa a mesma foto
+                return r.data === true ? null : sb.storage.from(window.TempRioCanhoto.BUCKET).remove([cam]);
+            }).then(function () { delete peCan.url[cam]; peCanhotoRecarregar(x, 'Foto do canhoto removida.', '#pe-canhoto-msg'); },
+                function (e) { peCan.ocupado = false; peCan.msg = 'Não foi possível remover: ' + peCanhotoErro(e) + '.'; peCanhotoRedesenhar(x, '#pe-canhoto-msg'); });
+        });
     }
 
     function peIniciarAba() {

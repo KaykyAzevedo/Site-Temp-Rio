@@ -110,7 +110,131 @@ Arquivos:
      - `{{4}}` R$ 100,00 (1 parcela)
      - `{{5}}` 1) Mercado Exemplo Ltda R$ 3.000,00 (1d); 2) Padaria Modelo R$ 2.000,00 (15d); 3) cliente pessoa física R$ 20,00 (46d)
      - `{{6}}` coleta de 16/11 05:50 (com a coleta velha: "ATENÇÃO, coleta antiga de 14/11 05:50")
-     - `{{7}}` https://www.exemplo.com.br/admin.html#site
+     - `{{7}}` https://www.exemplo.com.br/admin.html#clientes (contas a receber ficam em Clientes > Financeiro)
+   - **`relatorio_diario_v2`**: categoria **Utility**, cadastrado em 23/11/2026 (em análise). Mesmo conteúdo do `relatorio_diario`, em blocos e com 1 cliente por linha. O `relatorio_diario` segue em uso até a aprovação; para trocar, basta gravar `relatorio_diario_v2` em `whatsapp_rotinas.template` da rotina `receber_diario` (painel WhatsApp > rotina > "Template na Meta"). Nenhum parâmetro leva quebra de linha, tab ou 4+ espaços seguidos; zero aparece como frase ("nada vencido"), nunca vazio.
+     ```
+     📊 *Resumo das contas a receber — {{1}}*
+     
+     🔴 *Vencido em aberto*
+     {{2}}
+     
+     🟡 *Vence hoje*
+     {{3}}
+     
+     🟢 *A vencer nos próximos 7 dias*
+     {{4}}
+     
+     ━━━━━━━━━━━━
+     🏆 *Maiores valores vencidos por cliente*
+     1. {{5}}
+     2. {{6}}
+     3. {{7}}
+     4. {{8}}
+     5. {{9}}
+     ━━━━━━━━━━━━
+     
+     Dados do ERP: coleta de {{10}}
+     👉 Mais detalhes no painel: {{11}}
+     
+     _Mensagem automática do Temp Rio._
+     ```
+     Exemplos:
+     - `{{1}}` segunda, 23/11
+     - `{{2}}` R$ 68.533,31 · 32 parcelas · 28 clientes (sem nada vencido: "nada vencido")
+     - `{{3}}` R$ 2.074,94 · 1 parcela (sem nada: "nada vence hoje")
+     - `{{4}}` R$ 96.121,43 · 35 parcelas (sem nada: "nada vence nos próximos 7 dias")
+     - `{{5}}` PETRO FRUTAS - NOGUEIRA — R$ 8.226,22 (4 dias) (sem nenhum vencido: "nenhum valor vencido")
+     - `{{6}}` Mercado Exemplo Ltda — R$ 3.000,00 (1 dia)
+     - `{{7}}` cliente pessoa física — R$ 20,00 (46 dias)
+     - `{{8}}` — (vaga sem cliente)
+     - `{{9}}` —
+     - `{{10}}` 23/11 às 08:28 (coleta velha: "14/11 às 05:50 (ATENÇÃO, coleta antiga)")
+     - `{{11}}` https://www.exemplo.com.br/admin.html#clientes
+   - **`pedidos_do_dia`**: categoria **Utility**, cadastrado em 23/11/2026 (em análise). Rotina `pedidos_dia` (049, 17:00, seg a sáb, desligada). Fonte: `solidcon_pedidos_erp`, as etapas do Kanban "Pedidos". Entrou = `dt_pedido` no dia; Tá pronto = etapa `conferido` agora; Enviou = `saiu` com `dt_saida` no dia ou `atendido` com `dt_atendido` no dia (dia de São Paulo). Só gestor.
+     ```
+     📦 *Resumo dos pedidos do dia — {{1}}*
+     
+     📥 *Entrou* (pedidos que chegaram no ERP)
+     {{2}}
+     Principais clientes: {{3}}
+     
+     ✅ *Tá pronto* (conferido, aguardando saída)
+     {{4}}
+     Principais clientes: {{5}}
+     
+     🚚 *Enviou* (saiu ou foi entregue)
+     {{6}}
+     Principais clientes: {{7}}
+     
+     👉 Mais detalhes no painel: {{8}}
+     
+     _Mensagem automática do Temp Rio._
+     ```
+     Exemplos:
+     - `{{1}}` segunda, 23/11 às 17:00 (coleta do ERP atrasada: "segunda, 23/11 às 17:00 (ATENÇÃO, ERP de 14:10)")
+     - `{{2}}` 8 pedidos · R$ 12.340,00 (nenhum: "nenhum pedido")
+     - `{{3}}` PETRO FRUTAS · RIO SUL ITAGUAI · MULTIMARKET · +5 (nenhum: "nenhum"; pessoa física aparece como "cliente pessoa física")
+     - `{{4}}` 3 pedidos · 42 caixas
+     - `{{5}}` MULTIMARKET · Mercado Exemplo
+     - `{{6}}` 16 pedidos · R$ 25.870,00
+     - `{{7}}` Padaria Modelo · +15
+     - `{{8}}` https://www.exemplo.com.br/admin.html#pedidos
+   - **`rota_paradas`**: categoria **Utility**, cadastrado em 23/11/2026 (em análise). Rotina `rota_chefe` (049): as entregas do dia, 6 por mensagem, na ordem da rota de cada veículo porta a porta (na ordem da frota) e depois as cargas do CD do CEASA. Mesmo plano da aba Rotas. O nome deste template é fixo no código; `whatsapp_rotinas.template` da `rota_chefe` é o da `rota_sugerida`. Só gestor.
+     ```
+     📍 *Pedidos para sair — {{1}} (parte {{2}})*
+     Cliente, pedidos, caixas, endereço e prioridade de cada entrega:
+     
+     1. {{3}}
+     
+     2. {{4}}
+     
+     3. {{5}}
+     
+     4. {{6}}
+     
+     5. {{7}}
+     
+     6. {{8}}
+     
+     A rota sugerida chega na última mensagem. Mensagem automática do Temp Rio.
+     ```
+     Exemplos:
+     - `{{1}}` segunda, 23/11
+     - `{{2}}` 1 de 3
+     - `{{3}}` PETRO FRUTAS - NOGUEIRA · 2 pedidos · 18 cx — Rua Ficticia, 123, Nogueira, Petrópolis · prioridade alta · recebe 07:00–10:00
+     - `{{4}}` Mercado Exemplo · 1 pedido · 6 cx + 3 potes — Rua Exemplo, 45, Itaipava, Petrópolis
+     - `{{5}}` cliente pessoa física (pedido 48120) · 1 pedido · 2 cx — endereço no painel · sem posição no mapa
+     - `{{6}}` MULTIMARKET · 1 pedido · 12 cx — entrega no CEASA (Caminhão)
+     - `{{7}}` — (vaga sem entrega)
+     - `{{8}}` —
+   - **`rota_sugerida`**: categoria **Utility**, cadastrado em 23/11/2026 (em análise). Rotina `rota_chefe` (049, 06:00, seg a sáb, desligada): enviada POR ÚLTIMO, depois das `rota_paradas`. **Atenção:** `{{3}}`, `{{4}}` e `{{5}}` ficam separados só por quebra de linha, o mesmo padrão que a Meta já recusou (erro 2388293) num texto antigo; se a Meta recusar, cadastre um texto com palavras entre eles e troque aqui e no código.
+     ```
+     🗺️ *Rota sugerida — {{1}}*
+     
+     📦 Total para sair: {{2}}
+     
+     🚚 *Por veículo*
+     {{3}}
+     {{4}}
+     {{5}}
+     
+     Ordem sugerida das entregas porta a porta: {{6}}
+     
+     ⚠️ Prioridades do dia: {{7}}
+     
+     👉 Rota completa e mapa no painel: {{8}}
+     
+     _Mensagem automática do Temp Rio._
+     ```
+     Exemplos:
+     - `{{1}}` segunda, 23/11
+     - `{{2}}` 14 pedidos · 11 entregas · 168 cx · 2 pedidos aguardando marcação (corte: começa com "+N entregas só no painel"; sem nada: "nenhum pedido para sair")
+     - `{{3}}` Caminhão (CEASA): 4 pedidos · 3 clientes
+     - `{{4}}` S10: 10 pedidos · 8 paradas · ~42 km
+     - `{{5}}` — (com mais de 3 veículos ativos, os demais juntos aqui, separados por " | "; veículo inativo não aparece)
+     - `{{6}}` Nogueira → Itaipava → Corrêas → volta ao depósito (+1 entrega sem posição no mapa)
+     - `{{7}}` 2 clientes com prioridade alta · 1 com horário fixo (sem nada: "nenhuma")
+     - `{{8}}` https://www.exemplo.com.br/admin.html#rotas
    - **`rota_do_dia`**: usado pela S10 e pelo caminhão. Cada mensagem leva até 4 paradas.
      ```
      Rota do dia do veículo {{1}}, saída de {{2}}.

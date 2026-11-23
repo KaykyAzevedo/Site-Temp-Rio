@@ -1611,3 +1611,55 @@ Arquivo: `048_usuarios_log.sql`. Requer 013 (`texto_seguro`), 014 (`eh_admin`) e
   - redefinir_senha: RPC confere e registra o pedido → Auth troca a senha; falhou: nota "FALHOU" e nenhuma senha volta. Releitura da lista falhando depois não perde a senha.
   - alterar: só banco (RPC); `app_metadata` depois (falha = aviso, o acesso já mudou).
 - Teste integrado (scratchpad `fixu_harness.mjs`): o `index.ts` real (tipos removidos) com Auth falso gravando no PG local e a RPC real; falha injetada em cada etapa e corridas com barreira — 24/24. **Não é type-check Deno nem deploy real.**
+
+## 049 — WhatsApp: rotinas do chefe (pedidos do dia + rota sugerida) — NÃO APLICADA
+
+Arquivo: `049_whatsapp_chefe.sql` (rollback: `049_rollback.sql`). Requer 042 e 047. Idempotente, `advisory_xact_lock(5100, 49)`. Aplicar ANTES de publicar a `whatsapp-rotinas` com o `whatsapp-core.js` novo (sem a 049 as rotinas não existem; nada quebra).
+
+- Rotinas novas, DESLIGADAS, em simulação, sem destinatários (não sobrescreve se já existirem):
+  - `pedidos_dia`: template `pedidos_do_dia`, 17:00, seg a sáb. Entrou (`dt_pedido` no dia), Tá pronto (etapa `conferido` agora), Enviou (`saiu` com `dt_saida` no dia ou `atendido` com `dt_atendido` no dia; dia de São Paulo).
+  - `rota_chefe`: template `rota_sugerida`, 06:00, seg a sáb. Manda N mensagens `rota_paradas` (6 entregas cada; nome fixo no código) e, por último, 1 `rota_sugerida`. Mesmo plano da aba Rotas / `rota_<veículo>`. Acima de 99 mensagens o resto fica no painel e a sugerida avisa.
+- Gatilho papel x rotina: `pedidos_dia` e `rota_chefe` só `gestor` (antes `rota_chefe` cairia na regra `rota_<veículo>` = entregador ou gestor).
+- `rota_veiculos`: id `chefe` reservado (CHECK `rota_veiculos_049_id` substitui o `rota_veiculos_047_id`). Se já existir veículo `chefe`, para sem mudar nada.
+- Testada em PG 18 local (aplicada 2x, rollback, reaplicada): papéis, id reservado, precheck, grants da função.
+- Rollback apaga as duas rotinas (o histórico fica) e volta gatilho e CHECK da 047.
+
+## 050 — Rota do dia FECHADA (previsão salva) + ajustes do Márcio — NÃO APLICADA
+
+Arquivo: `050_rota_dia_fechada.sql` (rollback: `050_rollback.sql`). Requer 014, 035, 044 (`pode_marcar_rota`, `rota_config.hora_saida`), 045 e 047. Idempotente, `advisory_xact_lock(5100, 50)`. Sem a 050 o painel e o WhatsApp seguem como antes (previsão viva).
+
+- O cálculo da aba Rotas é uma PREVISÃO. Depois de **fechada**, a rota de hoje fica salva: pedido novo vai para o próximo dia com saída (dias sem saída por veículo, feriados e corte de hora valem).
+- Tabelas: `rota_dia_fechada` (1 linha por dia de SP: `fechada` | `reaberta`, automático, versão, quem/quando), `rota_dia_item` (a foto: pedido, veículo, ordem, origem `previsao` | `adicionado`, removido por/quando) e `rota_dia_log` (fechar, fechar_auto, adicionar, remover, reabrir). RLS: só leitura para a equipe; escrita só pelas RPCs.
+- RPCs (definer, `search_path` vazio, sob `pg_advisory_xact_lock(5100, 5001)`):
+  - `rota_050_fechar(p_itens)`: quem `pode_marcar_rota()`; fecha HOJE com a previsão do painel; fechar 2x = 23505.
+  - `rota_050_fechar_auto(p_itens)`: SÓ `service_role`; não fecha dia que já tem linha (fechada ou reaberta), domingo, nem antes de `rota_config.hora_saida`.
+  - `rota_050_ajustar(p_acao, p_cds, p_veiculo, p_ordem)`: `remover` (“Remover de hoje”: o CLIENTE inteiro — todos os pedidos ativos dele de hoje, em qualquer veículo; volta no próximo dia) ou `adicionar` (“Trazer para hoje”: só pedido EM ABERTO fora da foto); grava a ordem nova SÓ dos veículos afetados (o painel recalcula com o 2-opt do rota-core).
+  - `rota_050_ler(p_data)` (INVOKER, RLS vale): cabeçalho + itens num SELECT só (leitura consistente). Painel e Edge Function leem só por ela; `revisao` sobe em fechar/ajustar/reabrir e quem leu antes compara e relê.
+  - Gatilho `rota_050_saida_conferir` em `rota_saida`: dia FECHADO só aceita o envio ao motorista com exatamente os pedidos ativos da foto do veículo (em aberto no ERP e não tirados da rota/045); senão 40001 (“atualize e envie de novo”).
+  - `rota_050_reabrir()`: SÓ admin; apaga a foto, a linha fica `reaberta` (o automático não fecha de novo; fecha pelo botão, versão + 1).
+- Fechamento automático: a Edge Function `whatsapp-rotinas` (tique `*/15` do pg_cron da 042) chama `fecharRotaAuto` ANTES das rotinas, a partir de `rota_config.hora_saida` (hoje 08:00), com o mesmo plano da aba Rotas. Precisa publicar a função.
+- “Tirar da rota” (045, atraso de boleto) não muda: vale antes da foto e só volta com “Voltar para a rota”.
+- Rota fechada: a ORDEM DE ENTREGA é a sequência salva (cliente que perde/ganha o pino não muda de lugar; o mapa usa só os que têm pino).
+- Testada em PG 18 local (aplicada 2x, rollback, reaplicada): 62 verificações (permissões, validações, fechar 2x, remover/adicionar, cliente em 2 veículos, ordem só dos veículos afetados, revisão, leitura consistente, envio conferido/recusado, reabrir, automático antes/depois da hora e 2x).
+- Rollback: `050_rollback.sql` (apaga as fotos e o log).
+
+## 051 — Tela do motorista v2: progresso ("Próximo ponto") e pedidos da parada — NÃO APLICADA
+
+Arquivo: `051_motorista_progresso.sql` (rollback: `051_rollback.sql`). Requer 014, 039 (caixas) e 047. Idempotente, `advisory_xact_lock(5100, 51)`.
+
+- `rota_saida_progresso` (data, veiculo_id, ordem, feito_em, feito_por, registrado_em): parada FEITA. Leitura: equipe (o painel mostra “S10: 4 de 9 feitas”) e o próprio motorista (o veículo dele, hoje e amanhã). Escrita só pela RPC.
+- `rota_051_marcar(p_data, p_ordem, p_feito, p_em)`: SÓ o motorista ATIVO, SÓ o veículo dele, SÓ hoje (SP) e SÓ parada que existe na rota publicada. Idempotente (a fila offline reenvia); `p_em` (hora do toque, mesmo offline) fica entre agora − 18 h e agora.
+- `rota_051_pedidos_motorista(p_data)`: caixas (24/48/outras) de cada pedido da rota publicada do veículo dele (hoje/amanhã). Sem valor nem documento.
+- Limpeza: progresso com mais de 60 dias (pg_cron opcional).
+- Testada em PG 18 local junto com a 052 (49 verificações; aplicada 2x, rollback, reaplicada): motorista de outro veículo não grava nem lê, inativo e vendedor recusados, idempotência, hora clampada, amanhã recusado, escrita direta recusada.
+
+## 052 — Foto do canhoto (motorista e painel) -> "Recebido" no Kanban — NÃO APLICADA
+
+Arquivo: `052_canhotos.sql` (rollback: `052_rollback.sql`). Requer 014, 035, 044, 051 e o Supabase Storage. Idempotente, `advisory_xact_lock(5100, 52)`.
+
+- Bucket PRIVADO `canhotos` (5 MB; só image/jpeg|png|webp). Caminho `<data>/<cd_pedido>/<uuid>.<ext>`. Políticas em `storage.objects` (só neste bucket): SELECT equipe (URL assinada curta); INSERT motorista só no caminho de HOJE e de pedido da rota publicada do veículo dele; INSERT/UPDATE quem `pode_marcar_rota`; DELETE só admin.
+- `pedido_canhoto` (cd_pedido, caminho, origem motorista|painel, enviado_por/em, substituido_em/por): uma foto pode valer para vários pedidos da parada. Leitura: equipe. Escrita só por RPC: `rota_052_registrar` (o arquivo precisa existir; motorista = só pedidos da rota dele de hoje e arquivo enviado por ele; painel = pode_marcar_rota, `p_substituir` troca e guarda a anterior como substituída), `rota_052_remover` (só admin; diz se o arquivo ainda é usado), `rota_052_canhotos_motorista` (o check na tela do motorista).
+- Kanban (painel): pedido `saiu` com canhoto ativo vai para “Recebido” (o ERP é só leitura; `atendido` continua Recebido); ícone de canhoto no cartão; no cartão aberto: ver (URL assinada), anexar/trocar (pode_marcar_rota), remover (admin, confirmação na tela). Foto reduzida no aparelho (`js/canhoto.js`: lado maior 1600 px, JPEG 0,7).
+- Retenção: NADA é apagado automaticamente. Proposta (aguarda o dono): manter 2 anos e depois apagar arquivo + linha por rotina mensal.
+- Rollback: apaga a tabela e as políticas; os ARQUIVOS do bucket ficam (privado, sem política).
+- CSP do /admin: `img-src` ganha o domínio do Supabase (URL assinada) e `blob:`.

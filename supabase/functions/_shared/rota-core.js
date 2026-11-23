@@ -587,6 +587,20 @@
             sp.pedidos.push(x);
         });
         var tempo = o.tempo || tempoDe(null);
+        // 050 (rota fechada): ordem SALVA quando todas as paradas têm ordem (menor ordem entre os pedidos do cliente);
+        // se faltar ordem em alguma (ajuste no veículo), recalcula só este veículo pelo caminho de sempre (2-opt).
+        var ordemDe = function (sp) { var m = null; sp.pedidos.forEach(function (x) { if (x.fechadaOrdem == null) m = NaN; else if (m === null || x.fechadaOrdem < m) m = x.fechadaOrdem; }); return m; };
+        var fixa = !!o.ordemFixa && comPos.concat(semPos).every(function (sp) { var m = ordemDe(sp); return m !== null && isFinite(m); });
+        if (fixa) {
+            // Sentinela RF-4: a SEQUÊNCIA salva vale inteira (com ou sem pino). Um cliente que perde/ganha o pino depois de
+            // fechar NÃO muda de lugar: 'sequencia' é a ordem de entrega (lista, PDF, motorista, mensagens); 'paradas' (só as
+            // com posição, na mesma ordem) serve só para trajeto/mapa/links e 'semPosicao' só para avisar.
+            var porOrdem = function (a, b) { return ordemDe(a) - ordemDe(b) || (a.chave < b.chave ? -1 : a.chave > b.chave ? 1 : 0); };
+            var todas = comPos.concat(semPos).sort(porOrdem);
+            var seqF = todas.filter(function (sp) { return !!sp.pos; }), semF = todas.filter(function (sp) { return !sp.pos; });
+            var kmF = comprimento(ROTA.ORIGEM, seqF, volta);
+            return { paradas: seqF, semPosicao: semF, sequencia: todas, kmReta: kmF, km: kmF * ROTA.FATOR_ESTRADA, ordemFixa: true };
+        }
         var seq = ordenarComHorario(ROTA.ORIGEM, comPos, tempo, volta, o.fim || null);
         semPos.sort(function (a, b) {
             var ba = norm(a.bairro), bb = norm(b.bairro);
@@ -594,13 +608,47 @@
             return ba.localeCompare(bb, 'pt-BR') || String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR');
         });
         var kmReta = comprimento(ROTA.ORIGEM, seq, volta);
-        return { paradas: seq, semPosicao: semPos, kmReta: kmReta, km: kmReta * ROTA.FATOR_ESTRADA };
+        return { paradas: seq, semPosicao: semPos, sequencia: seq.concat(semPos), kmReta: kmReta, km: kmReta * ROTA.FATOR_ESTRADA };
     }
+    // Ordem de ENTREGA de um bloco (porta: sequencia; sem ela, paradas + sem posição, como antes). Ver RF-4.
+    function sequenciaDe(b) { return b ? (b.sequencia || (b.paradas || []).concat(b.semPosicao || [])) : []; }
     // Parada do CD do CEASA (caminhão, v2): sempre a ÚLTIMA; sem horário por cliente.
     function paradaCd(lista) {
         var cg = cargaCd(lista);
         return { chave: 'cd:ceasa', cd: true, documento: null, nome: ROTA.CEASA_CD_NOME, bairro: null, cidade: null, pos: ROTA.CEASA_CENTRO,
                  precisao: null, tipo: null, veiculo: 'caminhao', motivo: 'cd', detalhe: null, pedidos: lista, carga: cg.itens, total: cg.total };
+    }
+
+    // ===================== ROTA FECHADA (050) =====================
+    // f = { data: 'YYYY-MM-DD', itens: [{ cd_pedido, veiculo_id, ordem (null = recalcular o veículo), origem,
+    //       removido_em? }], fechada_em?, fechada_nome?, automatico?, versao? } (linhas de rota_dia_item + cabeçalho).
+    // Item com removido_em = "Remover de hoje": fora da rota de hoje, vai para o próximo dia (não some).
+    function fechadaDe(f) {
+        var porCd = Object.create(null), removidos = Object.create(null);
+        (f.itens || []).forEach(function (it) {
+            if (!it || it.cd_pedido == null || !idVeiculoValido(it.veiculo_id)) return;
+            var cd = Number(it.cd_pedido);
+            if (it.removido_em) { removidos[cd] = { em: it.removido_em, nome: it.removido_nome || null }; return; }
+            var o = it.ordem == null || it.ordem === '' ? null : Number(it.ordem);
+            porCd[cd] = { veiculo: it.veiculo_id, ordem: o != null && isFinite(o) ? o : null, origem: it.origem === 'adicionado' ? 'adicionado' : 'previsao' };
+        });
+        return { porCd: porCd, removidos: removidos,
+                 meta: { data: f.data, fechadaEm: f.fechada_em || null, nome: f.fechada_nome || null, automatico: !!f.automatico, versao: f.versao || null } };
+    }
+    // Foto de um plano (para fechar ou para regravar a ordem de UM veículo depois de um ajuste): [{ cd_pedido, veiculo_id,
+    // ordem }] na ordem da rota. Porta a porta: paradas com posição, depois sem posição (todos os pedidos de uma parada
+    // têm a mesma ordem). CD do CEASA: 1 ordem por cliente da carga. so = id do veículo (opcional).
+    function itensDaRota(pl, so) {
+        var out = [];
+        (pl && pl.ordem || []).forEach(function (id) {
+            if (so && id !== so) return;
+            var b = pl.veiculos[id];
+            if (!b || b.semSaida) return;
+            var n = 0;
+            if (b.cd) b.cd.carga.forEach(function (it) { n++; it.pedidos.forEach(function (cd) { out.push({ cd_pedido: Number(cd), veiculo_id: id, ordem: n }); }); });
+            else sequenciaDe(b).forEach(function (sp) { n++; sp.pedidos.forEach(function (x) { out.push({ cd_pedido: Number(x.p.cd_pedido), veiculo_id: id, ordem: n }); }); });
+        });
+        return out;
     }
 
     // ===================== PLANEJADOR (puro: testável em node) =====================
@@ -637,8 +685,11 @@
         var excluir = opts.excluir || {}, ignorados = opts.ignorados || {}, plano = opts.plano || {}, cfg = comFrota(opts.cfg, opts.veiculos), excecoes = opts.excecoes || {};
         var v2 = !!opts.marcacao, padroes = opts.padroes || excecoes, porPedido = opts.porPedido || {};
         var regras = regrasDe(opts.regras), tempo = tempoDe(cfg);
+        // 050 (opcional): rota do dia FECHADA (foto). Só vale no modo v2 e para o próprio dia da foto.
+        var fx = v2 && opts.fechada && opts.fechada.data === dia ? fechadaDe(opts.fechada) : null;
         var res = { dia: dia, semSaida: !temSaida(dia, cfg), feriado: ehFeriado(dia, cfg), cfg: cfg, modo: v2 ? 'marcacao' : 'auto',
-                    veiculos: Object.create(null), ordem: [], frota: cfg.veiculos, fica: [], aguardando: [], ignorados: [], entregues: {} };
+                    veiculos: Object.create(null), ordem: [], frota: cfg.veiculos, fica: [], aguardando: [], ignorados: [], entregues: {},
+                    fechada: fx ? fx.meta : null };
         function bloco(v, inativo) {
             var b = { id: v.id, nome: v.nome, modo: v.modo, cor: v.cor, capacidade: v.capacidade, semLimite: v.capacidade == null, inativo: !!inativo,
                       pedidos: [], paradas: [], semPosicao: [], volume: 0, ocupacao: null, c24: 0, c48: 0, avulsos: 0, desconhecidos: 0, km: 0, kmReta: 0,
@@ -691,6 +742,21 @@
             return Number(a.p.cd_pedido) - Number(b.p.cd_pedido);
         });
         cands.forEach(function (x) {
+            if (fx) {   // 050: dia FECHADO — só a foto, no veículo da foto (sem capacidade/dia fechado: o Márcio decidiu)
+                var it = temProp(fx.porCd, x.p.cd_pedido) ? fx.porCd[x.p.cd_pedido] : null;
+                if (!it) {   // entrou depois / removido de hoje: vai para o próximo dia (com saída) em que o cliente recebe
+                    var pf = proximaSaidaCliente(dia, x.regra, cfg, x.veiculo || null);
+                    x.motivoFica = 'rota_fechada'; x.proxima = pf; x.estoura = !pf || (!!x.prazo && x.prazo < pf);
+                    if (temProp(fx.removidos, x.p.cd_pedido)) x.removidoHoje = fx.removidos[x.p.cd_pedido];
+                    res.fica.push(x); return;
+                }
+                x.veiculo = it.veiculo; x.fechadaOrdem = it.ordem; x.origemFechada = it.origem;
+                var bf = temProp(res.veiculos, it.veiculo) ? res.veiculos[it.veiculo] : null;
+                if (!bf) { x.veiculoInativo = true; res.aguardando.push(x); return; }   // veículo desativado depois de fechar
+                bf.pedidos.push(x); res.entregues[x.p.cd_pedido] = true;
+                if (x.v.vol == null) bf.desconhecidos++; else { bf.c24 += x.v.c24; bf.c48 += x.v.c48; bf.avulsos += x.v.avulsos; bf.volume += x.v.vol; }
+                return;
+            }
             if (v2 && !x.veiculo) { res.aguardando.push(x); return; }   // falta marcar: fora da rota
             var b = temProp(res.veiculos, x.veiculo) ? res.veiculos[x.veiculo] : null;
             if (!b) { x.veiculoInativo = true; res.aguardando.push(x); return; }   // 047: veículo inativo/inexistente
@@ -730,7 +796,7 @@
             x.proxima = proxCli; x.motivoFica = 'capacidade';
             res.fica.push(x);
         });
-        var om = { regras: regras, tempo: tempo };
+        var om = { regras: regras, tempo: tempo, ordemFixa: !!fx };
         res.ordem.forEach(function (id) {
             var b = res.veiculos[id];
             b.ocupacao = b.capacidade == null ? null : b.volume / b.capacidade;
@@ -738,12 +804,13 @@
                 // porta a porta (e, no modo automático de antes da 044, também o caminhão: pelo caminho, sem volta na conta)
                 var volta = b.modo === 'porta' ? b.volta : false;
                 var ms = montarParadas(b.pedidos, volta, om);
-                b.paradas = ms.paradas; b.semPosicao = ms.semPosicao; b.kmReta = ms.kmReta; b.km = ms.km;
+                b.paradas = ms.paradas; b.semPosicao = ms.semPosicao; b.sequencia = ms.sequencia; b.ordemFixa = !!ms.ordemFixa; b.kmReta = ms.kmReta; b.km = ms.km;
                 b.horario = calcularHorarios(ROTA.ORIGEM, ms.paradas, tempo, volta);
             } else {
                 // v2/v3: o veículo do CEASA só vai ao CD: UMA parada com a lista de carga (sem portas no caminho).
                 b.paradas = []; b.semPosicao = []; b.portas = 0;
                 if (b.pedidos.length) { b.cd = paradaCd(b.pedidos); b.cd.veiculo = b.id; b.paradas = [b.cd]; }
+                b.sequencia = b.paradas;
                 b.kmReta = comprimento(ROTA.ORIGEM, b.paradas, false); b.km = b.kmReta * ROTA.FATOR_ESTRADA;
                 b.horario = calcularHorarios(ROTA.ORIGEM, b.paradas, tempo, false);
             }
@@ -1247,7 +1314,7 @@
         motivoCeasa: motivoCeasa,
         veiculoDe: veiculoDe,
         montarParadas: montarParadas,
-        planejar: planejar,
+        planejar: planejar, fechadaDe: fechadaDe, itensDaRota: itensDaRota, sequenciaDe: sequenciaDe,
         linksGoogleMaps: linksGoogleMaps,
         // 044
         minutosDe: minutosDe,

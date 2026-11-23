@@ -41,7 +41,7 @@ function sbFalso(tabelas, clientes, erros) {
             return b;
         },
         rpc(n, a) {
-            if (n !== 'solidcon_rota_posicoes') return Promise.resolve({ data: null, error: { message: 'sem rpc' } });
+            if (n !== 'solidcon_rota_posicoes') return Promise.resolve({ data: null, error: { code: 'PGRST202', message: 'Could not find the function public.' + n } });   // como o PostgREST (ex.: 050 ausente)
             return Promise.resolve({ data: a.p_documentos.filter((d) => clientes[d]).map((d) => {
                 const c = clientes[d];
                 return { documento: d, nome: c.nome, bairro: c.bairro, logradouro: c.logradouro, numero: c.numero, complemento: c.complemento, cidade: c.cidade,

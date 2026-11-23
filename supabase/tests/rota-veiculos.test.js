@@ -227,7 +227,7 @@ test('WhatsApp coletarRota: lê rota_veiculos (047); sem a tabela = padrões; ma
                         limit() { return b; }, range(a, z) { linhas = linhas.slice(a, z + 1); return b; }, then(ok, er) { return Promise.resolve({ data: erro ? null : linhas, error: erro }).then(ok, er); } };
             return b;
         },
-        rpc(n, a) { return Promise.resolve({ data: a.p_documentos.filter((d) => c.clientes[d]).map((d) => { const k = c.clientes[d]; return { documento: d, nome: k.nome, bairro: k.bairro, cidade: k.cidade, lat: k.pos[0], lng: k.pos[1], precisao: 'exata' }; }), error: null }); }
+        rpc(n, a) { if (n !== 'solidcon_rota_posicoes') return Promise.resolve({ data: null, error: { code: 'PGRST202', message: 'Could not find the function public.' + n } }); return Promise.resolve({ data: a.p_documentos.filter((d) => c.clientes[d]).map((d) => { const k = c.clientes[d]; return { documento: d, nome: k.nome, bairro: k.bairro, cidade: k.cidade, lat: k.pos[0], lng: k.pos[1], precisao: 'exata' }; }), error: null }); }
     });
     const d1 = await W.coletarRota(sb(tab(true)));
     assert.equal(d1.veiculos.length, 3); assert.equal(d1.excecoes[docN(10)], 'strada'); assert.equal(d1.excecoes[docN(99)], undefined);
