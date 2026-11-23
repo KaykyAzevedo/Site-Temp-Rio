@@ -55,26 +55,69 @@ button, input { font: inherit; }
 .mot-erro { margin: 0; min-height: 1.4rem; color: var(--m-ruim); font-weight: 700; }
 
 /* Cabeçalho da rota */
-.mot-cab { display: grid; gap: 0.35rem; margin-bottom: 1rem; }
-.mot-veic { display: inline-flex; align-items: center; gap: 0.5rem; color: var(--m-tinta-2); font-weight: 700; }
+.mot-cab { display: grid; gap: 0.35rem; margin-bottom: 0.85rem; }
+.mot-linha-topo { display: flex; flex-wrap: wrap; align-items: center; gap: 0.45rem 0.9rem; margin: 0; color: var(--m-tinta-2); font-size: 0.98rem; }
+.mot-veic { display: inline-flex; align-items: center; gap: 0.5rem; color: var(--m-tinta); font-weight: 900; }
 .mot-veic i { width: 0.8rem; height: 0.8rem; border-radius: 50%; background: var(--veic-cor, var(--m-apagado)); display: inline-block; }
+.mot-progresso { margin-left: auto; padding: 0.2rem 0.65rem; border-radius: 999px; background: var(--m-superficie); border: 1px solid var(--m-linha); color: var(--m-tinta); font-size: 0.9rem; font-variant-numeric: tabular-nums; }
 .mot-pub { color: var(--m-apagado); font-size: 0.9rem; margin: 0; }
 .mot-dias { display: flex; gap: 0.5rem; margin: 0.25rem 0 0.75rem; }
 .mot-dias button { flex: 1; min-height: 3rem; border-radius: 0.8rem; border: 1px solid var(--m-linha); background: transparent; color: var(--m-tinta-2); font-weight: 700; cursor: pointer; }
 .mot-dias button[aria-pressed="true"] { background: var(--m-superficie); color: var(--m-tinta); border-color: var(--m-tinta-2); }
+
+/* Fila offline e confirmações na tela */
+.mot-fila { margin: 0 0 0.9rem; padding: 0.65rem 0.85rem; border-radius: 0.8rem; background: var(--m-superficie); border: 1px solid var(--m-linha); display: grid; gap: 0.35rem; font-size: 0.95rem; font-weight: 700; }
+.mot-fila p { margin: 0; }
+.mot-fila .is-ruim { color: var(--m-ruim); }
+.mot-fila .is-atencao { color: var(--m-atencao); }
+.mot-acoes-fila { margin-top: 0.35rem; }
+.mot-acoes-fila .mot-botao-leve { flex: 1 1 9rem; }
+.mot-confirma { margin: 0 0 1rem; padding: 0.9rem 1rem; border-radius: 0.85rem; background: var(--m-superficie); border: 2px solid var(--m-atencao); }
+.mot-confirma p { margin: 0; font-weight: 700; }
+
+/* Destaque: PRÓXIMO PONTO (v2) */
+.mot-proximo { margin: 0 0 1rem; padding: 1.05rem 1.1rem; border-radius: 0.95rem; background: var(--m-superficie); border: 1px solid var(--m-linha); border-left: 4px solid var(--m-acao); }
+.mot-proximo.is-fim { border-left-color: #6ee7a8; }
+.mot-etapa { margin: 0; color: var(--m-acao); font-weight: 900; font-size: 0.92rem; letter-spacing: 0.01em; font-variant-numeric: tabular-nums; }
+.mot-proximo.is-fim .mot-etapa { color: #6ee7a8; }
+.mot-prox-nome { display: flex; align-items: flex-start; gap: 0.65rem; margin: 0.35rem 0 0.4rem; font-size: 1.4rem; font-weight: 900; line-height: 1.2; overflow-wrap: anywhere; outline: none; }
+.mot-num-mini { flex-shrink: 0; min-width: 2.15rem; height: 2.15rem; padding: 0 0.4rem; border-radius: 999px; background: var(--m-acao); color: var(--m-acao-texto);
+    display: inline-flex; align-items: center; justify-content: center; font-size: 1.1rem; font-weight: 900; font-variant-numeric: tabular-nums; }
+.mot-tel { margin: 0.35rem 0 0; font-size: 0.98rem; font-weight: 700; color: var(--m-tinta); }
+.mot-tel a { color: var(--m-acao); text-decoration: underline; }
+.mot-aviso-pino { margin: 0.45rem 0 0; color: var(--m-atencao); font-size: 0.9rem; font-weight: 700; }
+.mot-acoes-prox { margin-top: 0.85rem; }
+.mot-acoes-prox .mot-ir { flex: 2 1 10rem; }
+.mot-acoes-prox .mot-botao-leve { flex: 1 1 6rem; }
+.mot-proximo-btn { width: 100%; margin-top: 0.6rem; min-height: 3.4rem; font-size: 1.1rem; }
+.mot-foto { flex: 1 1 11rem; text-align: center; position: relative; }
+.mot-foto:focus-within { outline: 3px solid var(--m-tinta); outline-offset: 2px; }
+.mot-desfazer { flex: 1 1 9rem; }
+
+/* Mapa da rota (Leaflet) */
+.mot-mapa-sec { margin: 0 0 1.25rem; }
+.mot-mapa { height: 15.5rem; border-radius: 0.9rem; border: 1px solid var(--m-linha); background: var(--m-superficie); overflow: hidden; position: relative; z-index: 1; }
+.mot-mapa.is-vazio { height: auto; min-height: 4.5rem; padding: 1rem; display: flex; align-items: center; justify-content: center; color: var(--m-tinta-2); font-size: 0.95rem; text-align: center; }
+.mot-mapa.is-vazio p { margin: 0; }
+.mot-pino-ic { background: none !important; border: 0 !important; }
+.mot-pino { width: 30px; height: 30px; border-radius: 50%; background: var(--m-tinta); color: var(--m-fundo); border: 2px solid var(--m-fundo); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+    display: flex; align-items: center; justify-content: center; font: 900 14px/1 'Lato', system-ui, sans-serif; font-variant-numeric: tabular-nums; }
+.mot-pino.is-atual { width: 40px; height: 40px; background: var(--m-acao); color: var(--m-acao-texto); border: 3px solid var(--m-tinta); font-size: 17px; box-shadow: 0 3px 10px rgba(0, 0, 0, 0.65); }
+.mot-pino.is-feita { background: #36404d; color: #9fb0c2; border-color: var(--m-superficie); font-size: 15px; }
+
 .mot-resumo { display: flex; flex-wrap: wrap; gap: 0.3rem 1.25rem; margin: 0 0 1.25rem; padding: 0.75rem 0.9rem; border-radius: 0.8rem; background: var(--m-superficie); }
 .mot-resumo div { display: grid; }
 .mot-resumo strong { font-size: 1.35rem; font-weight: 900; line-height: 1.1; }
 .mot-resumo span { color: var(--m-apagado); font-size: 0.85rem; }
 
-/* Trilho da rota: a ordem das paradas é a informação principal */
+/* Trilho da rota e itens comuns */
 .mot-paradas { list-style: none; margin: 0; padding: 0; position: relative; }
 .mot-parada { position: relative; padding: 0 0 1.5rem 3.4rem; }
 .mot-parada::before { content: ""; position: absolute; left: 1.2rem; top: 2.6rem; bottom: 0; width: 3px; background: var(--m-linha); border-radius: 3px; }
 .mot-parada:last-child::before { display: none; }
 .mot-num { position: absolute; left: 0; top: 0; width: 2.6rem; height: 2.6rem; border-radius: 50%; display: flex; align-items: center; justify-content: center;
     background: var(--m-tinta); color: var(--m-fundo); font-weight: 900; font-size: 1.2rem; }
-.mot-parada.is-cd .mot-num { background: var(--m-atencao); }
+.mot-parada.is-cd .mot-num { background: var(--m-atencao); color: var(--m-acao-texto); }
 .mot-hora { margin: 0; color: var(--m-apagado); font-weight: 700; font-size: 0.95rem; min-height: 1.2rem; }
 .mot-nome { margin: 0.05rem 0 0.2rem; font-size: 1.3rem; font-weight: 900; line-height: 1.2; overflow-wrap: anywhere; }
 .mot-end { margin: 0; color: var(--m-tinta-2); overflow-wrap: anywhere; }
@@ -85,6 +128,7 @@ button, input { font: inherit; }
 .mot-avisos .is-atencao { border-color: rgba(227, 177, 75, 0.55); color: var(--m-atencao); }
 .mot-obs { margin: 0.5rem 0 0; padding: 0.5rem 0.7rem; border-left: 3px solid var(--m-atencao); background: rgba(227, 177, 75, 0.08); border-radius: 0 0.6rem 0.6rem 0; overflow-wrap: anywhere; }
 .mot-ped { margin: 0.4rem 0 0; color: var(--m-apagado); font-size: 0.85rem; }
+.mot-ped.is-atencao { color: var(--m-atencao); font-weight: 700; }
 .mot-acoes { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
 .mot-acoes .mot-botao { flex: 1 1 12rem; }
 .mot-itens { margin: 0.6rem 0 0; padding: 0; list-style: none; display: grid; gap: 0.3rem; }
@@ -93,6 +137,33 @@ button, input { font: inherit; }
 .mot-item-cli { display: grid; gap: 0.1rem; min-width: 0; overflow-wrap: anywhere; }
 .mot-item-cli .mot-ped { margin: 0; }
 .mot-rodape { margin-top: 1.5rem; display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; color: var(--m-apagado); font-size: 0.85rem; }
+
+/* Lista recolhível de pedidos por parada (v2) */
+.mot-lista-tit { font-size: 1.15rem; font-weight: 900; margin: 1.25rem 0 0.65rem; color: var(--m-tinta-2); }
+.mot-lista { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.55rem; }
+.mot-det.mot-parada { position: relative; padding: 0; border-radius: 0.85rem; border: 1px solid var(--m-linha); background: var(--m-superficie); overflow: hidden; }
+.mot-det.mot-parada::before { display: none; }
+.mot-det.is-atual { border-color: rgba(240, 145, 90, 0.65); }
+.mot-det.is-feita { background: rgba(33, 39, 48, 0.58); border-color: rgba(49, 57, 70, 0.7); }
+.mot-det details > summary { list-style: none; display: flex; align-items: center; gap: 0.75rem; min-height: 3.5rem; padding: 0.65rem 0.9rem; cursor: pointer; user-select: none; }
+.mot-det details > summary::-webkit-details-marker { display: none; }
+.mot-det details > summary::after { content: "▾"; margin-left: auto; color: var(--m-apagado); font-size: 1.1rem; line-height: 1; flex-shrink: 0; }
+.mot-det details[open] > summary::after { content: "▴"; color: var(--m-tinta); }
+.mot-det .mot-num { position: static; flex-shrink: 0; width: 2.3rem; height: 2.3rem; font-size: 1.05rem; }
+.mot-det.is-cd .mot-num.is-feita, .mot-det .mot-num.is-feita, .mot-num.is-feita { background: #36404d; color: #6ee7a8; }
+.mot-det-tit { display: grid; gap: 0.12rem; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.mot-det-tit .mot-nome { margin: 0; font-size: 1.08rem; font-weight: 900; line-height: 1.25; }
+.mot-det-tit small { color: var(--m-tinta-2); font-size: 0.9rem; line-height: 1.3; }
+.mot-det-tit small strong { font-size: 0.95rem; }
+.mot-det-corpo { padding: 0.75rem 0.9rem 0.9rem; border-top: 1px solid var(--m-linha); }
+.mot-ok { display: inline-flex; align-items: center; gap: 0.2rem; padding: 0.08rem 0.45rem; border-radius: 999px; background: rgba(110, 231, 168, 0.16); color: #6ee7a8; font-size: 0.8rem; font-weight: 700; white-space: nowrap; }
+.mot-ok.is-fila { background: rgba(227, 177, 75, 0.16); color: var(--m-atencao); }
+.mot-itens li.mot-item-ped { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 0.75rem; padding: 0.45rem 0; border-bottom: 1px solid var(--m-linha); }
+.mot-item-ped-info { display: grid; gap: 0.15rem; min-width: 0; flex: 1 1 11rem; }
+.mot-item-ped-cx { font-weight: 900; color: var(--m-tinta-2); font-size: 0.95rem; }
+.mot-foto-ped { flex: 0 0 auto; padding: 0.4rem 0.75rem; font-size: 0.9rem; }
+.mot-acoes-det { margin-top: 0.75rem; }
+.mot-acoes-det .mot-botao-leve { flex: 1 1 8rem; }
 
 @media (min-width: 900px) { body { font-size: 17px; } .mot-conteudo { padding-top: 1.5rem; } }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }

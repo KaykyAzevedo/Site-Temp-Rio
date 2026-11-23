@@ -180,7 +180,7 @@
                     return { linhas: [].concat.apply([], ps.map(function (r) { return r.data || []; })) };
                 }, function (e) { return { erro: String((e && e.message) || e) }; });
             return Promise.all([Promise.all(blocos.map(function (b) {
-                return sb.from('solidcon_clientes').select('documento,nome,logradouro,numero,complemento,bairro,cidade,estado').in('documento', b);
+                return sb.from('solidcon_clientes').select('documento,nome,logradouro,numero,complemento,bairro,cidade,estado,telefone,celular').in('documento', b);
             })), posicoes]).then(function (cp) {
                 if (seq !== st.seq) return;
                 // UI1: alguma gravação terminou (ou começou) durante esta leitura: o retrato pode ser anterior a ela.
@@ -193,7 +193,7 @@
                 var cs = cp[0], rp = cp[1];
                 var cli = {};
                 cs.forEach(function (r) { if (!r.error) (r.data || []).forEach(function (c) { cli[c.documento] = { nome: c.nome, logradouro: c.logradouro, numero: c.numero,
-                    complemento: c.complemento, bairro: c.bairro, cidade: c.cidade, pos: null, precisao: null }; }); });
+                    complemento: c.complemento, bairro: c.bairro, cidade: c.cidade, telefone: c.telefone, celular: c.celular, pos: null, precisao: null }; }); });
                 function posDe(m) {
                     if (!docs[m.documento]) return;
                     var c = cli[m.documento] || (cli[m.documento] = { nome: m.nome, bairro: m.bairro, cidade: m.cidade, pos: null });
@@ -898,6 +898,10 @@
             o.nome = txtPub(sp.cd ? (sp.nome || ROTA.CEASA_CD_NOME) : (sp.nome || nomeCliente(null, sp.pedidos && sp.pedidos[0])), 150) || 'Cliente';
             var end = sp.cd ? 'Av. Brasil, 19001' : txtPub(enderecoCli(sp.documento), 300);
             if (end) o.endereco = end;
+            // 053: numero do cadastro, somente quando existe para esse cliente (CD nao tem telefone unico).
+            var cadastroTel = !sp.cd && sp.documento ? st.clientes[sp.documento] : null;
+            var telefone = cadastroTel ? (txtPub(cadastroTel.telefone, 32) || txtPub(cadastroTel.celular, 32)) : '';
+            if (telefone) o.telefone = telefone;
             if (sp.bairro) o.bairro = txtPub(sp.bairro, 80);
             if (sp.cidade) o.cidade = txtPub(sp.cidade, 80);
             if (sp.pos && isFinite(sp.pos[0]) && isFinite(sp.pos[1])) { o.lat = Math.round(sp.pos[0] * 1e6) / 1e6; o.lng = Math.round(sp.pos[1] * 1e6) / 1e6; }
