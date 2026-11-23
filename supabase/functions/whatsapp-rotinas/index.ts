@@ -116,10 +116,11 @@ async function executarRotina(sb: Sb, rotina: any, dia: string, agora: Date, des
 async function agendado(agora: Date) {
   const sb = sbServico();
   // 050: fecha a rota do dia na hora de saída (rota_config.hora_saida) se ninguém fechou; ANTES das rotinas, para a
-  // rota_<veículo>/rota_chefe do mesmo tique já saírem com a rota fechada. Falha aqui não derruba o WhatsApp.
+  // rota_<veículo>/rota_chefe do mesmo tique já saírem com a rota fechada. 054 inclui os novos SEPARANDO
+  // mesmo depois de fechar, em TODO tique. Mensagens usam só a foto confirmada; nunca a proposta não salva.
   let rotaDia: unknown;
   try { rotaDia = await W.fecharRotaAuto(sb, agora); }
-  catch (e) { console.error('[rota] fechamento automático falhou:', curto(e, 160)); rotaDia = { fechou: false, motivo: 'erro' }; }
+  catch (e) { console.error('[rota] fechamento/inclusão automática falhou:', curto(e, 160)); rotaDia = { fechou: false, motivo: 'erro' }; }
   const [rr, rd] = await Promise.all([
     sb.from('whatsapp_rotinas').select('*'),
     sb.from('whatsapp_destinatarios').select('id,telefone,papel,ativo,consentimento_em'),

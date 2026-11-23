@@ -17,6 +17,7 @@
         // S10 (caminhonete + carreta): capacidade em VOLUME. Caixa de 24 un = 9; caixa de 48 un = 16,5.
         // v3 (o dono, 2026-11-18): 300 cx24 × 9 = 2700 (≈ 163 cx48 × 16,5 = 2689,5). Carga mista = soma dos volumes.
         CAPACIDADE_S10: 2700,
+        VEICULO_SEPARANDO: 's10',    // dono 23/11: padrão FIXO, só quando não há escolha por pedido/cliente
         VOLUME_CX24: 9,
         VOLUME_CX48: 16.5,
         // POTES AVULSOS: a coluna caixas_outras (039) traz UNIDADES (potes) de produtos com código próprio, fora do
@@ -624,15 +625,15 @@
     //       removido_em? }], fechada_em?, fechada_nome?, automatico?, versao? } (linhas de rota_dia_item + cabeçalho).
     // Item com removido_em = "Remover de hoje": fora da rota de hoje, vai para o próximo dia (não some).
     function fechadaDe(f) {
-        var porCd = Object.create(null), removidos = Object.create(null);
+        var porCd = Object.create(null), removidos = Object.create(null), docsRemovidos = Object.create(null);
         (f.itens || []).forEach(function (it) {
             if (!it || it.cd_pedido == null || !idVeiculoValido(it.veiculo_id)) return;
             var cd = Number(it.cd_pedido);
-            if (it.removido_em) { removidos[cd] = { em: it.removido_em, nome: it.removido_nome || null }; return; }
+            if (it.removido_em) { removidos[cd] = { em: it.removido_em, nome: it.removido_nome || null }; if (it.documento) docsRemovidos[it.documento] = true; return; }
             var o = it.ordem == null || it.ordem === '' ? null : Number(it.ordem);
-            porCd[cd] = { veiculo: it.veiculo_id, ordem: o != null && isFinite(o) ? o : null, origem: it.origem === 'adicionado' ? 'adicionado' : 'previsao' };
+            porCd[cd] = { veiculo: it.veiculo_id, ordem: o != null && isFinite(o) ? o : null, origem: it.origem === 'separando' ? 'separando' : it.origem === 'adicionado' ? 'adicionado' : 'previsao' };
         });
-        return { porCd: porCd, removidos: removidos,
+        return { porCd: porCd, removidos: removidos, docsRemovidos: docsRemovidos, recalcular: Object.create(null),
                  meta: { data: f.data, fechadaEm: f.fechada_em || null, nome: f.fechada_nome || null, automatico: !!f.automatico, versao: f.versao || null } };
     }
     // Foto de um plano (para fechar ou para regravar a ordem de UM veículo depois de um ajuste): [{ cd_pedido, veiculo_id,
@@ -649,6 +650,25 @@
             else sequenciaDe(b).forEach(function (sp) { n++; sp.pedidos.forEach(function (x) { out.push({ cd_pedido: Number(x.p.cd_pedido), veiculo_id: id, ordem: n }); }); });
         });
         return out;
+    }
+
+    // 054: proposta atômica. Reordena só veículos com novos separando. Itens históricos/045 da foto
+    // permanecem no fim para cobrir exatamente o conjunto salvo, como no ajuste manual da 050.
+    function propostaSeparando(pedidos, clientes, dia, opts) {
+        var pl = planejar(pedidos, clientes, dia, Object.assign({}, opts, { projetarSeparando: true })), adicoes = pl.adicoesSeparando || [];
+        var veiculos = [], ordem = [];
+        adicoes.forEach(function (it) { if (veiculos.indexOf(it.veiculo_id) < 0) veiculos.push(it.veiculo_id); });
+        veiculos.sort();
+        veiculos.forEach(function (id) {
+            var itens = itensDaRota(pl, id), vistos = Object.create(null), n = 0;
+            itens.forEach(function (it) { vistos[it.cd_pedido] = true; n = Math.max(n, it.ordem); ordem.push(it); });
+            (opts.fechada.itens || []).forEach(function (it) {
+                if (it.veiculo_id === id && !it.removido_em && !vistos[it.cd_pedido]) {
+                    vistos[it.cd_pedido] = true; ordem.push({ cd_pedido: Number(it.cd_pedido), veiculo_id: id, ordem: ++n });
+                }
+            });
+        });
+        return { adicoes: adicoes, veiculos: veiculos, ordem: ordem };
     }
 
     // ===================== PLANEJADOR (puro: testável em node) =====================
@@ -689,7 +709,7 @@
         var fx = v2 && opts.fechada && opts.fechada.data === dia ? fechadaDe(opts.fechada) : null;
         var res = { dia: dia, semSaida: !temSaida(dia, cfg), feriado: ehFeriado(dia, cfg), cfg: cfg, modo: v2 ? 'marcacao' : 'auto',
                     veiculos: Object.create(null), ordem: [], frota: cfg.veiculos, fica: [], aguardando: [], ignorados: [], entregues: {},
-                    fechada: fx ? fx.meta : null };
+                    fechada: fx ? fx.meta : null, adicoesSeparando: [] };
         function bloco(v, inativo) {
             var b = { id: v.id, nome: v.nome, modo: v.modo, cor: v.cor, capacidade: v.capacidade, semLimite: v.capacidade == null, inativo: !!inativo,
                       pedidos: [], paradas: [], semPosicao: [], volume: 0, ocupacao: null, c24: 0, c48: 0, avulsos: 0, desconhecidos: 0, km: 0, kmReta: 0,
@@ -714,6 +734,7 @@
             var v = volumePedido(p), ve, x, prazo, vq;
             if (v2) {
                 var m = marcacaoDe(p, padroes, porPedido), sug = sugestaoDe(p, c, cfg);
+                if (!m && p.etapa === 'separando') m = { veiculo: ROTA.VEICULO_SEPARANDO, origem: 'separando' };
                 vq = m ? m.veiculo : null; prazo = prazoDe(p.dt_pedido, cfg, vq);
                 x = { p: p, c: c, prazo: prazo, situacao: situacaoPrazo(prazo, dia, cfg, vq), v: v, sugestao: sug, marcacao: m ? m.origem : null,
                       veiculo: m ? m.veiculo : null, motivo: m ? 'marcado' : null, detalhe: m ? m.origem : null, ceasa: motivoCeasa(c) };
@@ -726,12 +747,24 @@
                       veiculo: ve.veiculo, motivo: ve.motivo, detalhe: ve.detalhe, ceasa: ve.motivo === 'ceasa' ? ve.detalhe : null };
             }
             x.regra = p.documento ? regras[p.documento] || null : null;
+            x.separando = v2 && p.etapa === 'separando';
             var ig = ignorados[p.cd_pedido];
             if (ig) { x.ignorado = ig === true ? {} : ig; res.ignorados.push(x); return; }   // 045: fora da rota até reativar
             var pd = plano[p.cd_pedido];
             if (pd && typeof pd === 'object') pd = pd.dia;   // 047: { dia, veiculo_id }
             if (pd && /^\d{4}-\d{2}-\d{2}$/.test(String(pd)) && String(pd) >= dia) x.planoDia = String(pd);   // 046: só informação
             cands.push(x);
+        });
+        // A decisão é calculada antes de percorrer os itens: até as paradas anteriores do veículo afetado
+        // perdem a ordem fixa. A foto original é imutável e a RPC 054 revalida tudo antes de persistir.
+        if (fx && opts.projetarSeparando !== false) cands.forEach(function (x) {
+            var cd = x.p.cd_pedido, b = x.veiculo && res.veiculos[x.veiculo];
+            if (x.separando && !temProp(fx.porCd, cd) && !temProp(fx.removidos, cd) &&
+                !(x.p.documento && fx.docsRemovidos[x.p.documento]) && b && !b.semSaida) {
+                fx.porCd[cd] = { veiculo: x.veiculo, ordem: null, origem: 'separando' };
+                fx.recalcular[x.veiculo] = true;
+                res.adicoesSeparando.push({ cd_pedido: Number(cd), veiculo_id: x.veiculo });
+            }
         });
         // Prioridade: prazo (mais antigo primeiro), depois o pedido mais antigo, depois o código (estável).
         cands.sort(function (a, b) {
@@ -745,12 +778,14 @@
             if (fx) {   // 050: dia FECHADO — só a foto, no veículo da foto (sem capacidade/dia fechado: o Márcio decidiu)
                 var it = temProp(fx.porCd, x.p.cd_pedido) ? fx.porCd[x.p.cd_pedido] : null;
                 if (!it) {   // entrou depois / removido de hoje: vai para o próximo dia (com saída) em que o cliente recebe
-                    var pf = proximaSaidaCliente(dia, x.regra, cfg, x.veiculo || null);
+                    var pf = x.separando ? proximaSaida(dia, false, cfg, x.veiculo || null) : proximaSaidaCliente(dia, x.regra, cfg, x.veiculo || null);
                     x.motivoFica = 'rota_fechada'; x.proxima = pf; x.estoura = !pf || (!!x.prazo && x.prazo < pf);
                     if (temProp(fx.removidos, x.p.cd_pedido)) x.removidoHoje = fx.removidos[x.p.cd_pedido];
                     res.fica.push(x); return;
                 }
-                x.veiculo = it.veiculo; x.fechadaOrdem = it.ordem; x.origemFechada = it.origem;
+                x.veiculo = it.veiculo; x.fechadaOrdem = fx.recalcular[it.veiculo] ? null : it.ordem; x.origemFechada = it.origem;
+                x.entrouAoSeparar = it.origem === 'separando' || x.separando;
+                x.diaSemReceber = x.entrouAoSeparar && naoRecebe(x.regra, dia);
                 var bf = temProp(res.veiculos, it.veiculo) ? res.veiculos[it.veiculo] : null;
                 if (!bf) { x.veiculoInativo = true; res.aguardando.push(x); return; }   // veículo desativado depois de fechar
                 bf.pedidos.push(x); res.entregues[x.p.cd_pedido] = true;
@@ -761,14 +796,21 @@
             var b = temProp(res.veiculos, x.veiculo) ? res.veiculos[x.veiculo] : null;
             if (!b) { x.veiculoInativo = true; res.aguardando.push(x); return; }   // 047: veículo inativo/inexistente
             if (b.semSaida) {   // este veículo não sai hoje (S10 no sábado, feriado...): próxima saída DELE em que o cliente recebe
-                var ps = proximaSaidaCliente(dia, x.regra, cfg, b.id);
+                var ps = x.separando ? proximaSaida(dia, false, cfg, b.id) : proximaSaidaCliente(dia, x.regra, cfg, b.id);
                 x.motivoFica = b.id === 's10' ? 'sem_saida_s10' : 'sem_saida_veiculo'; x.proxima = ps; x.estoura = !ps || (!!x.prazo && x.prazo < ps);
                 res.fica.push(x); return;
             }
-            if (naoRecebe(x.regra, dia)) {   // o cliente não recebe neste dia da semana: próxima saída em que recebe
+            if (naoRecebe(x.regra, dia) && !x.separando) {   // separando entra com aviso; Márcio decide
                 var pc = proximaSaidaCliente(dia, x.regra, cfg, x.veiculo);
                 x.motivoFica = 'dia_fechado'; x.proxima = pc; x.estoura = !pc || (!!x.prazo && x.prazo < pc);
                 res.fica.push(x); return;
+            }
+            if (x.separando) {   // como Trazer para hoje: prioridade de inclusão, capacidade só avisa
+                x.entrouAoSeparar = true; x.diaSemReceber = naoRecebe(x.regra, dia);
+                b.pedidos.push(x); res.entregues[x.p.cd_pedido] = true;
+                if (x.v.vol == null) b.desconhecidos++;
+                else { b.c24 += x.v.c24; b.c48 += x.v.c48; b.avulsos += x.v.avulsos; b.volume += x.v.vol; }
+                return;
             }
             var cap = b.capacidade;
             if (b.modo === 'cd_ceasa' && (cap == null || x.v.vol == null || b.volume + x.v.vol <= cap + 1e-9)) {   // CD: sem limite (padrão)
@@ -1314,7 +1356,7 @@
         motivoCeasa: motivoCeasa,
         veiculoDe: veiculoDe,
         montarParadas: montarParadas,
-        planejar: planejar, fechadaDe: fechadaDe, itensDaRota: itensDaRota, sequenciaDe: sequenciaDe,
+        planejar: planejar, fechadaDe: fechadaDe, itensDaRota: itensDaRota, sequenciaDe: sequenciaDe, propostaSeparando: propostaSeparando,
         linksGoogleMaps: linksGoogleMaps,
         // 044
         minutosDe: minutosDe,

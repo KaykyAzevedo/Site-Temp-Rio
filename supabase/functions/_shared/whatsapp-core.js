@@ -477,10 +477,12 @@
     // O plano do dia = o MESMO cálculo da aba Rotas (rota-core planejar): v2 (044) pela marcação + regras; sem a 044, o
     // modo automático de antes. Usado por rota_<veículo> e por rota_chefe (WA-PED).
     function planoRota(d, hoje) {
-        var ign = d.ignorados || {};
-        return d.v2
-            ? core.planejar(d.pedidos, d.clientes, hoje, { cfg: d.cfg, excecoes: d.excecoes, marcacao: true, padroes: d.excecoes, porPedido: d.porPedido || {}, regras: d.regras || {}, ignorados: ign, veiculos: d.veiculos, fechada: d.fechada || null })
-            : core.planejar(d.pedidos, d.clientes, hoje, { cfg: d.cfg, excecoes: d.excecoes, ignorados: ign, veiculos: d.veiculos });
+        return core.planejar(d.pedidos, d.clientes, hoje, opcoesRota(d));
+    }
+    function opcoesRota(d) {
+        return { cfg: d.cfg, excecoes: d.excecoes, marcacao: !!d.v2, padroes: d.excecoes, porPedido: d.porPedido || {},
+                 regras: d.regras || {}, ignorados: d.ignorados || {}, veiculos: d.veiculos, fechada: d.fechada || null,
+                 projetarSeparando: false };   // fechada: mensagem usa somente inclusao confirmada pela054
     }
     function montarRota(d, veiculo, agora, opts) {
         opts = opts || {};
@@ -818,12 +820,24 @@
     // com a previsão daquele momento (o MESMO plano da aba Rotas) se: a 050 existe, ninguém fechou nem reabriu, hoje tem
     // saída (domingo/feriado não) e já passou rota_config.hora_saida (SP). O banco confere de novo (rota_050_fechar_auto,
     // sob advisory lock: nunca fecha 2x). sb = cliente com a chave de serviço. Devolve { fechou, motivo?, pedidos? }.
-    function fecharRotaAuto(sb, agora) {
+    function fecharRotaAuto(sb, agora, tentativa) {
+        tentativa = tentativa || 1;
         var hoje = core.diaSP(agora);
         return coletarRota(sb, agora).then(function (d) {
             if (!d.fechada050) return { fechou: false, motivo: 'sem_050' };
             if (!d.v2) return { fechou: false, motivo: 'sem_044' };
-            if (d.fechadaLinha) return { fechou: false, motivo: d.fechadaLinha.estado === 'reaberta' ? 'reaberta' : 'ja_fechada' };
+            if (d.fechadaLinha) {
+                if (!d.fechada) return { fechou: false, motivo: 'reaberta' };
+                var prop = core.propostaSeparando(d.pedidos, d.clientes, hoje, opcoesRota(d));
+                if (!prop.adicoes.length) return { fechou: false, motivo: 'ja_fechada' };
+                return sb.rpc('rota_054_incluir', { p_data: hoje, p_revisao: d.fechadaRev, p_ordem: prop.ordem }).then(function (r) {
+                    if (r.error) {
+                        if (String(r.error.code) === '40001' && tentativa < 3) return fecharRotaAuto(sb, agora, tentativa + 1);
+                        throw erroDe(r);
+                    }
+                    return { fechou: false, motivo: 'ja_fechada', incluidos: Number(r.data && r.data.incluidos) || 0 };
+                });
+            }
             var min = minutosSP(agora);
             if (min == null || min < d.cfg.horaSaida) return { fechou: false, motivo: 'antes_da_hora' };
             var pl = planoRota(d, hoje);

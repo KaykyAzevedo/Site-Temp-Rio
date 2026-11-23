@@ -131,7 +131,8 @@
             setTimeout(function () { if (!st.carregado && !st.carregando) desenhar(); }, 0);
         }
     }
-    function carregar() {
+    function carregar(tentativaSeparando) {
+        tentativaSeparando = typeof tentativaSeparando === 'number' ? tentativaSeparando : 0;
         if (!st.sb || st.carregando || !st.ativo) return;
         // UI1: com gravação pendente, a leitura poderia trazer o estado de ANTES dela. Espera terminar (aposMutacao).
         if (pendentes()) { st.recargaPendente = true; return; }
@@ -213,13 +214,37 @@
                 lerFechada(rs[13]);
                 st.progresso = {};   // { veiculo: nº de paradas feitas hoje } (051); erro/ausente = sem contador
                 if (rs[14] && !rs[14].error) (rs[14].data || []).forEach(function (x) { st.progresso[x.veiculo_id] = (st.progresso[x.veiculo_id] || 0) + 1; });
-                st.carregando = false; st.carregado = true;
                 st.frota = core.frotaDe(linhasFrota());   // v1 (sem 044): só caminhão e S10
-                desenhar();
+                return sincronizarSeparando(sb).then(function () {
+                    if (seq !== st.seq) return;
+                    st.carregando = false; st.carregado = true; desenhar();
+                });
             });
         }).catch(function (e) {
             if (seq !== st.seq) return;
+            if (String(e && e.code) === '40001' && tentativaSeparando < 2) {
+                st.carregando = false; carregar(tentativaSeparando + 1); return;
+            }
             st.carregando = false; st.carregado = false; st.erro = String((e && e.message) || e); desenhar();
+        });
+    }
+
+    // A carga calcula a proposta no nucleo comum; a054 grava inclusao+ordem com revisao e trava da050.
+    // So depois de confirmar a foto o painel libera PDF/envio. Leitor sem permissao aguarda o tique do servidor.
+    function sincronizarSeparando(sb) {
+        var seq0 = st.seq;
+        if (!st.v2 || !st.fx050 || st.fxErro || !st.fxFoto || !st.podeMarcar) return Promise.resolve();
+        var dia = hojeSP(), prop = core.propostaSeparando(st.pedidos, st.clientes, dia, optsPlano());
+        if (!prop.adicoes.length) return Promise.resolve();
+        return sb.rpc('rota_054_incluir', { p_data: dia, p_revisao: st.fxRev || 0, p_ordem: prop.ordem }).then(function (r) {
+            if (st.sb !== sb || st.seq !== seq0 || !st.ativo) return;
+            if (r.error) {
+                var e = new Error(rpcAusente(r.error) ? 'Aplique a migração 054 para incluir os pedidos em separação na rota fechada.' : String(r.error.message || r.error));
+                e.code = r.error.code; throw e;
+            }
+            if (!r.data || !r.data.foto) { var e = new Error('A rota mudou durante a inclusão: atualize a aba.'); e.code = '40001'; throw e; }
+            lerFechada({ data: r.data.foto, error: null });
+            if (r.data.incluidos) { st.mut++; st.msgFx = NUM.format(r.data.incluidos) + ' pedido(s) entraram ao separar. Confira a rota e reenvie ao motorista.'; }
         });
     }
 
@@ -534,6 +559,12 @@
             (trazido ? '<span class="rota-selo rota-selo-pri" title="Trazido para hoje depois de fechar"><i class="fa-solid fa-calendar-plus" aria-hidden="true"></i>trazido p/ hoje</span>' : '') +
             botaoRemoverHoje(xs, veic, nome) + xs.map(function (x) { return botaoTirar(x, nome); }).join('') + '</div></div>';
     }
+    function selosSeparando(xs) {
+        var entrou = xs.some(function (x) { return x.entrouAoSeparar; });
+        var fechado = xs.some(function (x) { return x.diaSemReceber; });
+        return (entrou ? ' <span class="rota-selo rota-selo-pri">entrou ao separar</span>' : '') +
+            (fechado ? ' <span class="rota-selo rota-selo-fechado" title="Incluído por estar em separação; confira com o cliente">não recebe neste dia — conferir</span>' : '');
+    }
     // Aba do próximo dia: quem entrou depois do fechamento de hoje ou foi removido de hoje.
     function selosFxProxima(sp) {
         if (st.vista !== 'proxima' || !st.fxFoto) return '';
@@ -564,7 +595,7 @@
             return '<section class="adm-card p-4 mb-5 rota-banner rota-fx" aria-labelledby="rota-fx-tit"><div class="rota-cab rota-cab-compacto">' +
                 '<p class="rota-tit" id="rota-fx-tit"><span class="rota-selo rota-selo-espera"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>Previsão (não fechada)</span></p>' +
                 (podeAjustarFx() ? '<button type="button" class="adm-botao" id="rota-fx-fechar"' + busy + '><i class="fa-solid fa-lock" aria-hidden="true"></i> Fechar rota do dia</button>' : '') + '</div>' +
-                '<p class="rota-sub">A rota ainda não foi fechada: muda conforme entram pedidos.' + reab + ' Depois de fechada, pedido novo vai para o próximo dia com saída.</p>' + msg + '</section>';
+                '<p class="rota-sub">A rota ainda não foi fechada: muda conforme entram pedidos.' + reab + ' Depois de fechada, pedido novo vai para o próximo dia com saída; em separação entra hoje automaticamente.</p>' + msg + '</section>';
         }
         var f = pl.fechada, quando = horaCurta(f.fechadaEm);
         var selo = f.automatico ? 'Fechada automaticamente' + (quando ? ' às ' + quando : '') : 'Fechada' + (quando ? ' às ' + quando : '') + (f.nome ? ' por ' + f.nome : '');
@@ -578,7 +609,7 @@
         }
         return '<section class="adm-card p-4 mb-5 rota-banner rota-fx" aria-labelledby="rota-fx-tit"><div class="rota-cab rota-cab-compacto">' +
             '<p class="rota-tit" id="rota-fx-tit"><span class="rota-selo rota-selo-plano"><i class="fa-solid fa-lock" aria-hidden="true"></i>' + esc(selo) + '</span>' + esc(alt) + '</p>' + reabrir + '</div>' +
-            '<p class="rota-sub">Pedidos novos não entram na rota de hoje: vão para o próximo dia com saída (lista abaixo, com “Trazer para hoje”).</p>' + ajuda + msg + '</section>';
+            '<p class="rota-sub">Pedidos em separação entram hoje automaticamente, salvo exclusão manual ou dia sem saída. Os demais novos vão para o próximo dia (ou use “Trazer para hoje”).</p>' + ajuda + msg + '</section>';
     }
     // ---- ações (RPCs da 050). Depois de qualquer uma: relê tudo (a foto do banco é a verdade). ----
     function fxErroMsg(e) {
@@ -603,7 +634,7 @@
         if (!podeAjustarFx() || st.fxSalvando) return;
         var itens = core.itensDaRota(planos().hoje);
         fxExecutar(st.sb.rpc('rota_050_fechar', { p_itens: itens }),
-            'Rota de hoje fechada (' + NUM.format(itens.length) + (itens.length === 1 ? ' pedido' : ' pedidos') + '). Pedido novo agora vai para o próximo dia.');
+            'Rota de hoje fechada (' + NUM.format(itens.length) + (itens.length === 1 ? ' pedido' : ' pedidos') + '). Novos pedidos vão para o próximo dia, exceto os que entrarem em separação.');
     }
     // Ordem nova SÓ do veículo afetado: a foto com o ajuste e a ordem desse veículo apagada -> o rota-core recalcula (2-opt)
     // só ele. Pedido da foto desse veículo que não está no plano (saiu do ERP, "Tirar da rota") vai para o fim.
@@ -764,7 +795,7 @@
             ' · #' + sp.pedidos.map(function (x) { return esc(x.p.cd_pedido); }).join(', #') +
             (sp.precisao === 'bairro' ? ' · <span class="rota-aviso-txt">pos. aprox.</span>' : '') +
             (st.fxRender && !sp.pos ? ' · <span class="rota-aviso-txt">sem posição no mapa</span>' : '') +
-            (prazoRuim ? ' ' + prazoRuim : '') + (plDia ? ' ' + plDia : '') + selosFxProxima(sp) + '</div>' +
+            (prazoRuim ? ' ' + prazoRuim : '') + (plDia ? ' ' + plDia : '') + selosFxProxima(sp) + selosSeparando(sp.pedidos) + '</div>' +
             htmlRegrasCliente(sp.documento, nome, false, false) + '</td>' +
             '<td data-rotulo="Caixas">' + cx + '</td>' +
             '<td data-rotulo="Veículo">' + celulaVeiculoParada(sp, nome) + '</td></tr>';
@@ -1697,7 +1728,7 @@
                 var mult = xs.length > 1;
                 var prazoRuim = pior ? seloPrazo(pior, true) : '';
                 return '<tr><td><div class="rota-cli-linha"><strong>' + esc(nome) + '</strong>' + botaoRegraCliente(it.documento, nome) + '</div>' +
-                    '<div class="rota-sub">#' + it.pedidos.map(esc).join(', #') + (prazoRuim ? ' ' + prazoRuim : '') + '</div>' +
+                    '<div class="rota-sub">#' + it.pedidos.map(esc).join(', #') + (prazoRuim ? ' ' + prazoRuim : '') + selosSeparando(xs) + '</div>' +
                     htmlRegrasCliente(it.documento, nome, true, true) + '</td>' +
                     '<td data-rotulo="Caixas">' + txtCaixasCargaItem(it) + '</td>' +
                     '<td class="num" data-rotulo="Total">' + esc(brl(it.valorCentavos)) + '</td>' +
@@ -2710,7 +2741,8 @@
     function optsPlano() {
         return { cfg: st.cfg, excecoes: st.excecoes, marcacao: st.v2, padroes: st.excecoes, porPedido: st.porPedido, regras: st.regras,
                  ignorados: st.v2 && st.ign045 ? st.ignorados : {}, plano: st.v2 ? planoEfetivo() : {}, veiculos: linhasFrota(),
-                 fechada: st.v2 && st.fx050 && !st.fxErro ? st.fxFoto : null };   // 050: rota de hoje fechada (foto)
+                 fechada: st.v2 && st.fx050 && !st.fxErro ? st.fxFoto : null,
+                 projetarSeparando: false };   // fechada: só mostra inclusao já confirmada pela054
     }
     function planos() {
         var hoje = hojeSP(), pl = {};
@@ -2907,10 +2939,10 @@
     }
     // Ajuda da aba — v2 (044 aplicada): marcação, regras por cliente, horários, CD CEASA e plano da semana.
     function htmlAjudaV2() {
-        return '<li>Marcação (CEASA / S10): cada pedido pendente é marcado como CEASA (caminhão) ou S10; o sistema lembra o padrão do cliente e permite exceção "só neste pedido" ou desmarcar. Sem marcação, o pedido fica em "Falta marcar" (fora da rota) com a regra automática (endereço com "CEASA", Av. Brasil 19001, até ' + NUM.format(ROTA.CEASA_RAIO_KM * 1000) + ' m do CEASA; senão S10) exibida como dica.</li>' +
+        return '<li>Marcação: escolha por pedido vence o padrão do cliente. Pedido em separação entra automaticamente; sem escolha nem padrão, usa ' + esc(rotuloMarca(ROTA.VEICULO_SEPARANDO)) + '. Nos demais pedidos sem marcação, a regra do endereço (CEASA até ' + NUM.format(ROTA.CEASA_RAIO_KM * 1000) + ' m; senão S10) é só uma dica e o pedido fica em "Falta marcar".</li>' +
                 (st.ign045 ? '<li>Tirar da rota: o pedido sai da rota, de "Falta marcar" e do WhatsApp até alguém clicar em "Voltar para a rota" (lista "Fora da rota"). Pedido aberto antigo no ERP continua aparecendo até alguém tirar.</li>' : '') +
-                '<li>Regras por cliente: dias da semana em que não recebe (o pedido fica para a próxima saída em que recebe), prioridade ("entregar primeiro"), janela de recebimento (início/fim) e observação curta.</li>' +
-                '<li>S10 (segunda a sexta): por prazo (vencidos primeiro), até ' + NUM.format(Math.round(ROTA.CAPACIDADE_S10 / ROTA.VOLUME_CX24)) + ' cx24 equivalentes (volume ' + NUM.format(ROTA.CAPACIDADE_S10) + ': cx24 = ' + NUM1.format(ROTA.VOLUME_CX24) + ', cx48 = ' + NUM1.format(ROTA.VOLUME_CX48) + ', pote avulso = 9/24); o que exceder fica para a próxima saída.</li>' +
+                '<li>Regras por cliente: dias em que não recebe adiam o pedido, exceto em separação: ele entra com aviso para conferência. Prioridade, janela e observação continuam valendo.</li>' +
+                '<li>S10 (segunda a sexta): por prazo (vencidos primeiro), até ' + NUM.format(Math.round(ROTA.CAPACIDADE_S10 / ROTA.VOLUME_CX24)) + ' cx24 equivalentes (volume ' + NUM.format(ROTA.CAPACIDADE_S10) + ': cx24 = ' + NUM1.format(ROTA.VOLUME_CX24) + ', cx48 = ' + NUM1.format(ROTA.VOLUME_CX48) + ', pote avulso = 9/24). Em separação entra mesmo se exceder: confira o aviso de carga.</li>' +
                 '<li>Caminhão (segunda a sábado): tudo o que está marcado CEASA vai para o Centro de distribuição CEASA (uma parada, com a lista de carga agregada por cliente; sem limite de capacidade). O caminhão não para em bairros no caminho.</li>' +
                 '<li>Semana (referência): agrupa os pedidos em aberto da S10 por região nos dias de segunda a sexta da semana seguinte (até 300 cx24/dia). Permite mover pedidos entre dias e salvar; na rota do dia aparece apenas o selo informativo "planejado p/ dia DD/MM".</li>' +
                 '<li>Sugestões de juntar: indica pedidos pendentes de clientes que estão no caminho de uma rota S10 prevista (mesmo cliente, desvio de até ' + NUM1.format(ROTA.JUNTAR_DESVIO_KM || 3) + ' km ou mesmo bairro sem pino) e cabem na capacidade de 300 cx24, sugerindo mandar para a produção para sair junto.</li>' +
