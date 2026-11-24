@@ -779,6 +779,7 @@
         gmapEncerrar(true);
         hmDestruir(); hm.animou = false; hm.pediu = false;
         if (window.TempRioRota) window.TempRioRota.sair();   // Rota do dia: solta o mapa e esquece os dados da conta
+        if (window.TempRioArquivoCanhotos) window.TempRioArquivoCanhotos.sair();
         if (window.TempRioWhats) window.TempRioWhats.sair(); // WhatsApp: esquece telefones/textos da conta
         if (window.TempRioUsuarios) window.TempRioUsuarios.sair(); // Usuários: esquece a lista (e qualquer senha na tela)
         saudeParar();
@@ -2647,9 +2648,10 @@
         var alvo = $('#painel-pedidoserp');
         if (!alvo) return;
         alvo.innerHTML = '<div id="pe-quadro">' + peHtml() + '</div>' +
-            '<section id="pedidos-erp" class="mt-10"></section>';
+            '<section id="pedidos-erp" class="mt-10"></section><section id="pe-arquivo-canhotos"></section>';
         ligarOrigemPedidos(alvo);
         desenharPedidosErp();
+        if (window.TempRioArquivoCanhotos) window.TempRioArquivoCanhotos.desenhar($('#pe-arquivo-canhotos'), { sb: sb, papel: papel });
     }
 
     function desenharPedidosErp() {
