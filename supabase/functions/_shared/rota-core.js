@@ -131,6 +131,9 @@
         c.horaSaida = hs == null ? 7 * 60 : hs;
         c.velocidadeKmh = numEntre(primeiro(l, 'velocidadeKmh', 'velocidade_kmh'), 5, 120, 25);
         c.minutosParada = numEntre(primeiro(l, 'minutosParada', 'minutos_parada'), 0, 120, 10);
+        var desde = primeiro(l, 'canhotoDesde', 'canhoto_desde');
+        // Sem a coluna056: nenhum legado presumido, conserva055.
+        c.canhotoDesde = desde && isFinite(Date.parse(desde)) ? new Date(desde).toISOString() : null;
         c._pronta = true;
         return c;
     }
@@ -223,14 +226,19 @@
         var v = canhotos && canhotos[cd];
         return Array.isArray(v) ? v.some(function (c) { return c && !c.substituido_em; }) : !!v;
     }
-    function enviadoAntigo(p, canhotos, hoje) {
+    function legadoRecebido(p, cfg) {
+        var desde = cfgOk(cfg).canhotoDesde, em = faturadoEm(p);
+        return etapaEnviada(p) && !!desde && !!em && Date.parse(em) < Date.parse(desde);
+    }
+    function recebidoEntrega(p, canhotos, cfg) { return !!p && (temCanhoto(canhotos, p.cd_pedido) || legadoRecebido(p, cfg)); }
+    function enviadoAntigo(p, canhotos, hoje, cfg) {
         var em = faturadoEm(p);
-        return etapaEnviada(p) && !temCanhoto(canhotos, p.cd_pedido) && !!em &&
+        return etapaEnviada(p) && !recebidoEntrega(p, canhotos, cfg) && !!em &&
             Date.parse(hoje + 'T12:00:00Z') - Date.parse(diaSP(em) + 'T12:00:00Z') > ROTA.ENVIADO_MAX_DIAS * 864e5;
     }
-    function pendenteEntrega(p, canhotos, hoje) {
-        return !!p && ROTA.ETAPAS_PENDENTES.indexOf(p.etapa) >= 0 && !temCanhoto(canhotos, p.cd_pedido) &&
-            (!etapaEnviada(p) || (!!faturadoEm(p) && !enviadoAntigo(p, canhotos, hoje)));
+    function pendenteEntrega(p, canhotos, hoje, cfg) {
+        return !!p && ROTA.ETAPAS_PENDENTES.indexOf(p.etapa) >= 0 && !recebidoEntrega(p, canhotos, cfg) &&
+            (!etapaEnviada(p) || (!!faturadoEm(p) && !enviadoAntigo(p, canhotos, hoje, cfg)));
     }
     // Domingo de Páscoa (algoritmo de Meeus/Jones/Butcher, calendário gregoriano).
     function pascoa(ano) {
@@ -730,7 +738,7 @@
         var res = { dia: dia, semSaida: !temSaida(dia, cfg), feriado: ehFeriado(dia, cfg), cfg: cfg, modo: v2 ? 'marcacao' : 'auto',
                     veiculos: Object.create(null), ordem: [], frota: cfg.veiculos, fica: [], aguardando: [], ignorados: [], entregues: {},
                     fechada: fx ? fx.meta : null, adicoesSeparando: [],
-                    enviadosAntigos: (pedidos || []).filter(function (p) { return enviadoAntigo(p, opts.canhotos, opts.hoje || dia); }) };
+                    enviadosAntigos: (pedidos || []).filter(function (p) { return enviadoAntigo(p, opts.canhotos, opts.hoje || dia, cfg); }) };
         function bloco(v, inativo) {
             var b = { id: v.id, nome: v.nome, modo: v.modo, cor: v.cor, capacidade: v.capacidade, semLimite: v.capacidade == null, inativo: !!inativo,
                       pedidos: [], paradas: [], semPosicao: [], volume: 0, ocupacao: null, c24: 0, c48: 0, avulsos: 0, desconhecidos: 0, km: 0, kmReta: 0,
@@ -750,7 +758,7 @@
         res.semProxima = !proximaDe('s10');
         var cands = [];
         (pedidos || []).forEach(function (p) {
-            if (!pendenteEntrega(p, opts.canhotos, opts.hoje || dia) || excluir[p.cd_pedido]) return;
+            if (!pendenteEntrega(p, opts.canhotos, opts.hoje || dia, cfg) || excluir[p.cd_pedido]) return;
             var c = p.documento ? clientes[p.documento] || null : null;
             var v = volumePedido(p), ve, x, prazo, vq;
             if (v2) {
@@ -993,7 +1001,7 @@
         var dd = dias.map(function (d) { return { dia: d, nome: nomeDia(d), lista: [], usado: 0, regiao: null, centro: null }; });
         var s10 = [];
         (pedidos || []).forEach(function (p) {
-            if (!pendenteEntrega(p, opts.canhotos, opts.hoje || semanaInicio) || excluir[p.cd_pedido] || ignorados[p.cd_pedido]) return;
+            if (!pendenteEntrega(p, opts.canhotos, opts.hoje || semanaInicio, cfg) || excluir[p.cd_pedido] || ignorados[p.cd_pedido]) return;
             var c = p.documento ? clientes[p.documento] || null : null, m = marcacaoDe(p, padroes, porPedido);
             var x = { p: p, c: c, prazo: prazoDe(p.dt_pedido, cfg, m ? m.veiculo : null), v: volumePedido(p), veiculo: m ? m.veiculo : null, marcacao: m ? m.origem : null,
                       regra: p.documento ? regras[p.documento] || null : null, dia: null, origemDia: null, diaSugerido: null, estoura: false, diaFechado: false, regiao: null, ang: null };
@@ -1241,7 +1249,7 @@
         // ---- candidatos por cliente (e veículo marcado) ----
         var unid = Object.create(null), lista = [];
         (pedidos || []).forEach(function (p) {
-            if (!pendenteEntrega(p, opts.canhotos, hoje) || excluir[p.cd_pedido] || ignorados[p.cd_pedido] || naRota[p.cd_pedido]) return;
+            if (!pendenteEntrega(p, opts.canhotos, hoje, cfg) || excluir[p.cd_pedido] || ignorados[p.cd_pedido] || naRota[p.cd_pedido]) return;
             var c = p.documento ? clientes[p.documento] || null : null, m = marcacaoDe(p, padroes, porPedido), precisaMarcar = false, alvo = null;
             if (m) {
                 var vm = veiculoDaFrota(m.veiculo, cfg);
@@ -1357,7 +1365,7 @@
         horaSP: horaSP,
         somaDias: somaDias,
         diaSemana: diaSemana,
-        etapaEnviada: etapaEnviada, faturadoEm: faturadoEm, temCanhoto: temCanhoto, enviadoAntigo: enviadoAntigo, pendenteEntrega: pendenteEntrega,
+        etapaEnviada: etapaEnviada, faturadoEm: faturadoEm, temCanhoto: temCanhoto, legadoRecebido: legadoRecebido, recebidoEntrega: recebidoEntrega, enviadoAntigo: enviadoAntigo, pendenteEntrega: pendenteEntrega,
         pascoa: pascoa,
         feriadosDoAno: feriadosDoAno,
         ehFeriado: ehFeriado,

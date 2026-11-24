@@ -150,6 +150,12 @@
             })
             .catch(function (e) { if (ausente(e, 'pedido_canhoto')) return {}; throw e; });
     }
+    function coletarConfigRota(sb) {
+        return sb.from('rota_config').select('*').eq('id', 1).limit(1).then(function (r) {
+            if (r.error && !ausente(r.error, 'rota_config')) throw erroDe(r);
+            return core.cfgDe(r.data && r.data[0]);
+        });
+    }
 
     function coletarReceber(sb) {
         return Promise.all([
@@ -289,10 +295,10 @@
                 return sb.from('solidcon_eventos').select('nome,tipo,em').in('tipo', ['esgotou', 'estoque_baixo'])
                     .gte('em', iso(t - WA.ESTOQUE_HORAS * 36e5)).order('em', { ascending: false });
             }, 2000).catch(function (e) { if (ausente(e)) return null; throw e; }),
-            coletarCanhotos(sb)
+            coletarCanhotos(sb), coletarConfigRota(sb)
         ]).then(function (rs) {
-            var parados = rs[0].filter(function (p) { return !core.temCanhoto(rs[4], p.cd_pedido) &&
-                (core.etapaEnviada(p) ? core.enviadoAntigo(p, rs[4], core.diaSP(agora)) : Date.parse(p.dt_pedido) < t - WA.PARADO_ERP_DIAS * 864e5); });
+            var parados = rs[0].filter(function (p) { return !core.recebidoEntrega(p, rs[4], rs[5]) &&
+                (core.etapaEnviada(p) ? core.enviadoAntigo(p, rs[4], core.diaSP(agora), rs[5]) : Date.parse(p.dt_pedido) < t - WA.PARADO_ERP_DIAS * 864e5); });
             var docs = {}; parados.forEach(function (p) { if (p.documento) docs[p.documento] = true; });
             return nomesDe(sb, Object.keys(docs)).then(function (nomes) {
                 return { parados: parados, nomes: nomes, siteAguardando: rs[1], coletas: rs[2].filter(Boolean), estoque: rs[3] };
@@ -622,12 +628,12 @@
             todas(function () { return q().eq('etapa', 'conferido').order('cd_pedido', { ascending: true }); }, 20000),
             todas(function () { return q().in('etapa', ['saiu', 'atendido']).order('cd_pedido', { ascending: true }); }, 20000),
             sb.from('solidcon_pedidos_erp_sync').select('coletado_em').eq('status', 'ok').order('coletado_em', { ascending: false }).limit(1),
-            coletarCanhotos(sb)
+            coletarCanhotos(sb), coletarConfigRota(sb)
         ]).then(function (rs) {
             var porCd = {}, pedidos = [], docs = {};
             [rs[0], rs[1], rs[2]].forEach(function (l) { l.forEach(function (p) { if (!porCd[p.cd_pedido]) { porCd[p.cd_pedido] = true; pedidos.push(p); if (p.documento) docs[p.documento] = true; } }); });
             var sy = rs[3] && !rs[3].error && rs[3].data && rs[3].data[0];
-            return nomesDe(sb, Object.keys(docs)).then(function (nomes) { return { pedidos: pedidos, nomes: nomes, coletado: sy ? sy.coletado_em : null, canhotos: rs[4] }; });
+            return nomesDe(sb, Object.keys(docs)).then(function (nomes) { return { pedidos: pedidos, nomes: nomes, coletado: sy ? sy.coletado_em : null, canhotos: rs[4], cfg: rs[5] }; });
         });
     }
     function nomePedido(p, nomes, max) {
@@ -682,7 +688,7 @@
         (d.pedidos || []).forEach(function (p) {
             if (!p) return;
             if (noDia(p.dt_pedido)) entrou.push(p);
-            if (p.etapa === 'conferido' && !core.temCanhoto(d.canhotos, p.cd_pedido)) pronto.push(p);
+            if (p.etapa === 'conferido' && !core.recebidoEntrega(p, d.canhotos, d.cfg)) pronto.push(p);
             if (core.etapaEnviada(p) && noDia(core.faturadoEm(p))) enviou.push(p);
         });
         // {{1}} "segunda, 23/11 às 17:00"; coleta do ERP atrasada ou ausente vai junto (os números podem estar velhos).

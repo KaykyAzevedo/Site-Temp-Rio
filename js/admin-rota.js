@@ -166,6 +166,7 @@
         ]).then(function (rs) {
             if (seq !== st.seq) return;
             if (rs[0].error) throw rs[0].error;
+            if (rs[3].error && !tabelaAusente(rs[3].error, 'rota_config')) throw rs[3].error;
             if (rs[15].error && !tabelaAusente(rs[15].error, 'pedido_canhoto')) throw rs[15].error;
             if ((rs[15].data || []).length >= 50000) throw new Error('Limite de leitura de canhotos atingido; nao e seguro calcular a rota.');
             var pedidos = rs[0].data || [];
@@ -1763,6 +1764,7 @@
             st.v2 ? 'Horário estimado: saída às ' + esc(hhmm(cfg.horaSaida) || '07:00') + ' · velocidade média ' + NUM1.format(cfg.velocidadeKmh) + ' km/h · ' + NUM.format(cfg.minutosParada) + ' min por parada' : null,
             'Feriados: ' + (cfg.feriadosSemSaida ? 'sem saída (nacionais, Carnaval, Sexta-feira Santa, Corpus Christi' + (extras.length ? ' e ' + esc(extras.map(dataBr).join(', ')) : '') + ')' : 'têm saída normal'),
             'Corte do pedido: ' + (cfg.corteHora == null ? 'sem corte' : 'a partir das ' + cfg.corteHora + 'h o prazo conta do dia seguinte'),
+            cfg.canhotoDesde ? 'Controle de canhoto desde ' + esc(dataBr(diaSP(cfg.canhotoDesde)) + ' ' + dataHoraControle(cfg.canhotoDesde).slice(11)) + ' (São Paulo). Faturamentos anteriores são legado recebido.' : 'Controle de canhoto para todos os faturamentos (sem corte de legado).',
             'Volta da S10: ' + (cfg.voltaSede ? 'o km e o horário incluem a volta para a sede' : 'o km e o horário não incluem a volta'),
             st.v2
                 ? 'Clientes com padrão CEASA/S10: ' + NUM.format(Object.keys(st.excecoes).length) + ' · escolhas só neste pedido: ' + NUM.format(Object.keys(st.porPedido).length) + ' · clientes com regras de entrega: ' + NUM.format(nRegras)
@@ -1778,10 +1780,29 @@
         return '<details class="rota-config-resumo rota-regras adm-card p-4 mt-2 no-print" id="rota-ajuda"' + (st.cfgAberto ? ' open' : '') + '>' +
             '<summary id="rota-ajuda-sum"><i class="fa-regular fa-circle-question" aria-hidden="true"></i> Regras da rota e como funciona</summary>' +
             '<ul>' + itens.map(function (t) { return '<li>' + t + '</li>'; }).join('') +
-            '<li>Candidatos: pedidos sem canhoto ativo; inclui faturados (saiu/atendido) de até 7 dias. Canhoto confirma entrega; faturamento não.</li>' +
+            '<li>Candidatos: pedidos sem canhoto ativo e fora do legado anterior ao controle; inclui faturados (saiu/atendido) de até 7 dias.</li>' +
             (st.v2 ? htmlAjudaV2() : htmlAjudaV1()) +
             '<li>Prazo: data do pedido + ' + ROTA.PRAZO_DIAS_UTEIS + ' dias úteis (S10 sai de segunda a sexta; caminhão do CEASA de segunda a sábado; feriado conforme as regras acima; pedido depois do corte conta do dia seguinte).</li>' +
             '</ul>' + aviso + '</details>';
+    }
+    // datetime-local representa Sao Paulo, nunca o fuso do aparelho.
+    function dataHoraControle(iso) {
+        if (!iso || !isFinite(Date.parse(iso))) return '';
+        var p = {};
+        new Intl.DateTimeFormat('en-CA', { timeZone: ROTA.TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+            .formatToParts(new Date(iso)).forEach(function (x) { p[x.type] = x.value; });
+        return p.year + '-' + p.month + '-' + p.day + 'T' + p.hour + ':' + p.minute;
+    }
+    function isoControle(v) {
+        if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(v)) return null;
+        var parede = Date.parse(v + ':00Z'), t = parede;
+        if (!isFinite(t)) return null;
+        for (var i = 0; i < 3; i++) {
+            var local = dataHoraControle(new Date(t).toISOString());
+            if (local === v) return new Date(t).toISOString();
+            t -= Date.parse(local + ':00Z') - parede;
+        }
+        return null;   // data inexistente, inclusive horario local pulado pelo fuso
     }
     function htmlDialogo() {
         var cfg = st.cfg, extras = Object.keys(cfg.feriadosExtras).sort();
@@ -1809,6 +1830,10 @@
             '<fieldset><legend>Horário de corte do pedido</legend>' +
                 '<label for="rota-dlg-corte" class="rota-sub">Pedido feito a partir desta hora conta o prazo do dia seguinte</label>' +
                 '<select id="rota-dlg-corte" class="adm-input">' + horas + '</select></fieldset>' +
+            (st.cfgLinha && Object.prototype.hasOwnProperty.call(st.cfgLinha, 'canhoto_desde') ?
+                '<fieldset><legend>Controle de canhoto</legend><label class="rota-dlg-campo"><span>Exigir canhoto para faturamentos a partir de (São Paulo)</span>' +
+                '<input type="datetime-local" id="rota-dlg-canhoto-desde" class="adm-input" value="' + esc(dataHoraControle(cfg.canhotoDesde)) + '"></label>' +
+                '<p class="rota-sub">Faturados antes deste instante são legado recebido, fora da rota e da lista +7 dias.</p></fieldset>' : '') +
             '<fieldset><legend>S10</legend>' +
                 '<label class="rota-dlg-check"><input type="checkbox" id="rota-dlg-volta"' + (cfg.voltaSede ? ' checked' : '') + '> A S10 volta para a sede no fim (o km estimado inclui a volta)</label></fieldset>' +
             '<p class="rota-dlg-msg" id="rota-dlg-msg" role="alert"></p>' +
@@ -1835,6 +1860,7 @@
         dlg.querySelector('#rota-dlg-corte').value = st.cfg.corteHora == null ? '' : String(st.cfg.corteHora);
         dlg.querySelector('#rota-dlg-feriados').checked = !!st.cfg.feriadosSemSaida;
         dlg.querySelector('#rota-dlg-volta').checked = !!st.cfg.voltaSede;
+        var desde = dlg.querySelector('#rota-dlg-canhoto-desde'); if (desde) desde.value = dataHoraControle(st.cfg.canhotoDesde);
         dlg.querySelector('#rota-dlg-msg').textContent = '';
         dlgTravar(dlg, false);
         dlgChips(dlg);
@@ -1845,7 +1871,7 @@
     function dlgTravar(dlg, sim) {
         ['#rota-dlg-salvar', '#rota-dlg-cancelar', '#rota-dlg-saida', '#rota-dlg-vel', '#rota-dlg-parada',
          '#rota-dlg-add-data', '#rota-dlg-data', '#rota-dlg-corte',
-         '#rota-dlg-feriados', '#rota-dlg-volta'].forEach(function (q) { var e = dlg.querySelector(q); if (e) e.disabled = sim; });
+         '#rota-dlg-feriados', '#rota-dlg-volta', '#rota-dlg-canhoto-desde'].forEach(function (q) { var e = dlg.querySelector(q); if (e) e.disabled = sim; });
         dlg.querySelectorAll('[data-rota-tira-data]').forEach(function (e) { e.disabled = sim; });
         var f = dlg.querySelector('#rota-dlg-form'); if (f) { if (sim) f.setAttribute('aria-busy', 'true'); else f.removeAttribute('aria-busy'); }
     }
@@ -1891,6 +1917,11 @@
             var linha = { id: 1, feriados_extras: r.datas.slice(),
                           feriados_sem_saida: dlg.querySelector('#rota-dlg-feriados').checked, s10_volta_sede: dlg.querySelector('#rota-dlg-volta').checked,
                           corte_hora: corte === '' ? null : Number(corte) };
+            var desde = dlg.querySelector('#rota-dlg-canhoto-desde');
+            if (desde && desde.value !== dataHoraControle(st.cfg.canhotoDesde)) {
+                linha.canhoto_desde = isoControle(desde.value);
+                if (!linha.canhoto_desde) { msg.textContent = 'Informe uma data e hora válidas de São Paulo para o controle de canhoto.'; desde.focus(); return; }
+            }
             if (st.v2) {
                 linha.hora_saida = hhmm(saidaMin);
                 linha.velocidade_kmh = Math.round(vel * 10) / 10;
@@ -1922,15 +1953,8 @@
     }
     function recarregarConfig() {
         if (!st.sb) return;
-        var seq = st.seq, mut0 = st.mut;
-        Promise.all([st.sb.from('rota_config').select('*').eq('id', 1).limit(1),
-                     paginar(function () { return st.sb.from('rota_cliente_veiculo').select('documento,veiculo').order('documento', { ascending: true }); }, 20000)])
-            .then(function (rs) {
-                if (seq !== st.seq || !st.ativo) return;
-                // UI1: gravação concluída/pendente durante a leitura -> retrato velho: lê de novo depois.
-                if (st.mut !== mut0 || pendentes()) { if (pendentes()) st.recargaPendente = true; else recarregarConfig(); return; }
-                lerConfig(rs[0], rs[1]); desenhar();
-            });
+        //056: alterar o corte tambem muda a revisao da foto. Reler fontes + foto juntas antes de liberar envio.
+        st.carregado = false; carregar();
     }
 
     // ===================== DIÁLOGO "SÓ NESTE PEDIDO" OU "SEMPRE" (044) =====================

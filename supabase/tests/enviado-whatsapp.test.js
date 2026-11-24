@@ -31,3 +31,24 @@ test('sem 052 continua pendente; leitura truncada nao gera rota incorreta',async
  sb.from=t=>t==='pedido_canhoto'?{select(){return this;},is(){return this;},order(){return this;},range(){return Promise.resolve({data:Array(1000).fill({cd_pedido:1})});}}:original(t);
  await assert.rejects(W.coletarRota(sb,agora),/limite de leitura de canhotos/);
 });
+
+test('056 WhatsApp: legado sai da rota/alerta, corte editado propaga; ausencia conserva055',async()=>{
+ const {T,sb}=banco();T.pedido_canhoto=[];
+ T.rota_config[0].canhoto_desde='2026-11-23T12:00:00-03:00';
+ T.solidcon_pedidos_erp[0].dt_saida='2026-11-23T11:59:00-03:00';
+ let d=await W.coletarRota(sb,agora);assert.equal(W.montarRota(d,'s10',agora,{}).resumo.paradas,1);
+ assert.deepEqual((await W.coletarAlertas(sb,agora)).parados,[],'antigo e legado, nao alerta');
+ T.rota_config[0].canhoto_desde='2026-11-24T12:00:00-03:00';
+ d=await W.coletarRota(sb,agora);assert.ok(W.montarRota(d,'s10',agora,{}).vazio);
+ delete T.rota_config[0].canhoto_desde;
+ d=await W.coletarRota(sb,agora);assert.equal(W.montarRota(d,'s10',agora,{}).resumo.paradas,2);
+ assert.deepEqual((await W.coletarAlertas(sb,agora)).parados.map(p=>p.cd_pedido),[3]);
+});
+
+test('056 erro de configuracao impede alertas e resumo; Enviou continua faturamento inclusive legado',async()=>{
+ const {T,sb}=banco();T.rota_config[0].canhoto_desde='2026-11-25T12:00:00-03:00';
+ assert.equal((await W.gerar(sb,'pedidos_dia',agora,{})).resumo.enviou,2,'evento de faturamento independente do corte');
+ const original=sb.from;sb.from=t=>t==='rota_config'?{select(){return this;},eq(){return this;},limit(){return Promise.resolve({error:{code:'57014',message:'timeout'}});}}:original(t);
+ await assert.rejects(W.coletarAlertas(sb,agora),e=>e.code==='57014');
+ await assert.rejects(W.coletarPedidosDia(sb,agora),e=>e.code==='57014');
+});
