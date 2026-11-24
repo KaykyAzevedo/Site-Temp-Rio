@@ -44,6 +44,7 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Security
 $Invariant = [Globalization.CultureInfo]::InvariantCulture
 $Utf8 = New-Object Text.UTF8Encoding($false)
+$PastaColetor = $PSScriptRoot
 
 # Mesmos valores do configurar-senha-banco.ps1 (a entropia nao e segredo; repo publico).
 $EntropiaTexto = 'TempRio/solidcon/banco-senha/v1'
@@ -1141,7 +1142,7 @@ function Mapa-Produtos($Linhas) {
     return $m
 }
 
-function Normalizar-Pedidos($Linhas, $Clientes, $Valores, $Produtos) {
+function Normalizar-Pedidos($Linhas, $Clientes, $Valores, $Produtos, [byte[]]$ChavePessoas = $null) {
     # Codigo do cliente -> documento so digitos. Codigo repetido com documentos diferentes = indefinido.
     $docs = @{}
     foreach ($p in $Clientes) {
@@ -1170,7 +1171,8 @@ function Normalizar-Pedidos($Linhas, $Clientes, $Valores, $Produtos) {
         # O painel cruza canhoto e retira da rota os faturados ha +7 dias, sem perder a lista de resolucao.
         $codCli = Inteiro-Banco $l.cd_cliente
         $doc = if ($null -ne $codCli -and $docs.ContainsKey($codCli)) { $docs[$codCli] } else { '' }
-        # LGPD: so CNPJ valido identifica; CPF e indefinido viajam so como tipo.
+        # 058: CPF pode viajar como HMAC; o documento continua SEMPRE null no pedido.
+        if($null -ne $ChavePessoas -and $doc){$dc=Documento-PessoaPedido $doc;$doc=if($dc.documento){$dc.documento}else{''}}
         $tipo = if ($doc.Length -eq 14 -and (Cnpj-Valido $doc)) { 'cnpj' } elseif ($doc.Length -eq 11) { 'cpf' } else { 'indefinido' }
         $cont[$tipo]++
         $porEtapa[$etapa]++
@@ -1200,6 +1202,9 @@ function Normalizar-Pedidos($Linhas, $Clientes, $Valores, $Produtos) {
             valor_centavos = $val.centavos
             nr_carga = $(if ($null -ne $carga) { [long]$carga } else { $null })
         })
+        if ($null -ne $ChavePessoas) {
+            $itens[$itens.Count-1]['pessoa_chave'] = if($tipo -ceq 'cpf'){Hmac-PessoaPedido $doc $ChavePessoas}else{$null}
+        }
         # Produtos/quantidades (039): contados sempre; campo 'produtos' so vai com pedidos_enviar_caixas=true.
         # Atribuicao direta: '$x = if (...) { lista }' desenrolaria a ArrayList (1 item vira o proprio item).
         $lp = $null
@@ -1377,7 +1382,16 @@ function Modulo-Pedidos($Modulo) {
     try {
         $mapaValores = if ($null -ne $valoresLinhas) { Mapa-Valores $valoresLinhas } else { $null }
         $mapaProdutos = if ($null -ne $produtosLinhas) { Mapa-Produtos $produtosLinhas } else { $null }
-        $normal = Normalizar-Pedidos $linhas $clientes $mapaValores $mapaProdutos
+        $chavePessoa = $null
+        try {
+            $pp = Campo $Cfg 'pessoas_pedido'
+            if ($null -ne $pp -and $pp -isnot [bool]) { throw 'pessoas_pedido deve ser true ou false' }
+            if ($pp -eq $true) {
+                . (Join-Path $PastaColetor 'pessoas-pedido.ps1')
+                $chavePessoa = if($Simular){[byte[]](0..31)}else{Ler-ChavePessoas (Caminho-ChavePessoas $Cfg $PastaColetor)}
+            }
+            $normal = Normalizar-Pedidos $linhas $clientes $mapaValores $mapaProdutos $chavePessoa
+        } finally { if($null -ne $chavePessoa){[Array]::Clear($chavePessoa,0,$chavePessoa.Length)} }
     }
     catch {
         # Inteiro-Banco usa o codigo do modulo receber; aqui o texto certo e o de pedido.

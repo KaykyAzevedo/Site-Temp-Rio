@@ -599,6 +599,17 @@
     // Sem posição: no fim, por bairro (sem bairro por último).
     // o (044, opcional): { regras: {documento: regra}, tempo: tempoDe(cfg), fim: [lat,lng] ponto final fixo }.
     // Com regras: janela/prioridade entram na ordem (ordenarComHorario) e cada parada ganha regra/eta/espera/atraso.
+    // 058: pessoa fisica usa somente a copia de entrega do pedido; nunca documento/identidade por nome.
+    function clienteDoPedido(p, clientes) {
+        if (!p) return null;
+        if (p.cliente_tipo !== 'cpf') return p.documento ? (clientes || {})[p.documento] || null : null;
+        return { nome: p.cliente_nome || null, logradouro: p.entrega_logradouro || null, numero: p.entrega_numero || null,
+            complemento: p.entrega_complemento || null, bairro: p.entrega_bairro || null, cidade: p.entrega_cidade || null,
+            uf: p.entrega_uf || null, cep: p.entrega_cep || null, pos: null, precisao: null };
+    }
+    function enderecoDoCliente(c) {
+        return c ? [[c.logradouro, c.numero].filter(Boolean).join(', '), c.complemento].filter(Boolean).join(' — ') : '';
+    }
     function montarParadas(lista, volta, o) {
         o = o || {};
         var regras = o.regras || {}, porChave = {}, comPos = [], semPos = [];
@@ -607,7 +618,7 @@
             var sp = porChave[chave];
             if (!sp) {
                 sp = porChave[chave] = { chave: chave, documento: x.p.documento || null, nome: (x.c && x.c.nome) || x.p.cliente_nome || null,
-                    bairro: (x.c && x.c.bairro) || null, cidade: (x.c && x.c.cidade) || null, pos: x.c && x.c.pos ? x.c.pos : null,
+                    bairro: (x.c && x.c.bairro) || null, cidade: (x.c && x.c.cidade) || null, endereco: enderecoDoCliente(x.c), uf: (x.c && x.c.uf) || null, pos: x.c && x.c.pos ? x.c.pos : null,
                     precisao: x.c ? x.c.precisao : null, tipo: x.p.cliente_tipo, veiculo: x.veiculo, motivo: x.motivo, detalhe: x.detalhe, pedidos: [] };
                 var rg = x.p.documento ? regras[x.p.documento] : null;
                 if (rg) { sp.regra = rg; sp.prioridade = !!rg.prioridade; sp.janela = rg.janela; sp.obs = rg.obs; }
@@ -759,7 +770,7 @@
         var cands = [];
         (pedidos || []).forEach(function (p) {
             if (!pendenteEntrega(p, opts.canhotos, opts.hoje || dia, cfg) || excluir[p.cd_pedido]) return;
-            var c = p.documento ? clientes[p.documento] || null : null;
+            var c = clienteDoPedido(p, clientes);
             var v = volumePedido(p), ve, x, prazo, vq;
             if (v2) {
                 var m = marcacaoDe(p, padroes, porPedido), sug = sugestaoDe(p, c, cfg);
@@ -1002,7 +1013,7 @@
         var s10 = [];
         (pedidos || []).forEach(function (p) {
             if (!pendenteEntrega(p, opts.canhotos, opts.hoje || semanaInicio, cfg) || excluir[p.cd_pedido] || ignorados[p.cd_pedido]) return;
-            var c = p.documento ? clientes[p.documento] || null : null, m = marcacaoDe(p, padroes, porPedido);
+            var c = clienteDoPedido(p, clientes), m = marcacaoDe(p, padroes, porPedido);
             var x = { p: p, c: c, prazo: prazoDe(p.dt_pedido, cfg, m ? m.veiculo : null), v: volumePedido(p), veiculo: m ? m.veiculo : null, marcacao: m ? m.origem : null,
                       regra: p.documento ? regras[p.documento] || null : null, dia: null, origemDia: null, diaSugerido: null, estoura: false, diaFechado: false, regiao: null, ang: null };
             if (!m) { x.sugestao = sugestaoDe(p, c, cfg); res.faltaMarcar.push(x); return; }
@@ -1250,7 +1261,7 @@
         var unid = Object.create(null), lista = [];
         (pedidos || []).forEach(function (p) {
             if (!pendenteEntrega(p, opts.canhotos, hoje, cfg) || excluir[p.cd_pedido] || ignorados[p.cd_pedido] || naRota[p.cd_pedido]) return;
-            var c = p.documento ? clientes[p.documento] || null : null, m = marcacaoDe(p, padroes, porPedido), precisaMarcar = false, alvo = null;
+            var c = clienteDoPedido(p, clientes), m = marcacaoDe(p, padroes, porPedido), precisaMarcar = false, alvo = null;
             if (m) {
                 var vm = veiculoDaFrota(m.veiculo, cfg);
                 if (vm && vm.ativo && vm.modo === 'cd_ceasa') { res.descartados.ceasa++; return; }
@@ -1386,6 +1397,7 @@
         motivoCeasa: motivoCeasa,
         veiculoDe: veiculoDe,
         montarParadas: montarParadas,
+        clienteDoPedido: clienteDoPedido, enderecoDoCliente: enderecoDoCliente,
         planejar: planejar, fechadaDe: fechadaDe, itensDaRota: itensDaRota, sequenciaDe: sequenciaDe, propostaSeparando: propostaSeparando,
         linksGoogleMaps: linksGoogleMaps,
         // 044

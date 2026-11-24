@@ -6768,6 +6768,13 @@
     var PE_DATA_ETAPA = { aberto: 'dt_pedido', na_carga: 'dt_carga', separando: 'dt_sep_inicio', separado: 'dt_sep_fim', conferido: 'dt_conferencia', saiu: 'dt_saida', atendido: 'dt_atendido' };
     var PE_ROTULO_ETAPA = { aberto: 'Aberto', na_carga: 'Na carga', separando: 'Separando', separado: 'Separado', conferido: 'Conferido', saiu: 'faturado em', atendido: 'faturado em' };
     var PE_COLS = 'cd_pedido,dt_pedido,etapa,dt_carga,dt_sep_inicio,dt_sep_fim,dt_conferencia,dt_saida,dt_nota,dt_atendido,cliente_tipo,documento,cliente_nome,nr_carga,valor_centavos';
+    var PE_ENTREGA_COLS = 'entrega_logradouro,entrega_numero,entrega_complemento,entrega_bairro,entrega_cidade,entrega_uf,entrega_cep';
+    function peLerPedidos() {
+        function ler(cols) { return vendPaginar(function () { return sb.from('solidcon_pedidos_erp').select(cols).order('etapa', { ascending: true }).order('dt_pedido', { ascending: true }); }, 5000); }
+        return ler(PE_COLS + ',' + PE_ENTREGA_COLS).then(function (r) {
+            return r.error && /^(42703|PGRST204)$/.test(String(r.error.code || '')) ? ler(PE_COLS) : r;
+        });
+    }
     var PE_VELHO_MIN = 30;
     var PE_MODO_CHAVE = 'adm.peModo';
     var pe = { carregado: false, carregando: false, erro: null, ausente: false, itens: [], coletado: null, seq: 0,
@@ -6794,7 +6801,7 @@
         var seq = ++pe.seq;
         pe.carregando = true;
         return Promise.all([
-            vendPaginar(function () { return sb.from('solidcon_pedidos_erp').select(PE_COLS).order('etapa', { ascending: true }).order('dt_pedido', { ascending: true }); }, 5000),
+            peLerPedidos(),
             sb.from('solidcon_pedidos_erp_sync').select('coletado_em').eq('status', 'ok').order('coletado_em', { ascending: false }).limit(1),
             // 052 (opcional): canhotos ativos e se quem está logado pode anexar (pode_marcar_rota). Ausentes = sem canhoto.
             vendPaginar(function () { return sb.from('pedido_canhoto').select('cd_pedido,caminho,enviado_em,origem').is('substituido_em', null).order('id', { ascending: true }); }, 50000),
@@ -6865,11 +6872,13 @@
         var d = docDigitos(x && x.documento);
         var idx = cmpCadastros();
         var c = idx && d ? (idx[d] || idx[docNorm(d, x && x.cliente_tipo)]) : null;
-        var bairro = String((c && c.bairro) || (x && x.bairro) || '').trim();
-        var cidade = String((c && c.cidade) || (x && x.cidade) || '').trim();
+        var bairro = String((c && c.bairro) || (x && x.entrega_bairro) || (x && x.bairro) || '').trim();
+        var cidade = String((c && c.cidade) || (x && x.entrega_cidade) || (x && x.cidade) || '').trim();
         var outraCidade = !!(cidade && geoNorm(cidade) !== 'rio de janeiro');
         var texto = (bairro || 'bairro não informado') + (outraCidade ? ' · ' + cidade : '');
-        return { bairro: bairro, cidade: cidade, outraCidade: outraCidade, texto: texto, semBairro: !bairro };
+        var entrega = x && x.cliente_tipo === 'cpf' ? window.TempRioRotaCore.enderecoDoCliente(window.TempRioRotaCore.clienteDoPedido(x, {})) : '';
+        if (entrega && x.entrega_cep) entrega += ' · CEP ' + x.entrega_cep;
+        return { bairro: bairro, cidade: cidade, outraCidade: outraCidade, texto: texto, semBairro: !bairro, entrega: entrega };
     }
 
     function peCargaTexto(x) {
@@ -6879,7 +6888,7 @@
     }
 
     function peCartaoCompacto(x) {
-        var nome = String(x.cliente_tipo) === 'cnpj' && x.cliente_nome ? x.cliente_nome : 'Consumidor final';
+        var nome = /^(cnpj|cpf)$/.test(String(x.cliente_tipo)) && x.cliente_nome ? x.cliente_nome : 'Consumidor final';
         var dEtapa = window.TempRioRotaCore.etapaEnviada(x) ? window.TempRioRotaCore.faturadoEm(x) : x[PE_DATA_ETAPA[x.etapa]];
         var col = PE_COLUNAS[peIndice(x)] || PE_COLUNAS[0];
         var ref = x.etapa === 'aberto' ? x.dt_pedido : (dEtapa || x.dt_pedido);
@@ -6896,13 +6905,14 @@
                 (icoCarga || ponto ? '<span class="adm-pe-comp-ind">' + icoCarga + ponto + '</span>' : '') +
             '</div>' +
             '<p class="adm-pe-comp-bairro' + (loc.semBairro ? ' is-sem-bairro' : '') + '" title="' + esc(loc.texto) + '">' + esc(loc.texto) + '</p>' +
+            (loc.entrega ? '<p class="adm-pe-comp-bairro" title="Endereço cadastrado">' + esc(loc.entrega) + '</p>' : '') +
             (window.TempRioRotaCore.etapaEnviada(x) && dEtapa ? '<p class="adm-pe-comp-bairro">faturado em ' + esc(peHora(dEtapa)) + '</p>' : '') +
             (window.TempRioRotaCore.legadoRecebido(x, pe.cfg) ? '<p class="adm-pe-comp-bairro">Legado anterior ao controle de canhoto</p>' : '') +
         '</div>';
     }
 
     function peCartaoDetalhado(x, noModal) {
-        var nome = String(x.cliente_tipo) === 'cnpj' && x.cliente_nome ? x.cliente_nome : 'Consumidor final';
+        var nome = /^(cnpj|cpf)$/.test(String(x.cliente_tipo)) && x.cliente_nome ? x.cliente_nome : 'Consumidor final';
         var dEtapa = window.TempRioRotaCore.etapaEnviada(x) ? window.TempRioRotaCore.faturadoEm(x) : x[PE_DATA_ETAPA[x.etapa]];
         var col = PE_COLUNAS[peIndice(x)] || PE_COLUNAS[0];
         var ref = x.etapa === 'aberto' ? x.dt_pedido : (dEtapa || x.dt_pedido);
@@ -6915,6 +6925,7 @@
             (noModal ? '<p class="adm-pe-modal-etapa"><span class="adm-kanban-ico">' + icoFa(col.icone) + '</span><span>' + esc(col.titulo) + '</span></p>' : '') +
             '<p class="text-sm font-bold adm-kc-nome" title="' + esc(nome) + '">' + icoFa('fa-store') + '<span class="adm-nome-2l">' + esc(nome) + '</span></p>' +
             linha('fa-location-dot', esc(loc.texto), loc.semBairro ? 'is-sem-bairro' : '') +
+            (loc.entrega ? linha('fa-location-dot', 'Endereço cadastrado: ' + esc(loc.entrega)) : '') +
             linha('fa-hashtag', 'Pedido ' + esc(String(x.cd_pedido)) + seloCarga + (peTemCanhoto(x) ? ' <span class="adm-pe-selo-carga">' + icoFa('fa-file-image') + 'canhoto</span>' : '')) +
             (peTemValor(x) ? '<p class="adm-kc-valor">' + icoFa('fa-sack-dollar') + '<span>' + esc(brl(Number(x.valor_centavos))) + '</span></p>' : '') +
             linha('fa-clock', 'Feito ' + esc(peHora(x.dt_pedido)) + ' · <strong>' + esc(peHa(x.dt_pedido)) + '</strong>') +
@@ -7045,7 +7056,7 @@
 
     function peAbrirModalPedido(x, opener) {
         peFecharLegenda(false);
-        var nome = String(x.cliente_tipo) === 'cnpj' && x.cliente_nome ? x.cliente_nome : 'Consumidor final';
+        var nome = /^(cnpj|cpf)$/.test(String(x.cliente_tipo)) && x.cliente_nome ? x.cliente_nome : 'Consumidor final';
         var fundo = $('#modal-detalhe');
         var painel = fundo && fundo.querySelector('.adm-modal-painel');
         var lerAtr = function (k) { return painel && painel.hasAttribute(k) ? painel.getAttribute(k) : null; };

@@ -15,6 +15,7 @@ $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 $Invariant = [Globalization.CultureInfo]::InvariantCulture
 $Utf8 = New-Object Text.UTF8Encoding($false)
+$PastaColetor = $PSScriptRoot
 $CategoriasPermitidas = @('TEMPERO - CAIXA 24 UN', 'TEMPERO - CAIXA 48 UN')
 $Token = $null
 $Cfg = $null
@@ -460,7 +461,7 @@ function Endereco-Opcional($Valor, [int]$Limite) {
     return $t
 }
 
-function Normalizar-Clientes([string]$Json) {
+function Normalizar-Clientes([string]$Json, [byte[]]$ChavePessoas = $null) {
     if (-not $Json.TrimStart().StartsWith('[') -or $Json.Length -gt 32MB) { throw 'resposta clientes invalida' }
     # PS 5.1 pode devolver um unico objeto que e o array inteiro. Desembrulhar.
     $linhas = @(ConvertFrom-Json -InputObject $Json)
@@ -511,8 +512,8 @@ function Normalizar-Clientes([string]$Json) {
         if ($null -ne $endereco -and $endereco -isnot [pscustomobject]) { throw 'endereco invalido' }
         $cidade = $null; $bairro = $null; $estado = $null
         $logradouro = $null; $numero = $null; $complemento = $null; $cep = $null
-        if ($null -ne $endereco -and $tipo -ceq 'cnpj') {
-            # 027: endereco SO de pessoa juridica (limites do vmEndereco do ERP). CPF nunca le/envia.
+        if ($null -ne $endereco -and ($tipo -ceq 'cnpj' -or $null -ne $ChavePessoas)) {
+            # 058: CPF so com chave HMAC local e flag ligada apos a migracao. Sem GET adicional.
             $logradouro = Endereco-Opcional (Campo-Cliente $endereco 'logradouro') 100
             $numero = Endereco-Opcional (Campo-Cliente $endereco 'numero') 30
             $complemento = Endereco-Opcional (Campo-Cliente $endereco 'complemento') 60
@@ -546,6 +547,9 @@ function Normalizar-Clientes([string]$Json) {
             cidade=$cidade; bairro=$bairro; estado=$estado
             logradouro=$logradouro; numero=$numero; complemento=$complemento; cep=$cep
         })
+        if ($null -ne $ChavePessoas) {
+            $itens[$itens.Count-1]['pessoa_chave'] = if($tipo -ceq 'cpf'){Hmac-PessoaPedido $documento $ChavePessoas}else{$null}
+        }
     }
     $normalizados = @($itens | Sort-Object { $_.documento })
     if ([Text.Encoding]::UTF8.GetByteCount((ConvertTo-Json -InputObject $normalizados -Depth 5 -Compress)) -gt 16MB) {
@@ -572,7 +576,16 @@ function Sincronizar-Clientes {
     if ($BackfillDias -gt 0) { return } # Backfill continua exclusivo de vendas.
     $faseClientes = 'agenda'; $reservaGravada = $false; $consulta = $null
     $consultaPath = Join-Path $Pasta 'clientes-consulta.json'
+    $chavePessoa = $null
     try {
+        # Falha de chave antes de consumir a unica consulta diaria do ERP.
+        $pp = Campo-Cliente $Cfg 'pessoas_pedido'
+        if ($null -ne $pp -and $pp -isnot [bool]) { throw 'pessoas_pedido deve ser true ou false' }
+        if ($pp -eq $true) {
+            $faseClientes = 'chave-pessoas'
+            . (Join-Path $PastaColetor 'pessoas-pedido.ps1')
+            $chavePessoa = Ler-ChavePessoas (Caminho-ChavePessoas $Cfg $PastaColetor)
+        }
         if ($ArquivoClientes) {
             $faseClientes = 'arquivo'
             $jsonClientes = Get-Content -LiteralPath $ArquivoClientes -Raw -Encoding UTF8
@@ -609,7 +622,7 @@ function Sincronizar-Clientes {
         $coleta = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", $Invariant)
         $execucao = [guid]::NewGuid().ToString('D')
         $faseClientes = 'normalizacao'
-        $normal = Normalizar-Clientes $jsonClientes
+        $normal = Normalizar-Clientes $jsonClientes $chavePessoa
         $jsonClientes = $null
         $estadoPathClientes = Join-Path $Pasta ('clientes-ultimo-ok-' + $Cfg.modo + '.json')
         if (Test-Path -LiteralPath $estadoPathClientes) {
@@ -650,7 +663,7 @@ function Sincronizar-Clientes {
         $motivosFixos = @('resposta clientes invalida','quantidade clientes invalida','cliente invalido','documento ausente ou impreciso','documento invalido','tipo cliente invalido','tipo e documento divergentes','documento duplicado','endereco invalido','campo cliente obrigatorio','campo cliente invalido','estado cliente invalido','payload clientes fora do limite','status clientes inesperado','estado clientes invalido','estado clientes futuro')
         $motivo = [string]$_.Exception.Message; if ($motivosFixos -cnotcontains $motivo) { $motivo = 'excecao' }
         try { Log ('ERRO clientes fase={0} motivo={1}; estoque e vendas preservados; sem novo GET hoje.' -f $faseClientes, $motivo) } catch {}
-    }
+    } finally { if($null -ne $chavePessoa){[Array]::Clear($chavePessoa,0,$chavePessoa.Length)} }
 }
 
 function Normalizar-Ficha($LinhasCom, $LinhasSem) {

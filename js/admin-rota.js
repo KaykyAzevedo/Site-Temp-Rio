@@ -802,7 +802,7 @@
             (sp.precisao === 'bairro' ? ' · <span class="rota-aviso-txt">pos. aprox.</span>' : '') +
             (st.fxRender && !sp.pos ? ' · <span class="rota-aviso-txt">sem posição no mapa</span>' : '') +
             (prazoRuim ? ' ' + prazoRuim : '') + (plDia ? ' ' + plDia : '') + selosFxProxima(sp) + selosSeparando(sp.pedidos) + '</div>' +
-            htmlRegrasCliente(sp.documento, nome, false, false) + '</td>' +
+            enderecoEntregaHtml(sp.pedidos[0] && sp.pedidos[0].p, sp.pedidos[0] && sp.pedidos[0].c) + htmlRegrasCliente(sp.documento, nome, false, false) + '</td>' +
             '<td data-rotulo="Caixas">' + cx + '</td>' +
             '<td data-rotulo="Veículo">' + celulaVeiculoParada(sp, nome) + '</td></tr>';
     }
@@ -904,6 +904,11 @@
         var l1 = [c.logradouro, c.numero].filter(Boolean).join(', ');
         return [l1, c.complemento].filter(Boolean).join(' — ');
     }
+    function enderecoEntregaHtml(p, c) {
+        if (!p || p.cliente_tipo !== 'cpf') return '';
+        var end = core.enderecoDoCliente(c || core.clienteDoPedido(p, {}));
+        return end ? '<div class="rota-sub">Endereço cadastrado: ' + esc(end) + '</div>' : '';
+    }
     function caixasDeParada(sp) {
         var t = { c24: 0, c48: 0, avulsos: 0, volume: 0, desc: 0 };
         (sp.pedidos || []).forEach(function (x) { if (!x.v || x.v.vol == null) t.desc++; else { t.c24 += x.v.c24; t.c48 += x.v.c48; t.avulsos += x.v.avulsos; t.volume += x.v.vol; } });
@@ -933,7 +938,7 @@
         return lista.map(function (sp, i) {
             var t = caixasDeParada(sp), o = { ordem: i + 1 };
             o.nome = txtPub(sp.cd ? (sp.nome || ROTA.CEASA_CD_NOME) : (sp.nome || nomeCliente(null, sp.pedidos && sp.pedidos[0])), 150) || 'Cliente';
-            var end = sp.cd ? 'Av. Brasil, 19001' : txtPub(enderecoCli(sp.documento), 300);
+            var end = sp.cd ? 'Av. Brasil, 19001' : txtPub(sp.endereco || enderecoCli(sp.documento), 300);
             if (end) o.endereco = end;
             // 053: numero do cadastro, somente quando existe para esse cliente (CD nao tem telefone unico).
             var cadastroTel = !sp.cd && sp.documento ? st.clientes[sp.documento] : null;
@@ -1094,7 +1099,7 @@
                     var t = caixasDeParada(sp);
                     var cx = [t.c24 ? NUM.format(t.c24) + ' cx24' : '', t.c48 ? NUM.format(t.c48) + ' cx48' : '', t.avulsos ? txtAvulsos(t.avulsos) : '', t.desc ? 'volume a conferir' : ''].filter(Boolean).join(' + ') || '0 cx';
                     var nome = sp.nome || nomeCliente(null, sp.pedidos && sp.pedidos[0]);
-                    var end = [enderecoCli(sp.documento), [sp.bairro, sp.cidade].filter(Boolean).join(' · ')].filter(Boolean).join(' — ');
+                    var end = [sp.endereco || enderecoCli(sp.documento), [sp.bairro, sp.cidade].filter(Boolean).join(' · ')].filter(Boolean).join(' — ');
                     var semPos = !sp.pos;
                     return '<tr><td>' + (i + 1) + '</td><td>' + esc(sp.eta ? '~' + sp.eta : '—') + '</td><td><strong>' + esc(nome) + '</strong>' + (sp.prioridade ? ' (prioridade)' : '') +
                         '<br>' + esc(end || 'endereço não cadastrado') + (semPos ? ' <em>(sem posição no mapa)</em>' : '') + '<br>#' + (sp.pedidos || []).map(function (x) { return esc(x.p.cd_pedido); }).join(', #') + '</td>' +
@@ -1514,7 +1519,7 @@
                     (x.motivoFica !== 'dia_fechado' && x.motivoFica !== 'sem_saida_s10' && x.motivoFica !== 'sem_saida_veiculo' && x.proxima !== proxVeic(x.veiculo) ? ' · sai ' + (x.proxima ? esc(nomeDia(x.proxima) + ' ' + dataBr(x.proxima)) : 'sem data') : '') +
                     (prazoRuim ? ' ' + prazoRuim : '') + (plDia ? ' ' + plDia : '') +
                     (x.estoura ? ' · <strong class="rota-txt-ruim">passa do prazo</strong>' : '') + '</div>' +
-                    (st.v2 ? htmlRegrasCliente(x.p.documento, nome, true, true) : '') + '</td><td data-rotulo="Caixas">' + txtCaixas(x.v) + '</td>' +
+                    enderecoEntregaHtml(x.p, x.c) + (st.v2 ? htmlRegrasCliente(x.p.documento, nome, true, true) : '') + '</td><td data-rotulo="Caixas">' + txtCaixas(x.v) + '</td>' +
                     '<td data-rotulo="Veículo">' + (st.v2 ? seletorPedidoV2(x, nome, false) : seloMotivo(x) + menuVeiculo(x.p.documento, nome)) + '</td></tr>';
             }).join('') + '</tbody></table></div></section>';
     }

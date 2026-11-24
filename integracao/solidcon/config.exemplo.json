@@ -10,5 +10,6 @@
   "syncEmail": "PREENCHER_EMAIL_DA_CONTA_DE_SYNC",
   "syncSenha": "PREENCHER_SENHA_FORA_DO_REPOSITORIO",
   "modo": "teste",
+  "pessoas_pedido": false,
   "pastaSaida": "C:\\TempRio\\solidcon\\saida"
 }

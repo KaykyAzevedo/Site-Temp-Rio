@@ -1,5 +1,6 @@
 {
   "modo": "teste",
+  "pessoas_pedido": false,
   "pastaSaida": "C:\\TempRio\\solidcon\\saida",
   "configSupabase": "C:\\TempRio\\solidcon\\config.json",
   "aceitar_permissoes_extras": false,

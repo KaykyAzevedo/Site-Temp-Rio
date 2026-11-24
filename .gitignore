@@ -3,3 +3,4 @@
 PROJECT_STATE.md
 .merge-qa/
 supabase/.temp/
+*.dpapi
