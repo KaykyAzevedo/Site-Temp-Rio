@@ -1,6 +1,8 @@
 #requires -Version 5.1
-[CmdletBinding()]param([string]$Arquivo=(Join-Path $PSScriptRoot 'pessoas-chave.dpapi'))
+[CmdletBinding()]param([string]$Arquivo)
 $ErrorActionPreference='Stop'
+# PS5.1 ainda nao preenche PSScriptRoot ao avaliar defaults do param.
+if(-not $PSBoundParameters.ContainsKey('Arquivo')){$Arquivo=Join-Path $PSScriptRoot 'pessoas-chave.dpapi'}
 . (Join-Path $PSScriptRoot 'pessoas-pedido.ps1')
 Add-Type -AssemblyName System.Security
 $identidade=[Security.Principal.WindowsIdentity]::GetCurrent()
