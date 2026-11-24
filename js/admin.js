@@ -2830,14 +2830,15 @@
     }
 
     /* ===================================================================
-     * Compras por cliente (ERP) — SOMENTE LEITURA — tabela solidcon_vendas_clientes (migração 026)
+     * Compras por cliente (ERP) — SOMENTE LEITURA — PDV026 + pedidos faturados sem cupom (fallback NF1A).
      * Uma consulta só (dia, documento, tipo, valor), sob demanda e em cache; tudo o mais é calculado
      * em memória e alimenta Clientes, Regiões (mapa por valor) e Dashboard de vendas.
      * Sem a tabela: aviso "ainda não instalado". Compras sem documento (consumidor) não entram.
      * =================================================================== */
-    var CMP_LIMITE = 20000, CMP_MIN_COMPRAS = 3, CMP_FATOR = 1.5, CMP_MIN_DIAS = 30, CMP_PERDIDO = 90, CMP_MESES_VALOR = 6;
+    var CMP_LIMITE = 20000, CMP_PED_LIMITE = 5000, CMP_MIN_COMPRAS = 3, CMP_FATOR = 1.5, CMP_MIN_DIAS = 30, CMP_PERDIDO = 90, CMP_MESES_VALOR = 6;
+    var CMP_AVISO_NF = 'PDV = cupons. NF provisória = pedidos faturados sem cupom correspondente. Pedidos disponíveis desde 26/10/2026, em janela de 30 dias; o histórico anterior de NF ainda não está incluído, inclusive no total de 6 meses.';
     var cmp = { carregado: false, carregando: false, ausente: false, erro: null, truncado: false, por: null, semDoc: 0,
-                hoje: '', corte: '', mostrarSumindo: 30 };
+                hoje: '', corte: '', mostrarSumindo: 30, seq: 0, nfSemDados: 0, clientesPedidos: {} };
 
     function cmpIso(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
     function cmpUtc(iso) { var p = String(iso).split('-'); return Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2])); }
@@ -2846,10 +2847,10 @@
     function cmpData(iso) { var p = String(iso).split('-'); return p[2] + '/' + p[1] + '/' + p[0]; }
     // Hoje menos N meses, com o dia limitado ao último dia do mês de destino (31/08 - 6 meses = 28/02).
     function cmpMesesAtras(d, n) {
-        var a = d.getFullYear(), m = d.getMonth() - n;
+        var a = d.getUTCFullYear(), m = d.getUTCMonth() - n;
         while (m < 0) { m += 12; a--; }
-        var ult = new Date(a, m + 1, 0).getDate();
-        return a + '-' + String(m + 1).padStart(2, '0') + '-' + String(Math.min(d.getDate(), ult)).padStart(2, '0');
+        var ult = new Date(Date.UTC(a, m + 1, 0)).getUTCDate();
+        return a + '-' + String(m + 1).padStart(2, '0') + '-' + String(Math.min(d.getUTCDate(), ult)).padStart(2, '0');
     }
     function cmpMediana(v) {
         var s = v.slice().sort(function (a, b) { return a - b; }), m = Math.floor(s.length / 2);
@@ -2931,13 +2932,15 @@
     // Agrega por documento: n compras, total e ticket dos últimos 6 meses, frequência típica
     // (mediana do intervalo entre DIAS de compra distintos), valor médio mensal (total ÷ meses entre a 1ª e a última compra, mín. 1).
     function cmpCalcular(linhas) {
-        var hoje = cmpIso(new Date()), corte = cmpMesesAtras(new Date(), CMP_MESES_VALOR), por = {}, semDoc = 0;
+        var hoje = window.TempRioRotaCore.diaSP(new Date()), corte = cmpMesesAtras(new Date(hoje + 'T12:00:00Z'), CMP_MESES_VALOR), por = {}, semDoc = 0;
         linhas.forEach(function (l) {
             var k = docNorm(l.documento, l.tipo);
             if (!k) { semDoc++; return; }
             if (ehFornecedor(k)) return;   // 041: fornecedor não é cliente
             var dia = String(l.dia).slice(0, 10), v = vendNum(l.valor_centavos);
-            var o = por[k] || (por[k] = { doc: k, dias: [], n: 0, total: 0, n6: 0, total6: 0 });
+            var o = por[k] || (por[k] = { doc: k, dias: [], n: 0, total: 0, n6: 0, total6: 0, nome: '', origens: { PDV: 0, NF: 0 }, totalPDV: 0, totalNF: 0 });
+            var fonte = l.origem === 'NF' ? 'NF' : 'PDV'; o.origens[fonte]++; o['total' + fonte] += v;
+            if (!o.nome && l.cliente_nome) o.nome = l.cliente_nome;
             o.n++; o.total += v; o.dias.push(dia);
             if (dia >= corte) { o.n6++; o.total6 += v; }
         });
@@ -2955,27 +2958,40 @@
     }
 
     function carregarCompras() {
+        var seq = ++cmp.seq;
         cmp.carregando = true;
         cmpRedesenhar();
-        return vendPaginar(function () {
-            return sb.from('solidcon_vendas_clientes').select('dia,documento,tipo,valor_centavos')
+        return Promise.all([vendPaginar(function () {
+            return sb.from('solidcon_vendas_clientes').select('dia,documento,tipo,valor_centavos,cd_pdv,nr_cupom')
                 .order('dia', { ascending: true }).order('cd_pdv', { ascending: true }).order('nr_cupom', { ascending: true });
-        }, CMP_LIMITE).then(function (r) {
+        }, CMP_LIMITE), vendPaginar(function () {
+            return sb.from('solidcon_pedidos_erp').select('cd_pedido,documento,cliente_tipo,cliente_nome,etapa,valor_centavos,dt_pedido,dt_saida,dt_nota,dt_atendido')
+                .in('etapa', ['saiu', 'atendido']).eq('cliente_tipo', 'cnpj').order('cd_pedido', { ascending: true });
+        }, CMP_PED_LIMITE)]).then(function (rs) {
+            if (seq !== cmp.seq) return;
+            var r = rs[0], erro = r.error || rs[1].error;
             cmp.carregando = false; cmp.ausente = false; cmp.erro = null; cmp.truncado = false;
-            if (r.error) {
-                if (solidTabelaAusente(r.error)) cmp.ausente = true; else cmp.erro = String(r.error.message || r.error);
-                cmp.carregado = false; cmp.por = null;
+            if (erro) {
+                if (r.error && solidTabelaAusente(r.error)) cmp.ausente = true; else cmp.erro = String(erro.message || erro);
+                cmp.carregado = false; cmp.por = null; cmp.brutas = null;
             } else {
-                cmp.truncado = (r.data || []).length >= CMP_LIMITE;
-                cmp.brutas = cmp.truncado ? null : (r.data || []);   // 041: guardadas para recalcular ao marcar fornecedor
-                if (cmp.truncado) { cmp.por = null; } else { cmpCalcular(cmp.brutas); }
+                cmp.truncado = (r.data || []).length >= CMP_LIMITE || (rs[1].data || []).length >= CMP_PED_LIMITE;
+                cmp.brutas = null; cmp.nfSemDados = 0;
+                if (cmp.truncado) { cmp.por = null; } else {
+                    var unido = window.TempRioCompras.juntar(r.data || [], rs[1].data || []);
+                    cmp.brutas = unido.linhas; cmp.nfSemDados = unido.semValor + unido.semData; cmp.clientesPedidos = unido.clientes;
+                    cmpCalcular(cmp.brutas);   // 041: cache da uniao permite recalcular ao marcar fornecedor
+                }
                 cmp.carregado = true;
             }
             cmpRedesenhar();
         }).catch(function (e) {
-            cmp.carregando = false; cmp.erro = String(e && e.message || e); cmp.carregado = false; cmp.por = null; cmpRedesenhar();
+            if (seq !== cmp.seq) return;
+            cmp.carregando = false; cmp.erro = String(e && e.message || e); cmp.carregado = false; cmp.por = null; cmp.brutas = null; cmpRedesenhar();
         });
     }
+    function cmpOrigem(o) { return o && o.origens ? ['PDV', 'NF'].filter(function (f) { return o.origens[f]; }).join(' + ') : 'ERP'; }
+    function cmpFonteNota() { return CMP_AVISO_NF + (cmp.nfSemDados ? ' ' + NUM.format(cmp.nfSemDados) + ' pedido(s) faturado(s) sem valor ou data válidos ficaram fora da soma.' : ''); }
 
     function cmpRedesenhar() {
         dashAtualizarResumo();
@@ -3004,7 +3020,7 @@
         if (cmp.ausente) return cartaoVazio('Histórico de compras ainda não instalado', 'A tabela solidcon_vendas_clientes (migração 026) ainda não existe neste banco.');
         if (cmp.erro) return '<div class="adm-card p-6"><p class="text-sm mb-3" style="color:var(--adm-tinta-2)">Não foi possível carregar o histórico de compras: ' + esc(cmp.erro) + '</p>' +
             '<button type="button" class="adm-botao-fantasma" data-cmp-tentar>Tentar de novo</button></div>';
-        if (cmp.carregado && cmp.truncado) return cartaoVazio('Histórico grande demais para o painel', 'Há mais de ' + NUM.format(CMP_LIMITE) + ' compras no histórico; os indicadores ficam indisponíveis para não mostrar números incompletos.');
+        if (cmp.carregado && cmp.truncado) return cartaoVazio('Histórico grande demais para o painel', 'Uma das fontes atingiu o limite de leitura; os indicadores ficam indisponíveis para não mostrar números incompletos.');
         return '<div class="adm-card p-6 text-center text-sm" style="color:var(--adm-tinta-2)"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando histórico de compras…</div>';
     }
     function cmpLigarTentar(alvo) {
@@ -3021,14 +3037,15 @@
 
     function cmpNome(o, cad) {
         var c = cad && cad[o.doc];
-        return c && c.nome ? c.nome : '(sem cadastro) ' + o.doc;
+        return c && c.nome ? c.nome : o.nome || '(sem cadastro) ' + o.doc;
     }
 
     function desenharClientesCompras() {
         var alvo = $('#clientes-compras');
         if (!alvo) return;
         var cab = '<div class="flex items-center gap-2 mb-2">' + SELO_ERP + '<p class="font-bold">Histórico de compras por cliente</p></div>' +
-            '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Compras registradas no SOLIDCON, ligadas ao cadastro pelo CNPJ/CPF (somente leitura). Total e ticket desde ' + (cmp.corte ? esc(cmpData(cmp.corte)) : CMP_MESES_VALOR + ' meses atrás') + ' (' + CMP_MESES_VALOR + ' meses); frequência = mediana de dias entre compras.</p>';
+            '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">Compras registradas no SOLIDCON, ligadas ao cadastro pelo CNPJ/CPF (somente leitura). Total e ticket desde ' + (cmp.corte ? esc(cmpData(cmp.corte)) : CMP_MESES_VALOR + ' meses atrás') + ' (' + CMP_MESES_VALOR + ' meses); frequência = mediana de dias entre compras.</p>' +
+            '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">' + esc(cmpFonteNota()) + '</p>';
         var av = cmpAviso();
         if (av) { alvo.innerHTML = cab + av; cmpLigarTentar(alvo); return; }
         if (!Object.keys(cmp.por).length) { alvo.innerHTML = cab + cartaoVazio('Nenhuma compra com cliente identificado', 'Quando a rotina de compras rodar, o histórico aparece aqui.'); return; }
@@ -8018,13 +8035,16 @@
             if (!r.erp) r.erp = c;
         });
         if (cmpPronto() && !soForn) Object.keys(cmp.por).forEach(function (k) { porDoc(k).cmp = cmp.por[k]; });   // cmp já vem sem fornecedores
+        if (cmpPronto() && !soForn) Object.keys(cmp.clientesPedidos).forEach(function (k) {
+            if (!ehFornecedor(k)) porDoc(k).pedido = cmp.clientesPedidos[k];
+        });
 
         var A = recPronto() ? recAgregar() : null;
         linhas.forEach(function (r) {
             var s = r.site, e = r.erp, nomeSite = s && s.nome !== '(sem nome)' ? s.nome : '';
-            r.nome = nomeSite || (e && e.nome) || (s && s.nome) || ('(sem cadastro) ' + ucliDocFmt(r.doc));
+            r.nome = nomeSite || (e && e.nome) || (s && s.nome) || (r.cmp && r.cmp.nome) || (r.pedido && r.pedido.nome) || ('(sem cadastro) ' + ucliDocFmt(r.doc));
             r.tipo = r.doc ? (r.doc.length === 14 ? 'PJ' : 'PF') : (s ? s.tipo : String((e && e.tipo) || '').toUpperCase() === 'CNPJ' ? 'PJ' : 'PF');
-            r.temErp = !!(e || r.cmp);
+            r.temErp = !!(e || r.cmp || r.pedido);
             r.origem = s && r.temErp ? 'ambos' : s ? 'site' : 'erp';
             r.telefones = [];
             [s && s.telefone, e && e.telefone, e && e.celular].forEach(function (t) { if (t && r.telefones.indexOf(t) < 0) r.telefones.push(t); });
@@ -8035,7 +8055,7 @@
             var us = s ? ult[s.clienteId] : '', ue = r.cmp ? r.cmp.ultima : '';
             r.ultima = us > ue ? us : ue || us || '';
             r.total = r.cmp ? r.cmp.total : s ? s.gasto : null;
-            r.totalDe = r.cmp ? 'ERP' : 'site';
+            r.totalDe = r.cmp ? cmpOrigem(r.cmp) : 'site';
             r.sumindo = !!(r.doc && sumi[r.doc]);
             r.n = r.cmp ? r.cmp.n : null; r.total6 = r.cmp ? r.cmp.total6 : null; r.ticket6 = r.cmp ? r.cmp.ticket6 : null; r.freq = r.cmp ? r.cmp.freq : null;
             var g = A && r.doc && r.doc.length === 14 ? A.porDoc[r.doc] : null;
@@ -8299,7 +8319,7 @@
             '<td data-rotulo="Contato">' + (r.telefones.length ? esc(r.telefones.join(' / ')) : '—') + (r.email ? '<br><span class="text-xs" style="color:var(--adm-tinta-3)">' + esc(r.email) + '</span>' : '') + '</td>' +
             (ucliSite() ? '<td class="num" data-rotulo="Pedidos (site)">' + (s ? NUM.format(r.pedidos) : '—') + '</td>' : '') +
             '<td class="num" data-rotulo="Última compra">' + (r.ultima ? esc(cmpData(r.ultima)) : '—') + '</td>' +
-            '<td class="num" data-rotulo="Total">' + (r.total != null ? esc(brl(Math.round(r.total))) + '<br><span class="text-xs" style="color:var(--adm-tinta-3)">' + r.totalDe + '</span>' : '—') + '</td>' +
+            '<td class="num" data-rotulo="Total">' + (r.total != null ? esc(brl(Math.round(r.total))) + '<br><span class="text-xs" style="color:var(--adm-tinta-3)"' + (r.cmp ? ' title="' + esc(cmpFonteNota()) + '"' : '') + '>' + r.totalDe + '</span>' : '—') + '</td>' +
             (adm ? '<td class="num" data-rotulo="Vencido"' + (r.vencido > 0 ? ' style="color:var(--adm-ruim)"' : '') + '>' + (r.vencido != null ? esc(brl(r.vencido)) : '—') + '</td>' : '') +
             '<td><div class="flex items-center gap-1 flex-wrap">' +
                 '<button type="button" class="adm-botao-fantasma" data-ver-cliente="' + esc(r.key) + '" aria-expanded="false">' +
@@ -8373,7 +8393,7 @@
             var corpo;
             if (!cmpPronto()) corpo = '<p class="text-sm" style="color:var(--adm-tinta-3)">' + (cmp.carregando || (!cmp.carregado && !cmp.erro && !cmp.ausente) ? 'Carregando histórico de compras…' :
                 'Histórico de compras indisponível agora (veja o bloco “Histórico de compras por cliente”).') + '</p>';
-            else if (!o) corpo = '<p class="text-sm" style="color:var(--adm-tinta-3)">Nenhuma compra identificada no ERP para este documento.</p>';
+            else if (!o) corpo = '<p class="text-sm" style="color:var(--adm-tinta-3)">' + (r.pedido ? 'Pedido faturado com valor ou data indisponíveis; não entra na soma.' : 'Nenhuma compra identificada no ERP para este documento.') + '</p>';
             else corpo = '<div class="grid sm:grid-cols-3 gap-4">' +
                 ficha('Compras', NUM.format(o.n), 'desde ' + cmpData(o.primeira)) +
                 ficha('Última compra', cmpData(o.ultima), 'há ' + NUM.format(o.desde) + ' dias') +
@@ -8381,7 +8401,10 @@
                 ficha('Total ' + CMP_MESES_VALOR + ' meses', o.n6 ? brl(o.total6) : '—', o.n6 ? NUM.format(o.n6) + (o.n6 === 1 ? ' compra' : ' compras') : 'sem compras') +
                 ficha('Ticket médio ' + CMP_MESES_VALOR + ' meses', o.ticket6 != null ? brl(Math.round(o.ticket6)) : '—', 'por compra') +
                 ficha('Frequência típica', o.freq != null ? 'a cada ' + NUM.format(Math.round(o.freq)) + ' dias' : '—', r.sumindo ? 'parou de comprar no ritmo' : 'mediana entre compras') +
+                ficha('Origem PDV', brl(o.totalPDV), NUM.format(o.origens.PDV) + ' cupom(ns)') +
+                ficha('Origem NF', brl(o.totalNF), NUM.format(o.origens.NF) + ' pedido(s) faturado(s) sem cupom') +
                 '</div>';
+            corpo += '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">' + esc(cmpFonteNota()) + '</p>';
             h += ucliBloco('Histórico de compras (ERP)', SELO_ERP, corpo);
         }
 
