@@ -214,7 +214,7 @@ test('WhatsApp: rota_strada genérica (frota da 047 ou padrão), rota_s10/rota_c
 test('WhatsApp coletarRota: lê rota_veiculos (047); sem a tabela = padrões; marcação em veículo fora da frota é ignorada', async () => {
     const c = cenario();
     const tab = (comFrota) => {
-        const t = { solidcon_pedidos_erp: c.pedidos, solidcon_pedidos_erp_sync: [], rota_config: [{ id: 1 }],
+        const t = { rota_059_saidas: [], solidcon_pedidos_erp: c.pedidos, solidcon_pedidos_erp_sync: [], rota_config: [{ id: 1 }],
                     rota_cliente_veiculo: Object.keys(c.padroes).map((d) => ({ documento: d, veiculo: c.padroes[d] })).concat([{ documento: docN(99), veiculo: 'fusca' }]),
                     rota_pedido_veiculo: [], rota_cliente_regras: [], rota_pedido_ignorado: [] };
         if (comFrota) t.rota_veiculos = LINHAS();

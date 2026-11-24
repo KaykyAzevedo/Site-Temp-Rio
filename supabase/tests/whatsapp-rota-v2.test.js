@@ -68,7 +68,7 @@ function cenario() {
                      { documento: docN(8), veiculo: 'caminhao' }, { documento: docN(9), veiculo: 's10' }];
     const regras = [{ documento: docN(2), janela_inicio: '08:00:00', janela_fim: '11:00:00', dias_sem_receber: [], prioridade: false, observacao: 'Portao lateral' },
                     { documento: docN(9), janela_inicio: null, janela_fim: null, dias_sem_receber: [2], prioridade: false, observacao: null }];
-    const tabelas = { solidcon_pedidos_erp: pedidos, solidcon_pedidos_erp_sync: [{ status: 'ok', coletado_em: '2026-11-24T08:50:00Z' }],
+    const tabelas = { rota_059_saidas: [], solidcon_pedidos_erp: pedidos, solidcon_pedidos_erp_sync: [{ status: 'ok', coletado_em: '2026-11-24T08:50:00Z' }],
                       rota_config: [{ id: 1, bairros_caminhao: ['Bairro do Caminhão'], hora_saida: '07:00:00', velocidade_kmh: 25, minutos_parada: 10 }],
                       rota_cliente_veiculo: padroes, rota_pedido_veiculo: [], rota_cliente_regras: regras };
     return { c, pedidos, tabelas };

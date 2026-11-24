@@ -782,6 +782,9 @@
         if (window.TempRioArquivoCanhotos) window.TempRioArquivoCanhotos.sair();
         if (window.TempRioWhats) window.TempRioWhats.sair(); // WhatsApp: esquece telefones/textos da conta
         if (window.TempRioUsuarios) window.TempRioUsuarios.sair(); // Usuários: esquece a lista (e qualquer senha na tela)
+        pe.seq++; pe.carregado = false; pe.carregando = false;
+        pe.itens = []; pe.canhotos = {}; pe.saidas = {}; pe.cfg = null;
+        pe.historico = { aberto: false, busca: '', pagina: 0 };
         saudeParar();
         if (canalRealtime) { sb.removeChannel(canalRealtime); canalRealtime = null; }
         sb.auth.signOut().then(function () {
@@ -6717,11 +6720,12 @@
         { id: 'separando', titulo: 'Separando', etapas: ['separando'], data: 'dt_sep_inicio', icone: 'fa-boxes-packing', cor: 'separando', dica: 'O estoque está pegando os produtos agora.', vazio: 'Ninguém separando no momento.' },
         { id: 'separado', titulo: 'Separado', etapas: ['separado'], data: 'dt_sep_fim', icone: 'fa-box', cor: 'separado', dica: 'Produtos separados; falta conferir.', vazio: 'Nada separado esperando conferência.' },
         { id: 'conferido', titulo: 'Conferido', etapas: ['conferido'], data: 'dt_conferencia', icone: 'fa-clipboard-check', cor: 'conferido', dica: 'Conferido e pronto para sair.', vazio: 'Nada conferido esperando saída.' },
-        { id: 'enviado', titulo: 'Enviado', etapas: ['saiu', 'atendido'], data: 'dt_saida', icone: 'fa-truck-fast', cor: 'enviado', dica: 'Faturado no ERP; entrega ainda sem canhoto.', vazio: 'Nenhum pedido faturado sem canhoto.' },
-        { id: 'recebido', titulo: 'Recebido', etapas: [], data: null, icone: 'fa-circle-check', cor: 'recebido', dica: 'Canhoto ativo ou faturamento legado anterior ao controle.', vazio: 'Nenhum recebido por aqui.' }
+        { id: 'pronto_despacho', titulo: 'Pronto p/ despacho', etapas: [], data: null, icone: 'fa-dolly', cor: 'pronto-despacho', dica: 'Faturado; aguardando o horário de saída da rota.', vazio: 'Nada aguardando despacho.' },
+        { id: 'enviado', titulo: 'Enviado', etapas: ['saiu', 'atendido'], data: 'dt_saida', icone: 'fa-truck-fast', cor: 'enviado', dica: 'Saída da rota alcançada; entrega ainda sem canhoto.', vazio: 'Nenhum pedido a caminho sem canhoto.' },
+        { id: 'recebido', titulo: 'Recebido', etapas: [], data: null, icone: 'fa-circle-check', cor: 'recebido', dica: 'Recebidos hoje e ontem (São Paulo); anteriores no histórico.', vazio: 'Nenhum recebido por aqui.' }
     ];
     // Coluna visual de cada etapa do pedido (Aberto reúne aberto + na_carga; desconhecida cai em Aberto = 0).
-    var PE_VISUAL = { aberto: 0, na_carga: 0, separando: 1, separado: 2, conferido: 3, saiu: 4, atendido: 4 };
+    var PE_VISUAL = { aberto: 0, na_carga: 0, separando: 1, separado: 2, conferido: 3, saiu: 5, atendido: 5, pronto_despacho: 4, enviado: 5, recebido: 6 };
     function peIndiceColuna(etapa) {
         return Object.prototype.hasOwnProperty.call(PE_VISUAL, etapa) ? PE_VISUAL[etapa] : 0;
     }
@@ -6779,9 +6783,13 @@
     var PE_MODO_CHAVE = 'adm.peModo';
     var pe = { carregado: false, carregando: false, erro: null, ausente: false, itens: [], coletado: null, seq: 0,
                // 052 (opcional): canhotos ativos { cd_pedido: [{caminho, enviado_em, origem}] }, tabela lida?, pode anexar?
-               canhotos: {}, can052: false, podeMarcar: false, cfg: null };
+               canhotos: {}, can052: false, podeMarcar: false, cfg: null, saidas: {}, historico: { aberto: false, busca: '', pagina: 0 } };
     // Canhoto ativo (052) comprova recebimento; saiu/atendido sem canhoto são só faturamento.
-    function peIndice(x) { return window.TempRioRotaCore.recebidoEntrega(x, pe.canhotos, pe.cfg) ? 5 : peIndiceColuna(x && x.etapa); }
+    var peUltimaEntrega = '';
+    function peContexto() { return { canhotos: pe.canhotos, cfg: pe.cfg, saidas: pe.saidas, agora: new Date() }; }
+    function peIndice(x) { return peIndiceColuna(window.TempRioRotaCore.etapaEntrega(x, peContexto())); }
+    function peRecebidoRecente(x) { return window.TempRioRotaCore.recebidoRecente(x, peContexto()); }
+    function peAssinaturaEntrega() { return pe.itens.map(function (x) { return peIndice(x) + ':' + (peRecebidoRecente(x) ? 1 : 0); }).join(','); }
     function peTemCanhoto(x) { return !!x && window.TempRioRotaCore.temCanhoto(pe.canhotos, x.cd_pedido); }
     var peOrigem = null, peSegmento = 'aberto';   // peOrigem: null = automático (ERP quando não há pedidos do site)
     var peModo = (function () {
@@ -6808,7 +6816,11 @@
             sb.rpc('pode_marcar_rota'),
             sb.from('rota_config').select('*').eq('id', 1).limit(1)
         ]).then(function (rs) {
-            if (seq !== pe.seq) return;
+            if (seq !== pe.seq) return null;
+            if (rs[0].error) return rs;
+            return window.TempRioRotaCore.coletarSaidas(sb, rs[0].data || []).then(function (saidas) { rs.saidas = saidas; return rs; });
+        }).then(function (rs) {
+            if (!rs || seq !== pe.seq) return;
             pe.carregando = false;
             pe.canhotos = {}; pe.can052 = !!(rs[2] && !rs[2].error);
             if (pe.can052) (rs[2].data || []).forEach(function (c) { (pe.canhotos[c.cd_pedido] || (pe.canhotos[c.cd_pedido] = [])).push(c); });
@@ -6823,11 +6835,12 @@
             } else {
                 pe.ausente = false; pe.erro = null; pe.carregado = true; pe.itens = rs[0].data || [];
                 pe.cfg = window.TempRioRotaCore.cfgDe(rs[4].data && rs[4].data[0]);
+                pe.saidas = rs.saidas || {};
                 var sy = rs[1] && !rs[1].error && rs[1].data && rs[1].data[0];
                 pe.coletado = sy && sy.coletado_em ? sy.coletado_em : null;
             }
             peRedesenhar();
-        }, function (e) {
+        }).catch(function (e) {
             if (seq !== pe.seq) return;
             pe.carregando = false; pe.carregado = false; pe.erro = String(e && e.message || e); pe.itens = []; peRedesenhar();
         });
@@ -6840,8 +6853,10 @@
         peAtualizarTopo();
         var q = $('#pe-quadro');
         if (!q) { desenharPedidosErpAba(); return; }
+        var segmentos = q.querySelector('.adm-kanban-segmentos'), rolagem = segmentos ? segmentos.scrollLeft : 0;
         q.innerHTML = peHtml();
         ligarOrigemPedidos(q);
+        segmentos = q.querySelector('.adm-kanban-segmentos'); if (segmentos) segmentos.scrollLeft = rolagem;
     }
 
     function peHa(iso) {
@@ -6851,6 +6866,7 @@
         return m < 60 ? 'há ' + m + ' min' : m < 2880 ? 'há ' + Math.round(m / 60) + ' h' : 'há ' + Math.floor(m / 1440) + ' d';
     }
     function peHora(iso) {
+        if (!iso) return '';
         var d = new Date(iso);
         if (isNaN(d.getTime())) return '';
         var tz = 'America/Sao_Paulo';
@@ -6887,11 +6903,17 @@
         return '';
     }
 
+    function peDataEntrega(x) {
+        var R = window.TempRioRotaCore, ctx = peContexto(), etapa = R.etapaEntrega(x, ctx);
+        var em = etapa === 'recebido' ? R.recebidoEm(x, ctx) : R.saidaEntrega(x, ctx);
+        return em ? (etapa === 'recebido' ? 'Recebido em ' : etapa === 'pronto_despacho' ? 'Saída prevista ' : 'Saída em ') + peHora(em) : '';
+    }
+
     function peCartaoCompacto(x) {
         var nome = /^(cnpj|cpf)$/.test(String(x.cliente_tipo)) && x.cliente_nome ? x.cliente_nome : 'Consumidor final';
         var dEtapa = window.TempRioRotaCore.etapaEnviada(x) ? window.TempRioRotaCore.faturadoEm(x) : x[PE_DATA_ETAPA[x.etapa]];
         var col = PE_COLUNAS[peIndice(x)] || PE_COLUNAS[0];
-        var ref = x.etapa === 'aberto' ? x.dt_pedido : (dEtapa || x.dt_pedido);
+        var ref = col.id === 'enviado' ? window.TempRioRotaCore.saidaEntrega(x, peContexto()) : (dEtapa || x.dt_pedido);
         var loc = peLocalInfo(x);
         var cargaTxt = peCargaTexto(x);
         var icoCarga = cargaTxt ? '<span class="adm-pe-ico-carga" role="img" title="' + esc(cargaTxt) + '" aria-label="' + esc(cargaTxt) + '">' + icoFa('fa-truck-ramp-box') + '</span>' : '';
@@ -6907,6 +6929,7 @@
             '<p class="adm-pe-comp-bairro' + (loc.semBairro ? ' is-sem-bairro' : '') + '" title="' + esc(loc.texto) + '">' + esc(loc.texto) + '</p>' +
             (loc.entrega ? '<p class="adm-pe-comp-bairro" title="Endereço cadastrado">' + esc(loc.entrega) + '</p>' : '') +
             (window.TempRioRotaCore.etapaEnviada(x) && dEtapa ? '<p class="adm-pe-comp-bairro">faturado em ' + esc(peHora(dEtapa)) + '</p>' : '') +
+            (peDataEntrega(x) ? '<p class="adm-pe-comp-bairro">' + esc(peDataEntrega(x)) + '</p>' : '') +
             (window.TempRioRotaCore.legadoRecebido(x, pe.cfg) ? '<p class="adm-pe-comp-bairro">Legado anterior ao controle de canhoto</p>' : '') +
         '</div>';
     }
@@ -6915,7 +6938,7 @@
         var nome = /^(cnpj|cpf)$/.test(String(x.cliente_tipo)) && x.cliente_nome ? x.cliente_nome : 'Consumidor final';
         var dEtapa = window.TempRioRotaCore.etapaEnviada(x) ? window.TempRioRotaCore.faturadoEm(x) : x[PE_DATA_ETAPA[x.etapa]];
         var col = PE_COLUNAS[peIndice(x)] || PE_COLUNAS[0];
-        var ref = x.etapa === 'aberto' ? x.dt_pedido : (dEtapa || x.dt_pedido);
+        var ref = col.id === 'enviado' ? window.TempRioRotaCore.saidaEntrega(x, peContexto()) : (dEtapa || x.dt_pedido);
         var loc = peLocalInfo(x);
         var cargaTxt = peCargaTexto(x);
         var seloCarga = cargaTxt ? ' <span class="adm-pe-selo-carga">' + icoFa('fa-truck-ramp-box') + esc(cargaTxt) + '</span>' : '';
@@ -6930,6 +6953,7 @@
             (peTemValor(x) ? '<p class="adm-kc-valor">' + icoFa('fa-sack-dollar') + '<span>' + esc(brl(Number(x.valor_centavos))) + '</span></p>' : '') +
             linha('fa-clock', 'Feito ' + esc(peHora(x.dt_pedido)) + ' · <strong>' + esc(peHa(x.dt_pedido)) + '</strong>') +
             (dEtapa && x.etapa !== 'aberto' ? linha('fa-calendar-check', esc(rotEtapa) + ' ' + esc(peHora(dEtapa))) : '') +
+            (peDataEntrega(x) ? linha('fa-truck-fast', esc(peDataEntrega(x))) : '') +
             (window.TempRioRotaCore.legadoRecebido(x, pe.cfg) ? linha('fa-clock-rotate-left', 'Legado anterior ao controle de canhoto') : '') +
             (col.id === 'recebido' ? '' : selosAtraso(seloAtraso(ref), '')) +
         '</div>';
@@ -6941,9 +6965,9 @@
 
     function peItensDa(col) {
         var idxAlvo = PE_COLUNAS.indexOf(col);
-        var l = pe.itens.filter(function (x) { return peIndice(x) === idxAlvo; });
+        var l = pe.itens.filter(function (x) { return peIndice(x) === idxAlvo && (col.id !== 'recebido' || peRecebidoRecente(x)); });
         var desc = col.id === 'recebido';  // recebidos: mais recentes primeiro; fila e enviados: mais antigos primeiro
-        l.sort(function (a, b) { return desc ? (a.dt_pedido < b.dt_pedido ? 1 : -1) : (a.dt_pedido < b.dt_pedido ? -1 : 1); });
+        l.sort(function (a, b) { return desc ? (Date.parse(window.TempRioRotaCore.recebidoEm(b, peContexto())) - Date.parse(window.TempRioRotaCore.recebidoEm(a, peContexto()))) : (a.dt_pedido < b.dt_pedido ? -1 : 1); });
         return l;
     }
 
@@ -7017,6 +7041,37 @@
         '</div>';
     }
 
+    function peHistoricoLista() {
+        var R = window.TempRioRotaCore, ctx = peContexto(), busca = geoNorm(pe.historico.busca || '');
+        return pe.itens.filter(function (x) {
+            return R.recebidoEntrega(x, pe.canhotos, pe.cfg) && !peRecebidoRecente(x) &&
+                (!busca || geoNorm(String(x.cd_pedido) + ' ' + (x.cliente_nome || '')).indexOf(busca) >= 0);
+        }).sort(function (a, b) {
+            return (Date.parse(R.recebidoEm(b, ctx)) || 0) - (Date.parse(R.recebidoEm(a, ctx)) || 0) || Number(b.cd_pedido) - Number(a.cd_pedido);
+        });
+    }
+    function peHistoricoHtml() {
+        var lista = peHistoricoLista(), paginas = Math.max(1, Math.ceil(lista.length / 25));
+        pe.historico.pagina = Math.max(0, Math.min(paginas - 1, pe.historico.pagina));
+        var linhas = lista.slice(pe.historico.pagina * 25, (pe.historico.pagina + 1) * 25);
+        return '<details id="pe-historico" class="adm-pe-historico"' + (pe.historico.aberto ? ' open' : '') + '><summary>Histórico de pedidos</summary>' +
+            '<p>Recebimentos anteriores a ontem ou sem data informada. Pedidos fora da janela do ERP continuam na <a href="#pe-arquivo-canhotos">busca de canhotos antigos</a>.</p>' +
+            '<label for="pe-historico-busca">Buscar por número ou cliente</label> ' +
+            '<input id="pe-historico-busca" type="search" value="' + esc(pe.historico.busca) + '" autocomplete="off">' +
+            '<div class="adm-pe-historico-tabela"><table><thead><tr><th scope="col">Nº</th><th scope="col">Cliente</th><th scope="col">Bairro / cidade</th><th scope="col">Valor</th><th scope="col">Faturado em</th><th scope="col">Recebido em</th><th scope="col">Canhoto</th></tr></thead><tbody>' +
+            linhas.map(function (x) {
+                var R = window.TempRioRotaCore, loc = peLocalInfo(x);
+                return '<tr><td><button type="button" data-pe-pedido="' + esc(String(x.cd_pedido)) + '">' + esc(String(x.cd_pedido)) + '</button></td>' +
+                    '<td>' + esc(x.cliente_nome || 'Consumidor final') + '</td><td>' + esc(loc.texto) + '</td><td>' +
+                    (peTemValor(x) ? esc(brl(Number(x.valor_centavos))) : 'Sem valor') + '</td><td>' + esc(peHora(R.faturadoEm(x)) || 'Não informado') + '</td><td>' +
+                    esc(peHora(R.recebidoEm(x, peContexto())) || 'Não informado') + '</td><td>' +
+                    (peTemCanhoto(x) ? '<button type="button" data-pe-pedido="' + esc(String(x.cd_pedido)) + '" aria-label="Ver canhoto do pedido ' + esc(String(x.cd_pedido)) + '">' + icoFa('fa-file-image') + '</button>' : 'Legado') + '</td></tr>';
+            }).join('') + (linhas.length ? '' : '<tr><td colspan="7">Nenhum pedido no histórico com esta busca.</td></tr>') +
+            '</tbody></table></div><div class="adm-pe-historico-pag"><button type="button" data-pe-hist-pag="-1"' + (pe.historico.pagina === 0 ? ' disabled' : '') + '>Anterior</button>' +
+            '<span role="status">' + lista.length + ' pedidos · página ' + (pe.historico.pagina + 1) + ' de ' + paginas + '</span>' +
+            '<button type="button" data-pe-hist-pag="1"' + (pe.historico.pagina + 1 >= paginas ? ' disabled' : '') + '>Próxima</button></div></details>';
+    }
+
     function peHtml() {
         if (pe.carregando && !pe.carregado) return cartaoVazio('Carregando pedidos do ERP…', '', 'erp');
         if (pe.ausente) return cartaoVazio('Pedidos do ERP ainda não instalados', 'A tabela solidcon_pedidos_erp (migração 035) não existe neste banco.', 'erp');
@@ -7027,6 +7082,7 @@
             var desc = pe.itens.filter(function (x) { return !Object.prototype.hasOwnProperty.call(PE_VISUAL, x && x.etapa); }).length;
             if (desc > 0) console.warn('[painel] ' + desc + ' pedido(s) do ERP com etapa desconhecida exibido(s) em Aberto.');
         }
+        peUltimaEntrega = peAssinaturaEntrega();
         var cols = PE_COLUNAS.map(function (c) { return { c: c, l: peItensDa(c) }; });
         return peBarraTopo() +
             '<div class="adm-kanban-segmentos" role="tablist" aria-label="Etapas dos pedidos do ERP">' +
@@ -7041,7 +7097,7 @@
                         '<div class="adm-kanban-corpo-erp">' + (x.l.length ? x.l.map(peCartao).join('') : colunaVazia(x.c.icone, x.c.vazio)) + '</div>' +
                     '</div>';
                 }).join('') +
-            '</div>';
+            '</div>' + peHistoricoHtml();
     }
 
     function peFecharLegenda(devolverFoco) {
@@ -7090,7 +7146,7 @@
             var img = peCan.url[c.caminho] ? '<img class="adm-pe-canhoto-img" src="' + esc(peCan.url[c.caminho]) + '" alt="' + esc('Foto do canhoto do pedido ' + cd) + '">' : '';
             var rem = papel === 'admin'
                 ? (peCan.confirmaRemover === c.caminho
-                    ? '<span class="adm-pe-canhoto-conf" role="group" aria-label="Confirmar remoção">Remover esta foto? O pedido volta para "Enviado" se não houver outra. ' +
+                    ? '<span class="adm-pe-canhoto-conf" role="group" aria-label="Confirmar remoção">Remover esta foto? Sem outra foto, vale novamente a etapa pela saída prevista ou pelo corte do legado. ' +
                       '<button type="button" class="adm-botao adm-pe-canhoto-perigo" data-canhoto-remover-sim="' + esc(c.caminho) + '"' + busy + '>Remover</button> ' +
                       '<button type="button" class="adm-botao-fantasma" data-canhoto-remover-nao' + busy + '>Cancelar</button></span>'
                     : '<button type="button" class="adm-botao-fantasma" data-canhoto-remover="' + esc(c.caminho) + '"' + busy + '>' + icoFa('fa-trash-can') + 'Remover</button>')
@@ -7165,6 +7221,14 @@
     function peIniciarAba() {
         if (peIniciarAba.feito) return;
         peIniciarAba.feito = true;
+        var ultimoMinuto = null;
+        setInterval(function () {
+            if (!pe.carregado || pe.carregando || !secaoVisivel('pedidoserp')) return;
+            var minuto = Math.floor(Date.now() / 60000);
+            if (minuto === ultimoMinuto) return;
+            ultimoMinuto = minuto;
+            if (peAssinaturaEntrega() !== peUltimaEntrega) peRedesenharQuadro();
+        }, 1000);
         var sec = document.getElementById('painel-pedidoserp');
         if (sec) {
             new MutationObserver(function () {
@@ -7257,6 +7321,23 @@
                 btnLeg.setAttribute('aria-expanded', String(abrir));
             });
         }
+        var hist = raiz.querySelector('#pe-historico');
+        if (hist) hist.addEventListener('toggle', function () { pe.historico.aberto = hist.open; });
+        var buscaHist = raiz.querySelector('#pe-historico-busca');
+        if (buscaHist) buscaHist.addEventListener('input', function () {
+            var pos = buscaHist.selectionStart;
+            pe.historico.busca = buscaHist.value; pe.historico.pagina = 0;
+            peRedesenharQuadro();
+            var novo = document.getElementById('pe-historico-busca');
+            if (novo) { novo.focus(); novo.setSelectionRange(pos, pos); }
+        });
+        raiz.querySelectorAll('[data-pe-hist-pag]').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                pe.historico.pagina += Number(btn.getAttribute('data-pe-hist-pag'));
+                peRedesenharQuadro();
+                var alvo = document.getElementById('pe-historico-busca'); if (alvo) alvo.focus();
+            });
+        });
         raiz.querySelectorAll('[data-pe-pedido]').forEach(function (card) {
             function abrir() {
                 var id = card.getAttribute('data-pe-pedido');

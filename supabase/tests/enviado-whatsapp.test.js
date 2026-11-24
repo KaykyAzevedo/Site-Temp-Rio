@@ -3,7 +3,7 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const W=require('../functions/_shared/whatsapp-core.js');
 const agora=new Date('2026-11-24T15:00:00Z');
 function banco(){
- const T={solidcon_pedidos_erp:[1,2,3].map(n=>({cd_pedido:n,etapa:'atendido',dt_pedido:'2026-11-01T12:00:00-03:00',dt_saida:n===3?'2026-11-16T12:00:00-03:00':'2026-11-24T09:00:00-03:00',dt_atendido:'2026-11-24T09:01:00-03:00',cliente_tipo:'cnpj',documento:String(12000000000000+n),cliente_nome:'Cliente '+n,caixas_24:1,caixas_48:0,caixas_outras:0})),
+ const T={solidcon_pedidos_erp:[1,2,3].map(n=>({cd_pedido:n,etapa:'atendido',dt_pedido:'2026-11-01T12:00:00-03:00',dt_saida:n===3?'2026-11-15T12:00:00-03:00':'2026-11-24T09:00:00-03:00',dt_atendido:'2026-11-24T09:01:00-03:00',cliente_tipo:'cnpj',documento:String(12000000000000+n),cliente_nome:'Cliente '+n,caixas_24:1,caixas_48:0,caixas_outras:0})),
  rota_config:[{id:1,feriados_sem_saida:true}],rota_veiculos:[{id:'s10',nome:'S10',modo:'porta',ativo:true,dias_sem_saida:[0,6],capacidade_volume:null}],rota_cliente_veiculo:[],rota_pedido_veiculo:[1,2,3].map(n=>({cd_pedido:n,veiculo:'s10'})),rota_cliente_regras:[],rota_pedido_ignorado:[],pedido_canhoto:[{id:1,cd_pedido:1,substituido_em:null},{id:2,cd_pedido:2,substituido_em:'ontem'}]};
  const sb={from(t){let rows=(T[t]||[]).slice(),range=null;const q={select(){return q;},eq(k,v){rows=rows.filter(r=>r[k]===v);return q;},is(k,v){rows=rows.filter(r=>r[k]==v);return q;},in(k,v){rows=rows.filter(r=>v.includes(r[k]));return q;},gte(k,v){rows=rows.filter(r=>r[k]>=v);return q;},lt(k,v){rows=rows.filter(r=>r[k]<v);return q;},order(){return q;},limit(n){rows=rows.slice(0,n);return q;},range(a,b){range=[a,b];return q;},then(ok,bad){return Promise.resolve({data:range?rows.slice(range[0],range[1]+1):rows}).then(ok,bad);}};return q;},rpc(name){if(name==='rota_050_ler')return Promise.resolve({data:null});if(name==='solidcon_rota_posicoes')return Promise.resolve({data:[]});throw Error(name);}};
  return {T,sb};
@@ -13,7 +13,7 @@ test('WhatsApp usa canhoto ativo e idade de faturamento, igual ao painel',async(
 });
 test('alerta parado nao confunde criacao antiga com faturamento recente ou entrega assinada',async()=>{
  const {sb}=banco();const d=await W.coletarAlertas(sb,agora);assert.deepEqual(d.parados.map(p=>p.cd_pedido),[3]);
- assert.match(W.montarAlertas(d,agora,{}).texto,/8d faturado sem canhoto/);
+ assert.match(W.montarAlertas(d,agora,{}).texto,/8d da saída sem canhoto/);
 });
 test('Enviou do dia e faturamento, sem usar data de suposta entrega e sem mudar modelo Meta',async()=>{
  const {T,sb}=banco();T.solidcon_pedidos_erp[0].dt_saida='2026-11-23T23:59:00-03:00';T.solidcon_pedidos_erp[1].dt_saida=null;T.solidcon_pedidos_erp[1].dt_nota='2026-11-24T00:00:00-03:00';T.solidcon_pedidos_erp[2].dt_saida='2026-11-24T09:00:00-03:00';T.solidcon_pedidos_erp[2].dt_atendido='2026-11-25T12:00:00-03:00';
@@ -47,7 +47,7 @@ test('056 WhatsApp: legado sai da rota/alerta, corte editado propaga; ausencia c
 
 test('056 erro de configuracao impede alertas e resumo; Enviou continua faturamento inclusive legado',async()=>{
  const {T,sb}=banco();T.rota_config[0].canhoto_desde='2026-11-25T12:00:00-03:00';
- assert.equal((await W.gerar(sb,'pedidos_dia',agora,{})).resumo.enviou,2,'evento de faturamento independente do corte');
+ assert.equal((await W.gerar(sb,'pedidos_dia',agora,{})).resumo.enviou,0,'faturado apos07h aguarda saida de amanha, mesmo legado');
  const original=sb.from;sb.from=t=>t==='rota_config'?{select(){return this;},eq(){return this;},limit(){return Promise.resolve({error:{code:'57014',message:'timeout'}});}}:original(t);
  await assert.rejects(W.coletarAlertas(sb,agora),e=>e.code==='57014');
  await assert.rejects(W.coletarPedidosDia(sb,agora),e=>e.code==='57014');

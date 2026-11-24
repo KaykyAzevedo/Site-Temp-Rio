@@ -899,7 +899,7 @@ body.admin {
 /* Kanban inteiro numa tela (>= 901px): colunas fluidas, sem rolagem horizontal; abaixo disso valem os segmentos do celular (P4) */
 @media (min-width: 901px) {
     .adm-kanban { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0.6rem; overflow: visible; }
-    .adm-kanban.adm-kanban-pe { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    .adm-kanban.adm-kanban-pe { grid-template-columns: repeat(7, minmax(0, 1fr)); }
     .adm-kanban-cabecalho { padding: 0.65rem 0.7rem; gap: 0.4rem; }
     .adm-kanban-titulo { font-size: 0.7rem; letter-spacing: 0.02em; overflow-wrap: anywhere; }
     .adm-kanban-corpo { padding: 0.5rem; gap: 0.5rem; }
@@ -995,8 +995,26 @@ body.admin {
 [data-cor="separando"]  { --etapa: #e8c25a; }
 [data-cor="separado"]   { --etapa: #f4825a; }
 [data-cor="conferido"]  { --etapa: #a6d86f; }
+[data-cor="pronto-despacho"] { --etapa: #9abcf5; }
 [data-cor="enviado"]    { --etapa: #4cc9be; }
 [data-cor="recebido"]   { --etapa: #5fc28a; }
+
+.adm-pe-historico { margin-top: 1.25rem; padding: 1rem; border: 1px solid var(--adm-borda); border-radius: .65rem; background: var(--adm-superficie); }
+.adm-pe-historico summary { cursor: pointer; font-weight: 700; padding: .5rem 0; }
+.adm-pe-historico p { color: var(--adm-tinta-2); margin: .75rem 0; }
+.adm-pe-historico a { text-decoration: underline; }
+.adm-pe-historico input { max-width: 100%; padding: .5rem; border: 1px solid var(--adm-borda); border-radius: .35rem; background: var(--adm-fundo); color: var(--adm-tinta); }
+.adm-pe-historico-tabela { overflow-x: auto; margin: 1rem 0; }
+.adm-pe-historico table { width: 100%; border-collapse: collapse; font-size: .8rem; text-align: left; }
+.adm-pe-historico th, .adm-pe-historico td { padding: .6rem; border-bottom: 1px solid var(--adm-borda); }
+.adm-pe-historico button { min-width: 2.75rem; min-height: 2.75rem; padding: .35rem; border-radius: .35rem; color: var(--adm-tinta); background: var(--adm-superficie-2); }
+.adm-pe-historico button:disabled { opacity: .45; cursor: default; }
+.adm-pe-historico button:focus-visible, .adm-pe-historico summary:focus-visible, .adm-pe-historico input:focus-visible, .adm-pe-historico a:focus-visible { outline: 2px solid var(--adm-acao); outline-offset: 2px; }
+.adm-pe-historico-pag { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
+@media (max-width: 900px) {
+    #pe-quadro .adm-kanban-segmentos .adm-chip-etapa { flex: 0 0 auto; min-width: 5rem; min-height: 2.75rem; padding: .35rem .55rem; }
+    #pe-quadro .adm-kanban-segmentos .adm-chip-txt { white-space: nowrap; }
+}
 [data-cor="saiu"]       { --etapa: #5fc28a; }
 [data-cor="cancelado"]  { --etapa: #f08a80; }
 
@@ -1064,7 +1082,7 @@ body.admin {
 .adm-pe-pop-etapas li > i { width: 1rem; text-align: center; color: var(--etapa); flex: none; }
 
 @media (min-width: 901px) {
-    .adm-kanban.adm-kanban-pe { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0.42rem; overflow: visible; }
+    .adm-kanban.adm-kanban-pe { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 0.42rem; overflow: visible; }
 }
 .adm-kanban-pe .adm-kanban-coluna { min-height: 120px; border-radius: 0.6rem; }
 .adm-kanban-pe .adm-pe-col-cab { padding: 0.36rem 0.36rem; gap: 0.2rem; border-bottom: 1px solid var(--adm-borda); display: flex; align-items: center; justify-content: flex-start; flex-wrap: nowrap; white-space: nowrap; min-width: 0; }

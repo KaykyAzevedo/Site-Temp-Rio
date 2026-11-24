@@ -242,9 +242,10 @@
             var ignorados = {};
             (rs[6] || []).forEach(function (x) { if (x && x.cd_pedido != null) ignorados[x.cd_pedido] = true; });
             var sy = rs[1] && !rs[1].error && rs[1].data && rs[1].data[0];
-            return emBlocos(Object.keys(docs), 500, function (b) {
+            return Promise.all([core.coletarSaidas(sb, pedidos), emBlocos(Object.keys(docs), 500, function (b) {
                 return sb.rpc('solidcon_rota_posicoes', { p_documentos: b }).then(function (r) { if (r.error) throw erroDe(r); return r.data || []; });
-            }).then(function (rows) {
+            })]).then(function (leituras) {
+                var rows = leituras[1];
                 var cli = {};
                 rows.forEach(function (c) {
                     var lat = Number(c.lat), lng = Number(c.lng), tem = c.lat != null && c.lng != null && isFinite(lat) && isFinite(lng) && !c.pino_desatualizado;
@@ -252,7 +253,7 @@
                                          cidade: c.cidade, pos: tem ? [lat, lng] : null, precisao: tem ? c.precisao : null };
                 });
                 var d = { pedidos: pedidos, clientes: cli, cfg: core.cfgDe(cfgLinha || core.CFG_PADRAO), excecoes: excecoes, coletado: sy ? sy.coletado_em : null,
-                          ignorados: ignorados, veiculos: rs[7], canhotos: rs[8] };   // null = sem a 047 (padrões)
+                          ignorados: ignorados, veiculos: rs[7], canhotos: rs[8], saidas: leituras[0] };   // null = sem a 047 (padrões)
                 if (v2) { d.v2 = true; d.porPedido = porPedido; d.regras = regras; }
                 return d;
             });
@@ -297,11 +298,13 @@
             }, 2000).catch(function (e) { if (ausente(e)) return null; throw e; }),
             coletarCanhotos(sb), coletarConfigRota(sb)
         ]).then(function (rs) {
+            return core.coletarSaidas(sb, rs[0]).then(function (saidas) {
             var parados = rs[0].filter(function (p) { return !core.recebidoEntrega(p, rs[4], rs[5]) &&
-                (core.etapaEnviada(p) ? core.enviadoAntigo(p, rs[4], core.diaSP(agora), rs[5]) : Date.parse(p.dt_pedido) < t - WA.PARADO_ERP_DIAS * 864e5); });
+                (core.etapaEnviada(p) ? core.enviadoAntigo(p, rs[4], core.diaSP(agora), rs[5], { saidas: saidas }) : Date.parse(p.dt_pedido) < t - WA.PARADO_ERP_DIAS * 864e5); });
             var docs = {}; parados.forEach(function (p) { if (p.documento) docs[p.documento] = true; });
             return nomesDe(sb, Object.keys(docs)).then(function (nomes) {
-                return { parados: parados, nomes: nomes, siteAguardando: rs[1], coletas: rs[2].filter(Boolean), estoque: rs[3] };
+                return { parados: parados, nomes: nomes, siteAguardando: rs[1], coletas: rs[2].filter(Boolean), estoque: rs[3], saidas: saidas, cfg: rs[5] };
+            });
             });
         });
     }
@@ -499,7 +502,7 @@
     }
     function opcoesRota(d) {
         return { cfg: d.cfg, excecoes: d.excecoes, marcacao: !!d.v2, padroes: d.excecoes, porPedido: d.porPedido || {},
-                 regras: d.regras || {}, ignorados: d.ignorados || {}, veiculos: d.veiculos, fechada: d.fechada || null, canhotos: d.canhotos || {},
+                 regras: d.regras || {}, ignorados: d.ignorados || {}, veiculos: d.veiculos, fechada: d.fechada || null, canhotos: d.canhotos || {}, saidas: d.saidas || {},
                  projetarSeparando: false };   // fechada: mensagem usa somente inclusao confirmada pela054
     }
     function montarRota(d, veiculo, agora, opts) {
@@ -580,9 +583,9 @@
                     ? nomeCurto((p.documento && d.nomes && d.nomes[p.documento] && d.nomes[p.documento].nome) || p.cliente_nome || 'cliente', 24)
                     : nomeNeutro(p.cliente_tipo);
                 var faturado = core.etapaEnviada(p), dias = faturado
-                    ? Math.round((Date.parse(hoje + 'T12:00:00Z') - Date.parse(core.diaSP(core.faturadoEm(p)) + 'T12:00:00Z')) / 864e5)
+                    ? Math.round((Date.parse(hoje + 'T12:00:00Z') - Date.parse(core.diaSP(core.saidaEntrega(p, { cfg: d.cfg, saidas: d.saidas })) + 'T12:00:00Z')) / 864e5)
                     : Math.floor((t - new Date(p.dt_pedido).getTime()) / 864e5);
-                return '#' + p.cd_pedido + ' ' + nm + ' (' + dias + 'd' + (faturado ? ' faturado sem canhoto' : '') + ')';
+                return '#' + p.cd_pedido + ' ' + nm + ' (' + dias + 'd' + (faturado ? ' da saída sem canhoto' : '') + ')';
             });
             itens.push(plural(d.parados.length, 'pedido do ERP parado', 'pedidos do ERP parados') + ' há mais de ' + WA.PARADO_ERP_DIAS + ' dias: ' + ex.join(', ') + (d.parados.length > 3 ? '…' : ''));
         }
@@ -633,7 +636,7 @@
             var porCd = {}, pedidos = [], docs = {};
             [rs[0], rs[1], rs[2]].forEach(function (l) { l.forEach(function (p) { if (!porCd[p.cd_pedido]) { porCd[p.cd_pedido] = true; pedidos.push(p); if (p.documento) docs[p.documento] = true; } }); });
             var sy = rs[3] && !rs[3].error && rs[3].data && rs[3].data[0];
-            return nomesDe(sb, Object.keys(docs)).then(function (nomes) { return { pedidos: pedidos, nomes: nomes, coletado: sy ? sy.coletado_em : null, canhotos: rs[4], cfg: rs[5] }; });
+            return Promise.all([nomesDe(sb, Object.keys(docs)), core.coletarSaidas(sb, pedidos)]).then(function (leituras) { return { pedidos: pedidos, nomes: leituras[0], coletado: sy ? sy.coletado_em : null, canhotos: rs[4], cfg: rs[5], saidas: leituras[1] }; });
         });
     }
     function nomePedido(p, nomes, max) {
@@ -688,8 +691,9 @@
         (d.pedidos || []).forEach(function (p) {
             if (!p) return;
             if (noDia(p.dt_pedido)) entrou.push(p);
-            if (p.etapa === 'conferido' && !core.recebidoEntrega(p, d.canhotos, d.cfg)) pronto.push(p);
-            if (core.etapaEnviada(p) && noDia(core.faturadoEm(p))) enviou.push(p);
+            var ctx = { canhotos: d.canhotos, cfg: d.cfg, saidas: d.saidas, agora: agora }, etapa = core.etapaEntrega(p, ctx), saida = core.saidaEntrega(p, ctx);
+            if (etapa === 'conferido' || etapa === 'pronto_despacho') pronto.push(p);
+            if (core.etapaEnviada(p) && noDia(saida) && Date.parse(saida) <= Date.parse(agora)) enviou.push(p);
         });
         // {{1}} "segunda, 23/11 às 17:00"; coleta do ERP atrasada ou ausente vai junto (os números podem estar velhos).
         var t = new Date(agora).getTime(), col = d.coletado ? new Date(d.coletado).getTime() : NaN;

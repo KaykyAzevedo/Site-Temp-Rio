@@ -49,7 +49,7 @@ test('pedidos_do_dia: Entrou dt_pedido, pronto conferido, Enviou saiu/atendido p
         ped('atendido', { dt_saida: '2026-11-23T07:00:00-03:00', dt_atendido: '2026-11-24T09:00:00-03:00' }),   // entregue amanhã (fora, data da coluna)
         ped('aberto', { dt_pedido: '2026-11-23T10:00:00-03:00', cliente_tipo: 'cpf', documento: null, cliente_nome: null, valor_centavos: 3000 })   // PF: entrou, nome neutro
     ];
-    const m = confere(W.montarPedidosDia({ pedidos: ps, nomes: { [ps[0].documento]: { nome: 'PETRO FRUTAS' } }, coletado: '2026-11-23T19:58:00Z' }, AG_PED, { template: 'pedidos_do_dia', painelUrl: URL_P }));
+    const m = confere(W.montarPedidosDia({ saidas: Object.fromEntries(ps.filter(R.etapaEnviada).map(p=>[p.cd_pedido,R.diaSP(R.faturadoEm(p))])), pedidos: ps, nomes: { [ps[0].documento]: { nome: 'PETRO FRUTAS' } }, coletado: '2026-11-23T19:58:00Z' }, AG_PED, { template: 'pedidos_do_dia', painelUrl: URL_P }));
     const p = m.partes[0];
     assert.equal(p.template, 'pedidos_do_dia');
     assert.deepEqual(m.resumo, { entrou: 4, pronto: 2, enviou: 2 });
@@ -78,7 +78,7 @@ test('pedidos_do_dia: pior caso — 5000 pedidos, nomes gigantes com quebra/tab,
     const ps = [];
     for (let i = 0; i < 5000; i++) ps.push(ped(['aberto', 'conferido', 'saiu', 'atendido'][i % 4], { dt_pedido: '2026-11-23T10:00:00-03:00', dt_conferencia: '2026-11-23T11:00:00-03:00',
         dt_saida: '2026-11-23T12:00:00-03:00', dt_atendido: '2026-11-23T13:00:00-03:00', documento: String(40000000000000 + i), cliente_nome: longo + i, valor_centavos: 999999999999999, caixas_24: 99999, caixas_48: 99999, caixas_outras: 99999 }));
-    const m = confere(W.montarPedidosDia({ pedidos: ps, nomes: {}, coletado: null }, AG_PED, { painelUrl: 'https://' + 'sub.'.repeat(40) + 'exemplo.test' }));
+    const m = confere(W.montarPedidosDia({ saidas: Object.fromEntries(ps.filter(R.etapaEnviada).map(p=>[p.cd_pedido,R.diaSP(R.faturadoEm(p))])), pedidos: ps, nomes: {}, coletado: null }, AG_PED, { painelUrl: 'https://' + 'sub.'.repeat(40) + 'exemplo.test' }));
     for (const k of [2, 4, 6]) assert.match(m.partes[0].params[k], / · \+\d+$/, 'o "+N" nunca é cortado');
 });
 

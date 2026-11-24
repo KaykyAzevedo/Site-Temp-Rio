@@ -9,7 +9,7 @@ test('1528-like: atendido e saiu sem canhoto continuam na rota; canhoto retira',
 });
 test('7 dias ainda entra, 8 dias vai para enviadosAntigos; data SP e fallback nota/atendido',()=>{
  assert.equal(R.pendenteEntrega(pedido({dt_saida:'2026-11-17T23:59:00-03:00'}),{},dia),true);
- const p=pedido({dt_saida:'2026-11-17T02:59:59Z'});const pl=R.planejar([p],{},dia,opts());assert.ok(!pl.entregues[1528]);assert.equal(pl.enviadosAntigos.length,1);
+ const p=pedido({dt_saida:'2026-11-16T02:59:59Z'});const pl=R.planejar([p],{},dia,opts());assert.ok(!pl.entregues[1528]);assert.equal(pl.enviadosAntigos.length,1);
  assert.equal(R.faturadoEm(pedido({dt_saida:null})), '2026-11-23T17:24:00-03:00');
  assert.equal(R.faturadoEm(pedido({dt_saida:null,dt_nota:null})), '2026-11-23T17:24:00-03:00');
  assert.equal(R.planejar([p],{},dia,opts({canhotos:{1528:true}})).enviadosAntigos.length,0);
@@ -21,7 +21,7 @@ test('canhoto ativo prevalece sobre etapa e nao confunde marcado proximo ponto c
 test('foto fechada conserva faturado sem canhoto e o exclui ao receber/ficar antigo',()=>{
  const p=pedido(),o=opts({fechada:{data:dia,itens:[{cd_pedido:1528,veiculo_id:'s10',ordem:1}]}});
  assert.ok(R.planejar([p],{},dia,o).entregues[1528]);assert.ok(!R.planejar([p],{},dia,{...o,canhotos:{1528:true}}).entregues[1528]);
- assert.equal(R.planejar([pedido({dt_saida:'2026-11-01T12:00:00-03:00'})],{},dia,o).enviadosAntigos.length,1);
+ assert.equal(R.planejar([pedido({dt_saida:'2026-11-01T12:00:00-03:00'})],{},dia,o).enviadosAntigos.length,0);
 });
 test('separando com canhoto nao e reintroduzido automaticamente na fechada',()=>{
  const p=pedido({etapa:'separando'}),o=opts({fechada:{data:dia,itens:[]},canhotos:{1528:true}});
@@ -37,6 +37,6 @@ test('semana e sugestao de juntar usam idade de hoje e excluem canhoto/antigo',(
  const juntar=extra=>R.sugestoesJuntar([base,p],clientes,rota,opts(extra));
  assert.deepEqual(juntar().sugestoes[0].cds,[1528]);
  assert.equal(juntar({canhotos:{1528:true}}).sugestoes.length,0);
- p.dt_saida='2026-11-16T12:00:00-03:00';
+ p.dt_saida='2026-11-15T12:00:00-03:00';
  assert.equal(sem().resumo.pedidos,0);assert.equal(juntar().sugestoes.length,0);
 });
