@@ -17,12 +17,14 @@ function app(sb){
   dados:{pedidos:[]},scli:{carregado:true,lista:[]},papel:'vendedor',clientesPagina:1,clientesFiltroAtivo:'todos',
   NUM:new Intl.NumberFormat('pt-BR'),brl:n=>(n/100).toFixed(2),esc,recCnpj:s=>s,
   SELO_ERP:'ERP',SELO_SITE:'SITE',ficha:(a,b,c)=>a+'|'+b+'|'+c};
- return vm.runInNewContext(src.slice(d,e)+src.slice(a,b)+src.slice(u,v)+';({cmp,forn,scli,carregarCompras,cmpCalcular,cmpPronto,cmpFonteNota,ucliLinhas,detalheClienteUnico,linhaClienteUnico,erp(){ucliEscopo("erp");}})',env);
+ return vm.runInNewContext(src.slice(d,e)+src.slice(a,b)+src.slice(u,v)+';({cmp,forn,scli,carregarCompras,cmpCalcular,cmpPronto,cmpFonteNota,cmpNotasHtml,ucliLinhas,detalheClienteUnico,linhaClienteUnico,erp(){ucliEscopo("erp");}})',env);
 }
 function banco(){
  const T={solidcon_vendas_clientes:[cup(1)],solidcon_pedidos_erp:[ped(1530,{valor_centavos:49500}),ped(1508,{documento:outro,cliente_nome:'Meireles <script>'})]};
  let erro=false;
- const sb={from(t){let rows=T[t].slice();const q={select(){return q;},order(){return q;},in(k,vs){rows=rows.filter(r=>vs.includes(r[k]));return q;},eq(k,v){rows=rows.filter(r=>r[k]===v);return q;},then(ok,bad){return Promise.resolve(erro&&t==='solidcon_pedidos_erp'?{error:{code:'57014',message:'timeout'}}:{data:rows}).then(ok,bad);}};return q;}};
+ const sb={from(t){let rows=(T[t]||[]).slice();const q={select(){return q;},order(){return q;},in(k,vs){rows=rows.filter(r=>vs.includes(r[k]));return q;},eq(k,v){rows=rows.filter(r=>r[k]===v);return q;},then(ok,bad){return Promise.resolve(erro&&t==='solidcon_pedidos_erp'?{error:{code:'57014',message:'timeout'}}:!T[t]?{error:{code:'42P01',message:'missing '+t}}:{data:rows}).then(ok,bad);}};return q;},rpc(nome){assert.equal(nome,'solidcon_ler_vendas_nf');
+  return Promise.resolve(!Object.hasOwn(T,'solidcon_vendas_nf')&&!Object.hasOwn(T,'solidcon_vendas_nf_dias')?{error:{code:'PGRST202',message:'Could not find the function public.solidcon_ler_vendas_nf without parameters'}}:{data:{notas:T.solidcon_vendas_nf,dias:T.solidcon_vendas_nf_dias,truncado:false}});
+ }};
  return {T,sb,falhar(){erro=true;}};
 }
 test('1A painel carrega ambas fontes; NF sem cadastro entra com nome, total/ultima/n/6meses e fontes corretos',async()=>{
@@ -51,7 +53,30 @@ test('1A cliente apenas com pedido sem valor permanece na lista sem fabricar com
 });
 test('1A carga tardia nao sobrescreve historico recarregado depois de novo cupom',async()=>{
  let rodada=0,soltar;const sb={from(t){const n=rodada,rows=t==='solidcon_pedidos_erp'?[ped(1,{valor_centavos:49500})]:n?[cup(1)]:[];
-  const q={select(){return q;},order(){return q;},in(){return q;},eq(){return q;},then(ok,bad){return (n===0&&t==='solidcon_pedidos_erp'?new Promise(r=>{soltar=r;}):Promise.resolve({data:rows})).then(ok,bad);}};return q;}};
+  const q={select(){return q;},order(){return q;},in(){return q;},eq(){return q;},then(ok,bad){return (n===0&&t==='solidcon_pedidos_erp'?new Promise(r=>{soltar=r;}):Promise.resolve(/^solidcon_vendas_nf/.test(t)?{error:{code:'42P01',message:'missing '+t}}:{data:rows})).then(ok,bad);}};return q;},rpc(){return Promise.resolve({error:{code:'PGRST202',message:'Could not find the function public.solidcon_ler_vendas_nf without parameters'}});}};
  const q=app(sb),primeiro=q.carregarCompras();rodada=1;await q.carregarCompras();soltar({data:[ped(1,{valor_centavos:49500})]});await primeiro;
  assert.equal(q.cmp.por[doc].n,1);assert.equal(q.cmp.por[doc].origens.PDV,1);assert.equal(q.cmp.por[doc].origens.NF,0);
+});
+
+test('1B painel NF550 antiga sem cupom/pedido soma produtos; total/ST no detalhe, fornecedor excluido',async()=>{
+ const {T,sb}=banco();T.solidcon_vendas_clientes=[];T.solidcon_pedidos_erp=[];
+ T.solidcon_vendas_nf=[{cd_nota:550,numero:550,serie:'<b>1</b>',dia:'2026-06-25',dt:'2026-06-25T18:30:00-03:00',documento:doc,cd_pedido:538,valor_centavos:2164320,total_nota_centavos:2421121,st_centavos:233458,nf_cupom:false}];
+ T.solidcon_vendas_nf_dias=[{dia:'2026-06-25'}];
+ const q=app(sb);await q.carregarCompras();q.erp();assert.equal(q.cmpPronto(),true);assert.equal(q.cmp.por[doc].total,2164320);assert.equal(q.cmp.por[doc].n,1);assert.equal(q.cmp.por[doc].ultima,'2026-06-25');
+ const r=q.ucliLinhas().find(x=>x.doc===doc),html=q.detalheClienteUnico(r);assert.match(html,/24211\.21/);assert.match(html,/2334\.58/);assert.match(html,/21643\.20/);assert.match(html,/550 \/ &lt;b&gt;1&lt;\/b&gt;/);assert.ok(!html.includes('550 / <b>'));
+ assert.match(q.cmpFonteNota(),/29\/05\/2026/);assert.ok(!q.cmpFonteNota().includes('26/10/2026'));
+ q.forn.docs[doc]='teste';q.cmpCalcular(q.cmp.brutas);assert.ok(!q.cmp.por[doc]);
+});
+test('1B painel sem cobertura conserva1A; cobertura vazia remove fallback; esquema parcial/erro/teto nao vira zero',async()=>{
+ const {T,sb}=banco();T.solidcon_vendas_nf=[];T.solidcon_vendas_nf_dias=[];
+ const q=app(sb);await q.carregarCompras();assert.equal(q.cmp.por[outro].total,300960);
+ T.solidcon_vendas_nf_dias=[{dia:'2026-11-23'}];await q.carregarCompras();assert.ok(!q.cmp.por[outro]);assert.equal(q.cmp.por[doc].total,49500);
+ delete T.solidcon_vendas_nf_dias;await q.carregarCompras();assert.equal(q.cmpPronto(),false);assert.match(q.cmp.erro,/incompleta/);
+ T.solidcon_vendas_nf_dias=[];T.solidcon_vendas_nf=Array(20000).fill({});await q.carregarCompras();assert.equal(q.cmpPronto(),false);assert.equal(q.cmp.truncado,true);
+});
+test('1B erro de leitura NF propaga sem apresentar total parcial ou notas da carga anterior',async()=>{
+ const {T,sb}=banco();T.solidcon_vendas_nf=[];T.solidcon_vendas_nf_dias=[];
+ const q=app(sb);await q.carregarCompras();assert.equal(q.cmpPronto(),true);
+ sb.rpc=()=>Promise.resolve({error:{code:'42501',message:'permissao NF'}});
+ await q.carregarCompras();assert.equal(q.cmpPronto(),false);assert.match(q.cmp.erro,/permissao NF/);assert.equal(q.cmp.nfNotas.length,0);
 });

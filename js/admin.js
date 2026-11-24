@@ -785,6 +785,8 @@
         pe.seq++; pe.carregado = false; pe.carregando = false;
         pe.itens = []; pe.canhotos = {}; pe.saidas = {}; pe.cfg = null;
         pe.historico = { aberto: false, busca: '', pagina: 0 };
+        cmp.seq++; cmp.carregado = false; cmp.carregando = false; cmp.por = null; cmp.brutas = null;
+        cmp.nfNotas = []; cmp.nfInstalada = false; cmp.nfSemPdv = 0; cmp.nfPendentes = 0; cmp.nfVista = {}; cmp.clientesPedidos = {};
         saudeParar();
         if (canalRealtime) { sb.removeChannel(canalRealtime); canalRealtime = null; }
         sb.auth.signOut().then(function () {
@@ -2835,15 +2837,15 @@
     }
 
     /* ===================================================================
-     * Compras por cliente (ERP) — SOMENTE LEITURA — PDV026 + pedidos faturados sem cupom (fallback NF1A).
-     * Uma consulta só (dia, documento, tipo, valor), sob demanda e em cache; tudo o mais é calculado
+     * Compras por cliente (ERP) — SOMENTE LEITURA — PDV026 + NF060 + pedidos1A nas lacunas.
+     * NF e cobertura vêm juntas num snapshot RPC; fontes sob demanda e em cache; tudo o mais é calculado
      * em memória e alimenta Clientes, Regiões (mapa por valor) e Dashboard de vendas.
      * Sem a tabela: aviso "ainda não instalado". Compras sem documento (consumidor) não entram.
      * =================================================================== */
-    var CMP_LIMITE = 20000, CMP_PED_LIMITE = 5000, CMP_MIN_COMPRAS = 3, CMP_FATOR = 1.5, CMP_MIN_DIAS = 30, CMP_PERDIDO = 90, CMP_MESES_VALOR = 6;
+    var CMP_LIMITE = 20000, CMP_PED_LIMITE = 5000, CMP_NF_LIMITE = 20000, CMP_MIN_COMPRAS = 3, CMP_FATOR = 1.5, CMP_MIN_DIAS = 30, CMP_PERDIDO = 90, CMP_MESES_VALOR = 6;
     var CMP_AVISO_NF = 'PDV = cupons. NF provisória = pedidos faturados sem cupom correspondente. Pedidos disponíveis desde 26/10/2026, em janela de 30 dias; o histórico anterior de NF ainda não está incluído, inclusive no total de 6 meses.';
     var cmp = { carregado: false, carregando: false, ausente: false, erro: null, truncado: false, por: null, semDoc: 0,
-                hoje: '', corte: '', mostrarSumindo: 30, seq: 0, nfSemDados: 0, clientesPedidos: {} };
+                hoje: '', corte: '', mostrarSumindo: 30, seq: 0, nfSemDados: 0, clientesPedidos: {}, nfInstalada: false, nfNotas: [], nfSemPdv: 0, nfPendentes: 0, nfVista: {} };
 
     function cmpIso(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
     function cmpUtc(iso) { var p = String(iso).split('-'); return Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2])); }
@@ -2972,19 +2974,33 @@
         }, CMP_LIMITE), vendPaginar(function () {
             return sb.from('solidcon_pedidos_erp').select('cd_pedido,documento,cliente_tipo,cliente_nome,etapa,valor_centavos,dt_pedido,dt_saida,dt_nota,dt_atendido')
                 .in('etapa', ['saiu', 'atendido']).eq('cliente_tipo', 'cnpj').order('cd_pedido', { ascending: true });
-        }, CMP_PED_LIMITE)]).then(function (rs) {
+        }, CMP_PED_LIMITE), sb.rpc('solidcon_ler_vendas_nf')]).then(function (rs) {
             if (seq !== cmp.seq) return;
             var r = rs[0], erro = r.error || rs[1].error;
+            var erroNF = rs[2].error, semNF = !!erroNF && /^(PGRST202|42883)$/.test(String(erroNF.code)) &&
+                /(?:function|função)\s+public\.solidcon_ler_vendas_nf(?:\b|\()/i.test(String(erroNF.message || ''));
+            var snapshotNF = !erroNF && rs[2].data;
+            if (!semNF && !erroNF && (!snapshotNF || !Array.isArray(snapshotNF.notas) || !Array.isArray(snapshotNF.dias) || typeof snapshotNF.truncado !== 'boolean')) erro = { message: 'Resposta do histórico NF incompleta; tente atualizar.' };
+            if (rs[2].error && !semNF) erro = rs[2].error;
             cmp.carregando = false; cmp.ausente = false; cmp.erro = null; cmp.truncado = false;
+            cmp.nfNotas = []; cmp.nfInstalada = false; cmp.nfSemPdv = 0; cmp.nfPendentes = 0;
             if (erro) {
                 if (r.error && solidTabelaAusente(r.error)) cmp.ausente = true; else cmp.erro = String(erro.message || erro);
                 cmp.carregado = false; cmp.por = null; cmp.brutas = null;
             } else {
-                cmp.truncado = (r.data || []).length >= CMP_LIMITE || (rs[1].data || []).length >= CMP_PED_LIMITE;
+                cmp.truncado = (r.data || []).length >= CMP_LIMITE || (rs[1].data || []).length >= CMP_PED_LIMITE ||
+                    !!(snapshotNF && (snapshotNF.truncado || snapshotNF.notas.length >= CMP_NF_LIMITE || snapshotNF.dias.length >= 402));
                 cmp.brutas = null; cmp.nfSemDados = 0;
                 if (cmp.truncado) { cmp.por = null; } else {
-                    var unido = window.TempRioCompras.juntar(r.data || [], rs[1].data || []);
+                    var unido = window.TempRioCompras.juntarFontes(r.data || [], rs[1].data || [], semNF ? null : snapshotNF.notas, semNF ? null : snapshotNF.dias);
                     cmp.brutas = unido.linhas; cmp.nfSemDados = unido.semValor + unido.semData; cmp.clientesPedidos = unido.clientes;
+                    cmp.nfNotas = unido.notas; cmp.nfInstalada = unido.nfInstalada; cmp.nfSemPdv = unido.nfSemPdv;
+                    if (!semNF) {
+                        var hojeNF = window.TempRioRotaCore.diaSP(new Date()), primeiroNF = window.TempRioRotaCore.somaDias(hojeNF, -400);
+                        if (primeiroNF < '2026-05-29') primeiroNF = '2026-05-29';
+                        var lidosNF = snapshotNF.dias.filter(function (x) { return x.dia >= primeiroNF && x.dia <= hojeNF; }).length;
+                        cmp.nfPendentes = Math.max(0, cmpDias(primeiroNF, hojeNF) + 1 - lidosNF);
+                    }
                     cmpCalcular(cmp.brutas);   // 041: cache da uniao permite recalcular ao marcar fornecedor
                 }
                 cmp.carregado = true;
@@ -2992,11 +3008,63 @@
             cmpRedesenhar();
         }).catch(function (e) {
             if (seq !== cmp.seq) return;
-            cmp.carregando = false; cmp.erro = String(e && e.message || e); cmp.carregado = false; cmp.por = null; cmp.brutas = null; cmpRedesenhar();
+            cmp.carregando = false; cmp.erro = String(e && e.message || e); cmp.carregado = false; cmp.por = null; cmp.brutas = null;
+            cmp.nfNotas = []; cmp.nfInstalada = false; cmp.nfSemPdv = 0; cmp.nfPendentes = 0; cmpRedesenhar();
         });
     }
     function cmpOrigem(o) { return o && o.origens ? ['PDV', 'NF'].filter(function (f) { return o.origens[f]; }).join(' + ') : 'ERP'; }
-    function cmpFonteNota() { return CMP_AVISO_NF + (cmp.nfSemDados ? ' ' + NUM.format(cmp.nfSemDados) + ' pedido(s) faturado(s) sem valor ou data válidos ficaram fora da soma.' : ''); }
+    function cmpFonteNota() {
+        var nota = cmp.nfInstalada ? 'PDV = cupons. NF-e = notas de venda de saída desde 29/05/2026; soma dos produtos. O total da nota e ICMS-ST aparecem no detalhe. Pedidos provisórios só nos dias ainda não coletados. NF vinculada ao PDV é contada pelos cupons.' : CMP_AVISO_NF;
+        if (cmp.nfInstalada && cmp.nfPendentes) nota += ' Atenção: ' + NUM.format(cmp.nfPendentes) + ' dias do histórico de NF-e ainda não consultados. Pedidos provisórios cobrem apenas a janela de 30 dias do ERP.';
+        if (cmp.nfSemPdv) nota += ' Atenção: ' + NUM.format(cmp.nfSemPdv) + ' NF(s) vinculada(s) ao PDV sem cupom equivalente no histórico carregado; confira os documentos no detalhe. Não são somadas novamente pela NF.';
+        return nota + (cmp.nfSemDados ? ' ' + NUM.format(cmp.nfSemDados) + ' pedido(s) faturado(s) sem valor ou data válidos ficaram fora da soma.' : '');
+    }
+    function cmpNotasEstado(doc) {
+        return cmp.nfVista[doc] || (cmp.nfVista[doc] = { pagina: 0, busca: '', aberto: false });
+    }
+    function cmpNotasHtml(doc) {
+        var notas = (cmp.nfNotas || []).filter(function (n) { return n.documento === doc; }).sort(function (a, b) { return b.dia.localeCompare(a.dia) || Number(b.cd_nota) - Number(a.cd_nota); });
+        if (!notas.length) return '';
+        var estado = cmpNotasEstado(doc), busca = estado.busca.trim().toLowerCase();
+        var filtradas = notas.filter(function (n) { return !busca || (n.numero + ' ' + n.serie + ' ' + (n.cd_pedido || '')).toLowerCase().indexOf(busca) >= 0; });
+        var paginas = Math.max(1, Math.ceil(filtradas.length / 25)); estado.pagina = Math.max(0, Math.min(paginas - 1, estado.pagina));
+        return '<details class="mt-4" data-cmp-nf="' + esc(doc) + '"' + (estado.aberto ? ' open' : '') + '><summary class="cursor-pointer">Notas fiscais (' + NUM.format(notas.length) + ')</summary>' +
+            '<p class="text-xs mt-2">A soma usa produtos; total da nota inclui os demais componentes fiscais. A busca filtra só esta lista, mantendo os totais do cliente.</p>' +
+            '<label for="cmp-nf-busca-' + esc(doc) + '">Buscar por nota, série ou pedido</label><input class="adm-input" type="search" id="cmp-nf-busca-' + esc(doc) + '" data-cmp-nf-busca="' + esc(doc) + '" value="' + esc(estado.busca) + '">' +
+            '<div class="overflow-x-auto"><table class="adm-tabela mt-3"><thead><tr>' +
+            '<th scope="col">Emissão</th><th scope="col">Nota / série</th><th scope="col">Pedido</th><th scope="col">Produtos</th><th scope="col">Total da nota</th><th scope="col">ICMS-ST</th><th scope="col">Origem</th></tr></thead><tbody>' +
+            filtradas.slice(estado.pagina * 25, (estado.pagina + 1) * 25).map(function (n) { return '<tr><td>' + esc(cmpData(n.dia)) + '</td><td>' + esc(n.numero + ' / ' + n.serie) + '</td><td>' + esc(n.cd_pedido == null ? '—' : n.cd_pedido) + '</td><td>' + esc(brl(n.valor_centavos)) + '</td><td>' + esc(brl(n.total_nota_centavos)) + '</td><td>' + esc(n.st_centavos == null ? 'Não informado' : brl(n.st_centavos)) + '</td><td>' + (n.nf_cupom ? 'Vinculada ao PDV; soma pelos cupons' : 'NF-e') + '</td></tr>'; }).join('') +
+            (filtradas.length ? '' : '<tr><td colspan="7">Nenhuma nota com esta busca.</td></tr>') + '</tbody></table></div>' +
+            '<div class="flex flex-wrap items-center gap-3 mt-3"><button type="button" class="adm-botao-fantasma" data-cmp-nf-pag="-1"' + (estado.pagina === 0 ? ' disabled' : '') + '>Anterior</button>' +
+            '<span role="status">' + filtradas.length + ' notas · página ' + (estado.pagina + 1) + ' de ' + paginas + '</span><button type="button" class="adm-botao-fantasma" data-cmp-nf-pag="1"' +
+            (estado.pagina + 1 >= paginas ? ' disabled' : '') + '>Próxima</button></div></details>';
+    }
+    function cmpNotasRedesenhar(raiz, doc) {
+        if (!raiz) return;
+        var pos = document.activeElement && document.activeElement.selectionStart;
+        cmpNotasEstado(doc).aberto = raiz.open;
+        raiz.outerHTML = cmpNotasHtml(doc);
+        var busca = document.getElementById('cmp-nf-busca-' + doc);
+        if (busca) { busca.focus(); if (pos != null) busca.setSelectionRange(pos, pos); }
+    }
+    document.addEventListener('toggle', function (ev) {
+        var d = ev.target && ev.target.getAttribute && ev.target.getAttribute('data-cmp-nf');
+        if (d && /^\d{14}$/.test(d)) cmpNotasEstado(d).aberto = ev.target.open;
+    }, true);
+    document.addEventListener('input', function (ev) {
+        var el = ev.target, doc = el && el.getAttribute && el.getAttribute('data-cmp-nf-busca');
+        if (!doc || !/^\d{14}$/.test(doc)) return;
+        var estado = cmpNotasEstado(doc); estado.busca = el.value; estado.pagina = 0;
+        cmpNotasRedesenhar(el.closest('[data-cmp-nf]'), doc);
+    });
+    document.addEventListener('click', function (ev) {
+        var btn = ev.target.closest && ev.target.closest('[data-cmp-nf-pag]');
+        if (!btn || btn.disabled) return;
+        var raiz = btn.closest('[data-cmp-nf]'), doc = raiz && raiz.getAttribute('data-cmp-nf');
+        if (!doc || !/^\d{14}$/.test(doc)) return;
+        cmpNotasEstado(doc).pagina += Number(btn.getAttribute('data-cmp-nf-pag'));
+        cmpNotasRedesenhar(raiz, doc);
+    });
 
     function cmpRedesenhar() {
         dashAtualizarResumo();
@@ -8487,7 +8555,7 @@
             var corpo;
             if (!cmpPronto()) corpo = '<p class="text-sm" style="color:var(--adm-tinta-3)">' + (cmp.carregando || (!cmp.carregado && !cmp.erro && !cmp.ausente) ? 'Carregando histórico de compras…' :
                 'Histórico de compras indisponível agora (veja o bloco “Histórico de compras por cliente”).') + '</p>';
-            else if (!o) corpo = '<p class="text-sm" style="color:var(--adm-tinta-3)">' + (r.pedido ? 'Pedido faturado com valor ou data indisponíveis; não entra na soma.' : 'Nenhuma compra identificada no ERP para este documento.') + '</p>';
+            else if (!o) corpo = '<p class="text-sm" style="color:var(--adm-tinta-3)">' + ((cmp.nfNotas || []).some(function (n) { return n.documento === r.doc; }) ? 'Há NF vinculada ao PDV; o valor é contabilizado pelos cupons. Confira o histórico de cupons e os documentos abaixo.' : r.pedido ? 'Pedido faturado com valor ou data indisponíveis; não entra na soma.' : 'Nenhuma compra identificada no ERP para este documento.') + '</p>';
             else corpo = '<div class="grid sm:grid-cols-3 gap-4">' +
                 ficha('Compras', NUM.format(o.n), 'desde ' + cmpData(o.primeira)) +
                 ficha('Última compra', cmpData(o.ultima), 'há ' + NUM.format(o.desde) + ' dias') +
@@ -8496,9 +8564,9 @@
                 ficha('Ticket médio ' + CMP_MESES_VALOR + ' meses', o.ticket6 != null ? brl(Math.round(o.ticket6)) : '—', 'por compra') +
                 ficha('Frequência típica', o.freq != null ? 'a cada ' + NUM.format(Math.round(o.freq)) + ' dias' : '—', r.sumindo ? 'parou de comprar no ritmo' : 'mediana entre compras') +
                 ficha('Origem PDV', brl(o.totalPDV), NUM.format(o.origens.PDV) + ' cupom(ns)') +
-                ficha('Origem NF', brl(o.totalNF), NUM.format(o.origens.NF) + ' pedido(s) faturado(s) sem cupom') +
+                ficha('Origem NF', brl(o.totalNF), NUM.format(o.origens.NF) + (cmp.nfInstalada ? ' NF-e / pedidos provisórios de lacunas' : ' pedido(s) faturado(s) sem cupom')) +
                 '</div>';
-            corpo += '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">' + esc(cmpFonteNota()) + '</p>';
+            corpo += '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">' + esc(cmpFonteNota()) + '</p>' + cmpNotasHtml(r.doc);
             h += ucliBloco('Histórico de compras (ERP)', SELO_ERP, corpo);
         }
 

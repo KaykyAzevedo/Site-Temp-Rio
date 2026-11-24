@@ -434,6 +434,34 @@ clientes recusa o payload de 13 campos e as RPCs novas não existem).
 0 OK; 1 configuração/estoque; 3 vendas; 4 clientes; 5 ficha; 6 vendas por cliente;
 **7 somente insumos; 8 somente formas de pagamento**. Precedência **1 > 3 > 4 > 5 > 6 > 7 > 8**.
 
+## Compatibilidade SQL do ERP — confirmado em 24/11/2026
+
+O servidor retornou SQL 195 para `TRY_CONVERT` na verificação NF550. O nível de
+compatibilidade do banco é antigo (<110): para **qualquer SQL novo do coletor ou
+diagnóstico**, não usar `TRY_CONVERT`, `TRY_CAST`, `IIF`, `CONCAT`, `FORMAT` ou
+`EOMONTH`. A versão instalada do SQL Server não garante o nível de compatibilidade
+da base. Esta restrição também vale para a coleta oficial de NF (1B-c).
+
+Na verificação fixa NF550/série1, usar
+`LTRIM(RTRIM(i.serie)) IN ('1','01','001')`; a comparação é textual e não converte
+séries inválidas. Não generalizar essa lista fixa para a coleta de todas as séries.
+Manter parâmetros tipados, consultas aprovadas e as mesmas proteções de somente
+leitura/trava/transação/rollback. O coletor de produção não precisou ser alterado.
+
+Verificação offline em PowerShell5.1, sem ERP/rede:
+
+```powershell
+powershell.exe -NoProfile -File supabase/tests/sqlserver-legado.ps1
+powershell.exe -NoProfile -File supabase/tests/nf550-verificacao.ps1
+```
+
+A primeira checagem procura as seis funções nas strings SQL dos scripts `sync-*`;
+é uma proteção de regressão, não uma execução/validação completa no SQL Server.
+
+Coleta oficial NF1B(c), migração060, rollout e reversão:
+[VENDAS-NF-060.md](VENDAS-NF-060.md). Featureflag `nf_saida` desligada por padrão;
+Pronto p/ despacho059 já publicado em280c167.
+
 ## 029 — Coleta pelo banco SQL Server da SOLIDCON (etapa 1: só "saúde") (NÃO IMPLANTADA)
 
 Um segundo coletor, **separado** do `sync-produtos.ps1`: o `sync-banco.ps1` conversa

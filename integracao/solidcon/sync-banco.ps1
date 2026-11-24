@@ -3,6 +3,7 @@
 # Independente do sync-produtos.ps1 (API HTTP): outro mutex, outra trava, outro log.
 # Acordo com a SOLIDCON: so VIEWS liberadas (dbo.VW_*/vw*). Unica excecao (autorizada pelo dono
 # em 2026-11-13): o modulo 'pedidos' le SOMENTE as tabelas de $TabelasPedidos (SELECT, filial 4).
+# NF1B autorizada24/11: so nf.* le as3tabelas de $TabelasNF, joins por filial+nota, nunca XML/imagem.
 # Cada modulo: consulta FIXA (texto no codigo, so views da lista $ViewsPermitidas)
 #   -> projecao explicita de colunas -> RPC Supabase propria -> log sem dados pessoais.
 # Falha de um modulo nao impede os outros. Modulos: 'saude' (SELECT 1, toda execucao) e
@@ -13,6 +14,12 @@
 # LIDO, e so em modo real, para pegar a conta de integracao do Supabase; nunca e alterado.
 #   Offline:  sync-banco.ps1 -Simular [-SimularFalha] [-Forcar]   (sem banco e sem Supabase)
 #   -Forcar roda todos os modulos agora, ignorando o intervalo proprio de cada um.
+# 'nf': nf_saida=true no config-banco.json somente apos060. Venda normal55/saida/filial4,
+#   flags fiscais NULL=0, produtos+total+ST separados, historico desde2026-05-29/retencao400dias.
+#   Toda a historia retida e revalidada a cada60min para refletir cancelamentos antigos.
+#   -TestarNF: apenasNF/contagens/rollback, sem envio/agenda/arquivo de dados (log tecnico preservado).
+#   -BackfillNFDesde 2026-05-29: soNF, sem agenda/outros modulos; exige nf_saida=true.
+# SQL do ERP tem compatibilidade antiga: sem TRY_CONVERT/TRY_CAST/IIF/CONCAT/FORMAT/EOMONTH.
 #   Backfill da margem: sync-banco.ps1 -BackfillMargemDesde 2026-05-29 (so vendas da margem,
 #   blocos de 31 dias ate hoje; nao mexe na agenda nem nos outros modulos).
 # 'pedidos' (pedidos de venda da filial 4 com a etapa do WMS e o valor Soma(qt*vl) dos itens, toda
@@ -36,6 +43,8 @@ param(
     [switch]$SimularFalha,
     [switch]$Forcar,
     [switch]$Testar,
+    [switch]$TestarNF,
+    [ValidatePattern('^20[0-9]{2}-[0-9]{2}-[0-9]{2}$')][string]$BackfillNFDesde,
     [ValidatePattern('^20[0-9]{2}-[0-9]{2}-[0-9]{2}$')][string]$BackfillMargemDesde
 )
 Set-StrictMode -Version Latest
@@ -75,7 +84,10 @@ $ConsultasAprovadas = @{
 }
 $ConsultasAprovadas['pedidos.produtos'] = "SELECT p.cdPedido AS cd_pedido, i.cdProduto AS cd_produto, SUM(i.qtPedidoItem) AS qt, COUNT(*) AS itens, SUM(CASE WHEN i.qtPedidoItem IS NULL THEN 1 ELSE 0 END) AS nulos FROM dbo.tbPedido AS p JOIN dbo.tbPedidoItem AS i ON i.cdPedido = p.cdPedido AND i.cdPessoaFilial = p.cdPessoaFilial WHERE p.cdPessoaFilial = 4 AND p.dtPedido >= @desde GROUP BY p.cdPedido, i.cdProduto"
 $ConsultasAprovadas['pedidos.amostra_caixas'] = "SELECT TOP 20 p.cdPedido AS cd_pedido, p.dtPedido AS dt_pedido, i.cdProduto AS cd_produto, i.qtPedidoItem AS qt, i.vlPedidoItem AS vl FROM dbo.tbPedido AS p JOIN dbo.tbPedidoItem AS i ON i.cdPedido = p.cdPedido AND i.cdPessoaFilial = p.cdPessoaFilial WHERE p.cdPessoaFilial = 4 AND p.dtPedido >= @desde ORDER BY p.dtPedido DESC, p.cdPedido DESC"
-$RpcsPermitidas = @('solidcon_receber_banco_saude', 'solidcon_receber_contas_receber', 'solidcon_receber_margem_vendas', 'solidcon_receber_custos', 'solidcon_receber_pedidos_erp')
+$TabelasNF = @('dbo.tbNota', 'dbo.tbNotaFiscal', 'dbo.tbNotaFiscalIdentificacao')
+$ConsultasAprovadas['nf.lista'] = "SELECT n.cdPessoaFilial AS filial, n.cdNota AS cd_nota, i.nNF AS numero, LTRIM(RTRIM(i.serie)) AS serie, i.dEmi AS dt, n.cdPessoaComercial AS cd_cliente, n.cdPedido AS cd_pedido, f.ICMSTotvProd AS produtos, f.ICMSTotvNF AS total, f.ICMSTotvST AS st, ISNULL(n.inNFeCupom,0) AS nf_cupom FROM dbo.tbNota AS n JOIN dbo.tbNotaFiscal AS f ON f.cdPessoaFilial = n.cdPessoaFilial AND f.cdNota = n.cdNota JOIN dbo.tbNotaFiscalIdentificacao AS i ON i.cdPessoaFilial = n.cdPessoaFilial AND i.cdNota = n.cdNota WHERE n.cdPessoaFilial = 4 AND i.[mod] = '55' AND i.tpNF = 1 AND ISNULL(n.inCancelada,0) = 0 AND ISNULL(n.inDenegada,0) = 0 AND ISNULL(n.inRejeitada,0) = 0 AND ISNULL(i.finNFe,1) = 1 AND i.dEmi >= @desde AND i.dEmi < @ate"
+$ConsultasAprovadas['nf.clientes'] = "SELECT pa.CodigoParceiro AS codigo_parceiro, pa.CNPJ AS documento FROM dbo.VW_MGN_PARCEIRO AS pa WHERE pa.CodigoParceiro IN (SELECT n.cdPessoaComercial FROM dbo.tbNota AS n JOIN dbo.tbNotaFiscal AS f ON f.cdPessoaFilial = n.cdPessoaFilial AND f.cdNota = n.cdNota JOIN dbo.tbNotaFiscalIdentificacao AS i ON i.cdPessoaFilial = n.cdPessoaFilial AND i.cdNota = n.cdNota WHERE n.cdPessoaFilial = 4 AND i.[mod] = '55' AND i.tpNF = 1 AND ISNULL(n.inCancelada,0) = 0 AND ISNULL(n.inDenegada,0) = 0 AND ISNULL(n.inRejeitada,0) = 0 AND ISNULL(i.finNFe,1) = 1 AND i.dEmi >= @desde AND i.dEmi < @ate)"
+$RpcsPermitidas = @('solidcon_receber_vendas_nf', 'solidcon_receber_banco_saude', 'solidcon_receber_contas_receber', 'solidcon_receber_margem_vendas', 'solidcon_receber_custos', 'solidcon_receber_pedidos_erp')
 # Semantica de VW_RDUPHOLD_VENDA_ITENS CONFIRMADA pelo probe real da filial 4 (2026-11-12):
 #   Vlitem = PRECO UNITARIO; Valor_total_unidade = TOTAL DA LINHA (apesar do nome);
 #   CustoItem = CUSTO TOTAL DA LINHA. SUM(Valor_total_unidade) = SUM(Vlitem*qtd) conciliou com o
@@ -294,10 +306,10 @@ function Validar-ConsultaFixa([string]$Nome, [string]$Sql) {
     # 'dbo.tbX' (sem colchetes): essas ocorrencias saem do texto checado; qualquer outro tb* barra.
     $checado = $Sql
     $tabelasDoModulo = @()
-    if ($Nome.StartsWith('pedidos.', [StringComparison]::Ordinal)) {
-        $tabelasDoModulo = $TabelasPedidos
-        foreach ($t in $TabelasPedidos) { $checado = [regex]::Replace($checado, '(?<![\w.\[])' + [regex]::Escape($t) + '(?![\w\]])', 'dbo.TABELA_PEDIDOS') }
-    }
+    if ($Sql -match '(?i)\b(TRY_CONVERT|TRY_CAST|IIF|CONCAT|FORMAT|EOMONTH)\s*\(') { throw 'funcao SQL incompativel com ERP' }
+    if ($Nome.StartsWith('pedidos.', [StringComparison]::Ordinal)) { $tabelasDoModulo = $TabelasPedidos }
+    elseif ($Nome.StartsWith('nf.', [StringComparison]::Ordinal)) { $tabelasDoModulo = $TabelasNF }
+    foreach ($t in $tabelasDoModulo) { $checado = [regex]::Replace($checado, '(?<![\w.\[])' + [regex]::Escape($t) + '(?![\w\]])', 'dbo.TABELA_PERMITIDA') }
     $proibidas = '\b(INSERT|UPDATE|DELETE|MERGE|EXEC|EXECUTE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE|DENY|INTO|OPENROWSET|OPENQUERY|OPENDATASOURCE|OPENXML|BULK|WAITFOR|SHUTDOWN|DBCC|BACKUP|RESTORE|USE|SET|DECLARE|KILL|RECONFIGURE)\b|\bOPEN\w*|\bNEXT\s+VALUE\b|\b(xp|sp)_\w*|\btb\w*|\bsys\s*\.|INFORMATION_SCHEMA|@@'
     if ($checado -match $proibidas) { throw 'consulta com comando ou objeto proibido' }
     # Funcao com schema (dbo.fn(...)) le objetos sem passar por FROM.
@@ -1482,11 +1494,112 @@ function Modulo-Pedidos($Modulo) {
         $c.canceladas, $c.com_valor, $c.sem_valor, $c.valor_negativo, $c.valor_fora_limite, $c.itens_desc_ipi_st, $relogio.ElapsedMilliseconds, $enviado, $ExecucaoId)
 }
 
+
+# ---------- NF-e venda normal modelo55, filial4; dados confirmados pelo dono ----------
+# nf_saida=true so depois da migracao060. Normal: toda a historia retida,60min;
+# cancelamentos/rejeicoes antigos sao refletidos sem depender de backfill manual.
+function Normalizar-NF($Linhas,$Clientes,[datetime]$Desde,[datetime]$Ate) {
+    $docs=@{};$vistos=@{};$itens=New-Object Collections.ArrayList
+    $cont=@{cnpj=0;sem_cnpj=0;nf_pdv=0}
+    foreach($c in $Clientes){
+        $cod=Inteiro-Banco $c.codigo_parceiro
+        if($null -eq $cod){throw 'resposta-invalida'}
+        $doc=if($null -eq $c.documento){''}else{([string]$c.documento) -replace '[^0-9]',''}
+        # Mesmo criterio publicado: nao transformar CPF em CNPJ preenchendo zeros.
+        if($doc.Length -gt 11 -and $doc.Length -lt 14){$doc=$doc.PadLeft(14,'0')}
+        if($docs.ContainsKey($cod) -and $docs[$cod] -cne $doc){throw 'resposta-invalida'}
+        $docs[$cod]=$doc
+    }
+    foreach($l in $Linhas){
+        $cd=Inteiro-Banco $l.cd_nota;$numero=Inteiro-Banco $l.numero
+        if($l.filial -ne 4 -or $null -eq $cd -or $cd -gt 9007199254740991 -or $null -eq $numero -or $numero -gt 999999999 -or $l.dt -isnot [datetime]){throw 'resposta-invalida'}
+        if($l.dt -lt $Desde -or $l.dt -ge $Ate -or $vistos.ContainsKey($cd)){throw 'resposta-invalida'}
+        $vistos[$cd]=$true
+        $serie=Texto-Curto $l.serie 32 '^[0-9A-Za-z-]+$'
+        $dt=Data-Erp $l.dt
+        if(-not $serie -or -not $dt -or $l.nf_cupom -isnot [bool]){throw 'resposta-invalida'}
+        $codCli=Inteiro-Banco $l.cd_cliente
+        $doc=if($null -ne $codCli -and $docs.ContainsKey($codCli)){$docs[$codCli]}else{''}
+        if(-not (Cnpj-Valido $doc)){$cont.sem_cnpj++;continue}
+        $pedido=Inteiro-Banco $l.cd_pedido
+        if($null -ne $pedido -and $pedido -gt 9007199254740991){throw 'resposta-invalida'}
+        $item=[ordered]@{
+            cd_nota=[long]$cd;numero=[long]$numero;serie=$serie;dia=$l.dt.ToString('yyyy-MM-dd',$Invariant);dt=$dt
+            documento=$doc;cd_pedido=$pedido;valor_centavos=(Centavos-Banco $l.produtos $true)
+            total_nota_centavos=(Centavos-Banco $l.total $true);st_centavos=(Centavos-Banco $l.st $false);nf_cupom=[bool]$l.nf_cupom
+        }
+        [void]$itens.Add($item);$cont.cnpj++
+        if($l.nf_cupom){$cont.nf_pdv++}
+    }
+    return @{itens=$itens.ToArray();contagens=$cont}
+}
+$ModuloNF=@{
+    nome='nf';codigo=6;intervaloMin=60;intervaloErroMin=15
+    consultas=@{
+        lista=@{
+            maxLinhas=10000;parametros=@('desde','ate');colunas=@('filial','cd_nota','numero','serie','dt','cd_cliente','cd_pedido','produtos','total','st','nf_cupom')
+            sql=$ConsultasAprovadas['nf.lista']
+            simulacao={param($v)
+                ,@(@{filial=4;cd_nota=550;numero=550;serie='1';dt=$v.desde.AddHours(18.5);cd_cliente=900;cd_pedido=538;produtos=[decimal]21643.20;total=[decimal]24211.21;st=[decimal]2334.58;nf_cupom=$false})
+            }
+        }
+        clientes=@{
+            maxLinhas=20000;parametros=@('desde','ate');colunas=@('codigo_parceiro','documento');sql=$ConsultasAprovadas['nf.clientes']
+            simulacao={param($v) ,@(@{codigo_parceiro=900;documento='11222333000181'})}
+        }
+    }
+}
+function Modulo-NF($Modulo){
+    $hoje=Hoje-SaoPaulo;$desde=[datetime]'2026-05-29'
+    if($desde -lt $hoje.AddDays(-400)){$desde=$hoje.AddDays(-400)}
+    if($BackfillNFDesde){$desde=[datetime]::ParseExact($BackfillNFDesde,'yyyy-MM-dd',$Invariant)}
+    if($TestarNF){$desde=$hoje.AddDays(-2);if($desde -lt [datetime]'2026-05-29'){$desde=[datetime]'2026-05-29'}}
+    $janelas=Janelas-Margem $desde $hoje.AddDays(1)
+    $ok=$true
+    foreach($j in $janelas){
+        $sessao=$null;$normal=$null;$coleta=$null
+        try{
+            $sessao=Abrir-Sessao
+            $linhas=Executar-Consulta $sessao $Modulo 'lista' @{desde=$j.desde;ate=$j.ate}
+            $clientes=Executar-Consulta $sessao $Modulo 'clientes' @{desde=$j.desde;ate=$j.ate}
+            $normal=Normalizar-NF $linhas $clientes $j.desde $j.ate
+            $coleta=[DateTimeOffset]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'",$Invariant)
+        }catch{
+            $ok=$false
+            Log ('ERRO nf fase=consulta motivo={0}; janela anterior preservada. execucao={1}' -f (Descrever-Erro $_),$ExecucaoId)
+            continue
+        }finally{Fechar-Sessao $sessao}
+        $enviado='nao'
+        try{
+            if($Real -and -not $Simular -and -not $Testar){
+                $resp=Chamar-Rpc 'solidcon_receber_vendas_nf' @{
+                    p_inicio=$j.desde.ToString('yyyy-MM-dd');p_fim=$j.ate.AddDays(-1).ToString('yyyy-MM-dd')
+                    p_itens=[object[]]$normal.itens;p_coletado_em=$coleta;p_execucao_id=$ExecucaoId
+                }
+                if((Campo $resp 'status') -cne 'ok'){
+                    $motivoNF=[string](Campo $resp 'motivo')
+                    if($motivoNF -cnotin @('intervalo_invalido','coleta_invalida','payload_invalido','limite_excedido','campos_invalidos','data_invalida','nota_invalida','numero_invalido','pedido_invalido','nota_duplicada','conflito_execucao','snapshot_antigo')){$motivoNF='resposta_invalida'}
+                    $ok=$false;Log ('ERRO nf fase=rpc motivo={0}; janela anterior preservada. execucao={1}' -f $motivoNF,$ExecucaoId);continue
+                }
+                $enviado='sim'
+            }
+        }catch{
+            $ok=$false;Log ('ERRO nf fase=envio; janela anterior preservada. execucao={0}' -f $ExecucaoId);continue
+        }
+        # Mesmo em modo teste: nunca gravar arquivo de notas/documentos; so contagens.
+        Log ('OK nf modo={0}{1} inicio={2} fim={3} cnpj={4} sem_cnpj={5} vinculadas_pdv={6} enviado={7} execucao={8}' -f
+            $Cfg.modo,$(if($Simular){' SIMULADO'}else{''}),$j.desde.ToString('yyyy-MM-dd'),$j.ate.AddDays(-1).ToString('yyyy-MM-dd'),
+            $normal.contagens.cnpj,$normal.contagens.sem_cnpj,$normal.contagens.nf_pdv,$enviado,$ExecucaoId)
+    }
+    if(-not $ok){throw 'modulo-com-erro'}
+}
+
 $Modulos = @(
     @{ def = $ModuloSaude; funcao = 'Modulo-Saude' }
     @{ def = $ModuloReceber; funcao = 'Modulo-Receber' }
     @{ def = $ModuloMargem; funcao = 'Modulo-Margem' }
     @{ def = $ModuloPedidos; funcao = 'Modulo-Pedidos' }
+    @{ def = $ModuloNF; funcao = 'Modulo-NF' }
 )
 
 # Dot-source (testes) carrega so as funcoes e definicoes.
@@ -1505,7 +1618,12 @@ try {
     if ($null -ne $chaveCx -and $chaveCx -isnot [bool]) { throw 'pedidos_enviar_caixas deve ser true ou false' }
     $EnviarCaixas = ($chaveCx -eq $true)
     if ($SimularFalha -and -not $Simular) { throw '-SimularFalha exige -Simular' }
-    if ($Testar -and ($BackfillMargemDesde -or $Forcar)) { throw '-Testar nao combina com -BackfillMargemDesde/-Forcar' }
+    if ($TestarNF) { $Testar=$true }
+    $chaveNF=Campo $Cfg 'nf_saida'
+    if ($null -ne $chaveNF -and $chaveNF -isnot [bool]) { throw 'nf_saida deve ser true ou false' }
+    $NfAtiva=($chaveNF -eq $true)
+    if ($BackfillNFDesde -and (-not $NfAtiva -or $BackfillMargemDesde)) { throw 'backfill NF exige nf_saida=true e nao combina com margem' }
+    if ($Testar -and ($BackfillMargemDesde -or $BackfillNFDesde -or $Forcar)) { throw '-Testar nao combina com -BackfillMargemDesde/-Forcar' }
     if ([string]::IsNullOrWhiteSpace([string](Campo $Cfg 'pastaSaida')) -or -not [IO.Path]::IsPathRooted($Cfg.pastaSaida)) {
         throw 'pastaSaida deve ser absoluta'
     }
@@ -1551,6 +1669,7 @@ try {
     }
     $falhos = @()
     $listaModulos = $Modulos
+    if (-not $NfAtiva -and -not $TestarNF) { $listaModulos=@($listaModulos | Where-Object {$_.def.nome -cne 'nf'}) }
     if ($BackfillMargemDesde) {
         $Fase = 'backfill'
         $Mensagem = 'Backfill da margem: data invalida (minimo 2026-05-29, nao futura).'
@@ -1561,17 +1680,24 @@ try {
         # Backfill: so a margem, sem agenda (nao adia nem antecipa o ciclo normal).
         $listaModulos = @($Modulos | Where-Object { $_.def.nome -ceq 'margem' })
     }
+    if ($BackfillNFDesde) {
+        $Fase='backfill-nf';$Mensagem='Backfill NF: data invalida (minimo2026-05-29, retencao400dias, nao futura).'
+        $dataNF=[datetime]::ParseExact($BackfillNFDesde,'yyyy-MM-dd',$Invariant);$hojeNF=Hoje-SaoPaulo
+        if($dataNF -lt [datetime]'2026-05-29' -or $dataNF -lt $hojeNF.AddDays(-400) -or $dataNF -gt $hojeNF){throw 'backfill invalido'}
+        $listaModulos=@($Modulos | Where-Object {$_.def.nome -ceq 'nf'})
+    }
     if ($Testar) {
         # Conferencia: so pedidos, sem agenda, sem Supabase, sem arquivo de estado.
         $Fase = 'testar'
-        $listaModulos = @($Modulos | Where-Object { $_.def.nome -ceq 'pedidos' })
+        $alvoTeste=if($TestarNF){'nf'}else{'pedidos'}
+        $listaModulos = @($Modulos | Where-Object { $_.def.nome -ceq $alvoTeste })
     }
     foreach ($m in $listaModulos) {
         $Fase = 'modulo-' + $m.def.nome
         # Agenda: ler e RESERVAR antes de consultar (grava o intervalo de erro). Se o estado
         # local nao pode ser lido ou gravado, o modulo nao consulta (sem limite = sem coleta).
         try {
-            if (-not $BackfillMargemDesde -and -not $Testar) {
+            if (-not $BackfillMargemDesde -and -not $BackfillNFDesde -and -not $Testar) {
                 if (-not (Modulo-Devido $m.def)) { continue }
                 Agendar-Modulo $m.def $false
             }
@@ -1584,7 +1710,7 @@ try {
             # Consulta fora da whitelist/aprovacao: o modulo nem abre conexao.
             foreach ($nc in $m.def.consultas.Keys) { $null = Validar-ConsultaFixa ($m.def.nome + '.' + $nc) $m.def.consultas[$nc].sql }
             & $m.funcao $m.def
-            try { if (-not $BackfillMargemDesde -and -not $Testar) { Agendar-Modulo $m.def $true } }
+            try { if (-not $BackfillMargemDesde -and -not $BackfillNFDesde -and -not $Testar) { Agendar-Modulo $m.def $true } }
             catch {
                 # Coletou, mas a agenda de sucesso nao gravou: vale a reserva (15 min) e o modulo sai com erro.
                 $falhos += $m.def

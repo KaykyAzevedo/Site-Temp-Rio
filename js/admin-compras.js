@@ -1,5 +1,6 @@
-/* Historico comercial1A: cupons PDV + pedidos faturados sem cupom correspondente.
- * Somente calculo no painel, sem gravacao. NF e origem provisoria por pedido, nao nota fiscal consultada.
+/* Historico comercial: PDV + NF oficial060; pedidos1A somente nas lacunas.
+ * juntar conserva o contrato1A (NF provisoria por pedido); juntarFontes acrescenta NF consultada/cobertura.
+ * Somente calculo no painel, sem gravacao.
  * Casamento exato CNPJ/centavos/dia inclusivo: diaPedidoSP..diaFaturamentoSP+5. Cupom e pedido usados uma vez.
  */
 (function (raiz) {
@@ -54,7 +55,57 @@
         });
         return res;
     }
-    var api = { juntar: juntar };
+    // 1B: a cobertura diária distingue "nenhuma NF válida" de "dia ainda não coletado".
+    // Um dia coberto não pode ressuscitar nota cancelada através do pedido provisório.
+    function juntarFontes(cupons, pedidos, notas, cobertura) {
+        if (notas == null && cobertura == null) {
+            var antigo = juntar(cupons, pedidos);
+            antigo.notas = []; antigo.nfPDV = []; antigo.nfSemPdv = 0; antigo.nfInstalada = false;
+            return antigo;
+        }
+        if (!Array.isArray(notas) || !Array.isArray(cobertura)) throw new Error('Histórico NF incompleto.');
+        var dias = Object.create(null), porPedido = Object.create(null), vistos = Object.create(null), oficiais = [], pdv = [], cuponsPorValor = Object.create(null);
+        (cupons || []).forEach(function (c) { if (c.tipo === 'cnpj') cuponsPorValor[cnpj(c.documento) + ':' + c.dia + ':' + centavos(c.valor_centavos)] = true; });
+        cobertura.forEach(function (x) {
+            if (!x || !/^\d{4}-\d{2}-\d{2}$/.test(x.dia)) throw new Error('Cobertura NF inválida.');
+            dias[x.dia] = true;
+        });
+        notas.forEach(function (n) {
+            var cd = Number(n.cd_nota), doc = cnpj(n.documento);
+            if (!Number.isSafeInteger(cd) || cd < 1 || !doc || centavos(n.valor_centavos) == null ||
+                centavos(n.total_nota_centavos) == null || (n.st_centavos != null && centavos(n.st_centavos) == null)) throw new Error('Nota fiscal inválida.');
+            if (vistos[cd]) {
+                if (JSON.stringify(vistos[cd]) !== JSON.stringify(n)) throw new Error('Nota fiscal repetida com dados diferentes.');
+                return;
+            }
+            vistos[cd] = n;
+            var linha = Object.assign({}, n, { documento: doc, tipo: 'cnpj', origem: 'NF', provisoria: false });
+            oficiais.push(linha);
+            if (n.cd_pedido != null) porPedido[doc + ':' + n.cd_pedido] = true;
+            if (n.nf_cupom === true) pdv.push(linha);
+        });
+        var lacunas = (pedidos || []).filter(function (p) {
+            var em = R.faturadoEm(p);
+            return !porPedido[cnpj(p.documento) + ':' + p.cd_pedido] && (!em || !dias[R.diaSP(em)]);
+        });
+        var res = juntar(cupons, lacunas);
+        res.linhas = res.linhas.map(function (l) { return l.origem === 'NF' ? Object.assign({}, l, { provisoria: true }) : l; });
+        oficiais.forEach(function (n) {
+            if (!res.clientes[n.documento]) res.clientes[n.documento] = { nome: n.cliente_nome || '' };
+            // Flag de vínculo no ERP: a fonte de valor é o PDV, não somar novamente.
+            if (n.nf_cupom !== true) res.linhas.push(n);
+        });
+        res.nfSemPdv = pdv.filter(function (n) { return !cuponsPorValor[n.documento + ':' + n.dia + ':' + centavos(n.valor_centavos)]; }).length;
+        var total = 0;
+        res.linhas.forEach(function (l) {
+            var valor = centavos(l.valor_centavos);
+            if (valor == null || !Number.isSafeInteger(total + valor)) throw new Error('Total de compras fora do limite de precisão.');
+            total += valor;
+        });
+        res.notas = oficiais; res.nfPDV = pdv; res.nfInstalada = true;
+        return res;
+    }
+    var api = { juntar: juntar, juntarFontes: juntarFontes };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     raiz.TempRioCompras = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
