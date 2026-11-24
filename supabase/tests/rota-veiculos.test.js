@@ -223,7 +223,7 @@ test('WhatsApp coletarRota: lê rota_veiculos (047); sem a tabela = padrões; ma
     const sb = (t) => ({
         from(nome) {
             let linhas = (t[nome] || []).slice(); const erro = t[nome] ? null : { code: 'PGRST205', message: 'Could not find the table public.' + nome };
-            const b = { select() { return b; }, order() { return b; }, in(cc, v) { linhas = linhas.filter((r) => v.includes(r[cc])); return b; }, eq(cc, v) { linhas = linhas.filter((r) => r[cc] === v); return b; },
+            const b = { select() { return b; }, order() { return b; }, is(cc, v) { linhas = linhas.filter(r => r[cc] == v); return b; }, in(cc, v) { linhas = linhas.filter((r) => v.includes(r[cc])); return b; }, eq(cc, v) { linhas = linhas.filter((r) => r[cc] === v); return b; },
                         limit() { return b; }, range(a, z) { linhas = linhas.slice(a, z + 1); return b; }, then(ok, er) { return Promise.resolve({ data: erro ? null : linhas, error: erro }).then(ok, er); } };
             return b;
         },

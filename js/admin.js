@@ -6698,11 +6698,11 @@
         { id: 'separando', titulo: 'Separando', etapas: ['separando'], data: 'dt_sep_inicio', icone: 'fa-boxes-packing', cor: 'separando', dica: 'O estoque está pegando os produtos agora.', vazio: 'Ninguém separando no momento.' },
         { id: 'separado', titulo: 'Separado', etapas: ['separado'], data: 'dt_sep_fim', icone: 'fa-box', cor: 'separado', dica: 'Produtos separados; falta conferir.', vazio: 'Nada separado esperando conferência.' },
         { id: 'conferido', titulo: 'Conferido', etapas: ['conferido'], data: 'dt_conferencia', icone: 'fa-clipboard-check', cor: 'conferido', dica: 'Conferido e pronto para sair.', vazio: 'Nada conferido esperando saída.' },
-        { id: 'enviado', titulo: 'Enviado', etapas: ['saiu'], data: 'dt_saida', icone: 'fa-truck-fast', cor: 'enviado', dica: 'Saiu para entrega', vazio: 'Nenhum pedido em rota de entrega.' },
-        { id: 'recebido', titulo: 'Recebido', etapas: ['atendido'], data: 'dt_atendido', icone: 'fa-circle-check', cor: 'recebido', dica: 'Entregue ao cliente', vazio: 'Nenhum pedido entregue por aqui.' }
+        { id: 'enviado', titulo: 'Enviado', etapas: ['saiu', 'atendido'], data: 'dt_saida', icone: 'fa-truck-fast', cor: 'enviado', dica: 'Faturado no ERP; entrega ainda sem canhoto.', vazio: 'Nenhum pedido faturado sem canhoto.' },
+        { id: 'recebido', titulo: 'Recebido', etapas: [], data: null, icone: 'fa-circle-check', cor: 'recebido', dica: 'Entrega comprovada por canhoto ativo.', vazio: 'Nenhuma entrega com canhoto por aqui.' }
     ];
     // Coluna visual de cada etapa do pedido (Aberto reúne aberto + na_carga; desconhecida cai em Aberto = 0).
-    var PE_VISUAL = { aberto: 0, na_carga: 0, separando: 1, separado: 2, conferido: 3, saiu: 4, atendido: 5 };
+    var PE_VISUAL = { aberto: 0, na_carga: 0, separando: 1, separado: 2, conferido: 3, saiu: 4, atendido: 4 };
     function peIndiceColuna(etapa) {
         return Object.prototype.hasOwnProperty.call(PE_VISUAL, etapa) ? PE_VISUAL[etapa] : 0;
     }
@@ -6747,16 +6747,16 @@
         return '<div class="adm-kanban-vazio">' + icoFa(icone) + '<span>' + esc(texto) + '</span></div>';
     }
     var PE_DATA_ETAPA = { aberto: 'dt_pedido', na_carga: 'dt_carga', separando: 'dt_sep_inicio', separado: 'dt_sep_fim', conferido: 'dt_conferencia', saiu: 'dt_saida', atendido: 'dt_atendido' };
-    var PE_ROTULO_ETAPA = { aberto: 'Aberto', na_carga: 'Na carga', separando: 'Separando', separado: 'Separado', conferido: 'Conferido', saiu: 'Enviado', atendido: 'Recebido' };
-    var PE_COLS = 'cd_pedido,dt_pedido,etapa,dt_carga,dt_sep_inicio,dt_sep_fim,dt_conferencia,dt_saida,dt_atendido,cliente_tipo,documento,cliente_nome,nr_carga,valor_centavos';
+    var PE_ROTULO_ETAPA = { aberto: 'Aberto', na_carga: 'Na carga', separando: 'Separando', separado: 'Separado', conferido: 'Conferido', saiu: 'faturado em', atendido: 'faturado em' };
+    var PE_COLS = 'cd_pedido,dt_pedido,etapa,dt_carga,dt_sep_inicio,dt_sep_fim,dt_conferencia,dt_saida,dt_nota,dt_atendido,cliente_tipo,documento,cliente_nome,nr_carga,valor_centavos';
     var PE_VELHO_MIN = 30;
     var PE_MODO_CHAVE = 'adm.peModo';
     var pe = { carregado: false, carregando: false, erro: null, ausente: false, itens: [], coletado: null, seq: 0,
                // 052 (opcional): canhotos ativos { cd_pedido: [{caminho, enviado_em, origem}] }, tabela lida?, pode anexar?
                canhotos: {}, can052: false, podeMarcar: false };
-    // Coluna do pedido: "saiu" COM foto do canhoto (052) = Recebido (a marca é do painel; o ERP é só leitura).
-    function peIndice(x) { return x && x.etapa === 'saiu' && pe.canhotos[x.cd_pedido] ? PE_VISUAL.atendido : peIndiceColuna(x && x.etapa); }
-    function peTemCanhoto(x) { return !!(x && pe.canhotos[x.cd_pedido]); }
+    // Canhoto ativo (052) comprova recebimento; saiu/atendido sem canhoto são só faturamento.
+    function peIndice(x) { return peTemCanhoto(x) ? 5 : peIndiceColuna(x && x.etapa); }
+    function peTemCanhoto(x) { return !!x && window.TempRioRotaCore.temCanhoto(pe.canhotos, x.cd_pedido); }
     var peOrigem = null, peSegmento = 'aberto';   // peOrigem: null = automático (ERP quando não há pedidos do site)
     var peModo = (function () {
         try { return localStorage.getItem(PE_MODO_CHAVE) === 'detalhado' ? 'detalhado' : 'compacto'; }
@@ -6786,9 +6786,11 @@
             pe.canhotos = {}; pe.can052 = !!(rs[2] && !rs[2].error);
             if (pe.can052) (rs[2].data || []).forEach(function (c) { (pe.canhotos[c.cd_pedido] || (pe.canhotos[c.cd_pedido] = [])).push(c); });
             pe.podeMarcar = !!(rs[3] && !rs[3].error && rs[3].data === true);
-            if (rs[0].error) {
-                pe.ausente = solidTabelaAusente(rs[0].error);
-                pe.erro = pe.ausente ? null : String(rs[0].error.message || rs[0].error);
+            var erroLeitura = rs[0].error || (rs[2].error && !solidTabelaAusente(rs[2].error) ? rs[2].error : null);
+            if ((rs[2].data || []).length >= 50000) erroLeitura = { message: 'Limite de leitura de canhotos atingido; atualizacao incompleta.' };
+            if (erroLeitura) {
+                pe.ausente = !!rs[0].error && solidTabelaAusente(rs[0].error);
+                pe.erro = pe.ausente ? null : String(erroLeitura.message || erroLeitura);
                 pe.carregado = false; pe.itens = []; pe.coletado = null;
             } else {
                 pe.ausente = false; pe.erro = null; pe.carregado = true; pe.itens = rs[0].data || [];
@@ -6822,10 +6824,9 @@
     function peHora(iso) {
         var d = new Date(iso);
         if (isNaN(d.getTime())) return '';
-        var dia = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
-        if (!d.getHours() && !d.getMinutes()) return dia;   // data sem hora (meia-noite): só o dia
-        var hoje = new Date().toDateString() === d.toDateString();
-        return (hoje ? '' : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ' ') + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        var tz = 'America/Sao_Paulo';
+        var dia = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', timeZone: tz });
+        return dia + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: tz });
     }
     // valor_centavos null/ausente = sem valor coletado: nada na tela (nunca "R$ 0,00" inventado).
     function peTemValor(x) { return x.valor_centavos != null && isFinite(Number(x.valor_centavos)); }
@@ -6857,7 +6858,7 @@
 
     function peCartaoCompacto(x) {
         var nome = String(x.cliente_tipo) === 'cnpj' && x.cliente_nome ? x.cliente_nome : 'Consumidor final';
-        var dEtapa = x[PE_DATA_ETAPA[x.etapa]];
+        var dEtapa = window.TempRioRotaCore.etapaEnviada(x) ? window.TempRioRotaCore.faturadoEm(x) : x[PE_DATA_ETAPA[x.etapa]];
         var col = PE_COLUNAS[peIndice(x)] || PE_COLUNAS[0];
         var ref = x.etapa === 'aberto' ? x.dt_pedido : (dEtapa || x.dt_pedido);
         var loc = peLocalInfo(x);
@@ -6873,12 +6874,13 @@
                 (icoCarga || ponto ? '<span class="adm-pe-comp-ind">' + icoCarga + ponto + '</span>' : '') +
             '</div>' +
             '<p class="adm-pe-comp-bairro' + (loc.semBairro ? ' is-sem-bairro' : '') + '" title="' + esc(loc.texto) + '">' + esc(loc.texto) + '</p>' +
+            (window.TempRioRotaCore.etapaEnviada(x) && dEtapa ? '<p class="adm-pe-comp-bairro">faturado em ' + esc(peHora(dEtapa)) + '</p>' : '') +
         '</div>';
     }
 
     function peCartaoDetalhado(x, noModal) {
         var nome = String(x.cliente_tipo) === 'cnpj' && x.cliente_nome ? x.cliente_nome : 'Consumidor final';
-        var dEtapa = x[PE_DATA_ETAPA[x.etapa]];
+        var dEtapa = window.TempRioRotaCore.etapaEnviada(x) ? window.TempRioRotaCore.faturadoEm(x) : x[PE_DATA_ETAPA[x.etapa]];
         var col = PE_COLUNAS[peIndice(x)] || PE_COLUNAS[0];
         var ref = x.etapa === 'aberto' ? x.dt_pedido : (dEtapa || x.dt_pedido);
         var loc = peLocalInfo(x);
@@ -7066,7 +7068,7 @@
               '<input type="file" id="pe-canhoto-in" class="sr-only" accept="image/jpeg,image/png,image/webp" data-canhoto-cd="' + esc(cd) + '"' + busy + '>'
             : '';
         return '<section class="adm-pe-canhoto" aria-labelledby="pe-canhoto-tit"><p class="adm-pe-canhoto-tit" id="pe-canhoto-tit">' + icoFa('fa-file-signature') + 'Canhoto</p>' +
-            (lista.length ? '<ul class="adm-pe-canhoto-lista">' + itens + '</ul>' : '<p class="adm-pe-canhoto-vazio">Nenhuma foto do canhoto. ' + (x.etapa === 'saiu' ? 'Com a foto, o pedido passa para "Recebido".' : '') + '</p>') +
+            (lista.length ? '<ul class="adm-pe-canhoto-lista">' + itens + '</ul>' : '<p class="adm-pe-canhoto-vazio">Nenhuma foto do canhoto. Com o canhoto assinado, o pedido passa para "Recebido".</p>') +
             anexar + (peCan.msg ? '<p class="adm-pe-canhoto-msg" role="status" id="pe-canhoto-msg" tabindex="-1">' + esc(peCan.msg) + '</p>' : '') + '</section>';
     }
     function peCanhotoRedesenhar(x, foco) {
@@ -7103,7 +7105,7 @@
             peCan.ocupado = true; peCan.msg = 'Enviando a foto…'; peCanhotoRedesenhar(x, '#pe-canhoto-msg');
             window.TempRioCanhoto.reduzir(f).then(function (blob) {
                 return window.TempRioCanhoto.enviar(sb, blob, [Number(x.cd_pedido)], { substituir: trocar });
-            }).then(function () { peCanhotoRecarregar(x, trocar ? 'Foto do canhoto trocada.' : 'Foto do canhoto anexada' + (x.etapa === 'saiu' ? ': o pedido passou para "Recebido".' : '.')); },
+            }).then(function () { peCanhotoRecarregar(x, trocar ? 'Foto do canhoto trocada.' : 'Foto do canhoto anexada: o pedido passou para "Recebido".'); },
                 function (e) { peCan.ocupado = false; peCan.msg = 'Não foi possível enviar a foto: ' + peCanhotoErro(e) + '.'; peCanhotoRedesenhar(x, '#pe-canhoto-msg'); });
         });
         el.querySelectorAll('[data-canhoto-remover]').forEach(function (b) {

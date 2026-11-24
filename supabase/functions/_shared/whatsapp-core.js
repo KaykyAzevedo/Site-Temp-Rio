@@ -142,6 +142,14 @@
             return sb.from('solidcon_clientes').select('documento,nome,bairro').in('documento', b).then(function (r) { if (r.error) throw erroDe(r); return r.data || []; });
         }).then(function (rows) { var m = {}; rows.forEach(function (c) { m[c.documento] = c; }); return m; });
     }
+    function coletarCanhotos(sb) {
+        return todas(function () { return sb.from('pedido_canhoto').select('cd_pedido').is('substituido_em', null).order('id', { ascending: true }); }, 50000)
+            .then(function (rows) {
+                if (rows.length >= 50000) throw new Error('limite de leitura de canhotos atingido; nao e seguro montar a mensagem');
+                var m = {}; rows.forEach(function (c) { m[c.cd_pedido] = true; }); return m;
+            })
+            .catch(function (e) { if (ausente(e, 'pedido_canhoto')) return {}; throw e; });
+    }
 
     function coletarReceber(sb) {
         return Promise.all([
@@ -205,7 +213,8 @@
             opcional('rota_cliente_regras', function () { return sb.from('rota_cliente_regras').select('documento,janela_inicio,janela_fim,dias_sem_receber,prioridade,observacao').order('documento', { ascending: true }); }),
             opcional('rota_pedido_ignorado', function () { return sb.from('rota_pedido_ignorado').select('cd_pedido').order('cd_pedido', { ascending: true }); }),
             // 047 (opcional): a frota. Ausente = os 3 padrões do rota-core; presente com erro de leitura = rejeita.
-            opcional('rota_veiculos', function () { return sb.from('rota_veiculos').select('id,nome,modo,capacidade_volume,dias_sem_saida,volta_sede,cor,ordem,ativo').order('id', { ascending: true }); })
+            opcional('rota_veiculos', function () { return sb.from('rota_veiculos').select('id,nome,modo,capacidade_volume,dias_sem_saida,volta_sede,cor,ordem,ativo').order('id', { ascending: true }); }),
+            coletarCanhotos(sb)
         ]).then(function (rs) {
             var pedidos = rs[0], docs = {};
             pedidos.forEach(function (p) { if (p.documento) docs[p.documento] = true; });
@@ -237,7 +246,7 @@
                                          cidade: c.cidade, pos: tem ? [lat, lng] : null, precisao: tem ? c.precisao : null };
                 });
                 var d = { pedidos: pedidos, clientes: cli, cfg: core.cfgDe(cfgLinha || core.CFG_PADRAO), excecoes: excecoes, coletado: sy ? sy.coletado_em : null,
-                          ignorados: ignorados, veiculos: rs[7] };   // null = sem a 047 (padrões)
+                          ignorados: ignorados, veiculos: rs[7], canhotos: rs[8] };   // null = sem a 047 (padrões)
                 if (v2) { d.v2 = true; d.porPedido = porPedido; d.regras = regras; }
                 return d;
             });
@@ -268,8 +277,8 @@
         }
         return Promise.all([
             todas(function () {
-                return sb.from('solidcon_pedidos_erp').select('cd_pedido,dt_pedido,etapa,cliente_tipo,documento,cliente_nome')
-                    .in('etapa', ROTA.ETAPAS_PENDENTES).lt('dt_pedido', iso(t - WA.PARADO_ERP_DIAS * 864e5)).order('dt_pedido', { ascending: true });
+                return sb.from('solidcon_pedidos_erp').select('cd_pedido,dt_pedido,etapa,dt_saida,dt_nota,dt_atendido,cliente_tipo,documento,cliente_nome')
+                    .in('etapa', ROTA.ETAPAS_PENDENTES).order('dt_pedido', { ascending: true });
             }, 5000),
             todas(function () {
                 return sb.from('pedidos').select('id,criado_em').eq('status', 'aguardando')
@@ -279,11 +288,14 @@
             todas(function () {
                 return sb.from('solidcon_eventos').select('nome,tipo,em').in('tipo', ['esgotou', 'estoque_baixo'])
                     .gte('em', iso(t - WA.ESTOQUE_HORAS * 36e5)).order('em', { ascending: false });
-            }, 2000).catch(function (e) { if (ausente(e)) return null; throw e; })
+            }, 2000).catch(function (e) { if (ausente(e)) return null; throw e; }),
+            coletarCanhotos(sb)
         ]).then(function (rs) {
-            var docs = {}; rs[0].forEach(function (p) { if (p.documento) docs[p.documento] = true; });
+            var parados = rs[0].filter(function (p) { return !core.temCanhoto(rs[4], p.cd_pedido) &&
+                (core.etapaEnviada(p) ? core.enviadoAntigo(p, rs[4], core.diaSP(agora)) : Date.parse(p.dt_pedido) < t - WA.PARADO_ERP_DIAS * 864e5); });
+            var docs = {}; parados.forEach(function (p) { if (p.documento) docs[p.documento] = true; });
             return nomesDe(sb, Object.keys(docs)).then(function (nomes) {
-                return { parados: rs[0], nomes: nomes, siteAguardando: rs[1], coletas: rs[2].filter(Boolean), estoque: rs[3] };
+                return { parados: parados, nomes: nomes, siteAguardando: rs[1], coletas: rs[2].filter(Boolean), estoque: rs[3] };
             });
         });
     }
@@ -481,7 +493,7 @@
     }
     function opcoesRota(d) {
         return { cfg: d.cfg, excecoes: d.excecoes, marcacao: !!d.v2, padroes: d.excecoes, porPedido: d.porPedido || {},
-                 regras: d.regras || {}, ignorados: d.ignorados || {}, veiculos: d.veiculos, fechada: d.fechada || null,
+                 regras: d.regras || {}, ignorados: d.ignorados || {}, veiculos: d.veiculos, fechada: d.fechada || null, canhotos: d.canhotos || {},
                  projetarSeparando: false };   // fechada: mensagem usa somente inclusao confirmada pela054
     }
     function montarRota(d, veiculo, agora, opts) {
@@ -561,7 +573,10 @@
                 var nm = p.cliente_tipo === 'cnpj'
                     ? nomeCurto((p.documento && d.nomes && d.nomes[p.documento] && d.nomes[p.documento].nome) || p.cliente_nome || 'cliente', 24)
                     : nomeNeutro(p.cliente_tipo);
-                return '#' + p.cd_pedido + ' ' + nm + ' (' + Math.floor((t - new Date(p.dt_pedido).getTime()) / 864e5) + 'd)';
+                var faturado = core.etapaEnviada(p), dias = faturado
+                    ? Math.round((Date.parse(hoje + 'T12:00:00Z') - Date.parse(core.diaSP(core.faturadoEm(p)) + 'T12:00:00Z')) / 864e5)
+                    : Math.floor((t - new Date(p.dt_pedido).getTime()) / 864e5);
+                return '#' + p.cd_pedido + ' ' + nm + ' (' + dias + 'd' + (faturado ? ' faturado sem canhoto' : '') + ')';
             });
             itens.push(plural(d.parados.length, 'pedido do ERP parado', 'pedidos do ERP parados') + ' há mais de ' + WA.PARADO_ERP_DIAS + ' dias: ' + ex.join(', ') + (d.parados.length > 3 ? '…' : ''));
         }
@@ -594,10 +609,9 @@
     // Fonte: solidcon_pedidos_erp (a mesma do Kanban "Pedidos" do painel). Regra (por pedido, dia de São Paulo):
     //   Entrou    = dt_pedido no dia (qualquer etapa agora);
     //   Tá pronto = etapa 'conferido' AGORA (= coluna "Conferido" do Kanban, sem filtro de dia);
-    //   Enviou    = etapa 'saiu' com dt_saida no dia OU 'atendido' com dt_atendido no dia (= colunas "Enviado"/"Recebido"
-    //               do Kanban pela data da própria coluna, filtradas no dia).
+    //   Enviou = saiu/atendido com faturamento no dia (saida > nota > atendido); NAO comprova entrega.
     // O Kanban não tem filtro "do dia" (mostra a etapa atual de todos); o recorte por dia é só desta mensagem.
-    var ABA_PEDIDOS = 'pedidos', PED_COLS = 'cd_pedido,dt_pedido,etapa,dt_conferencia,dt_saida,dt_atendido,cliente_tipo,documento,cliente_nome,valor_centavos,caixas_24,caixas_48,caixas_outras';
+    var ABA_PEDIDOS = 'pedidos', PED_COLS = 'cd_pedido,dt_pedido,etapa,dt_conferencia,dt_saida,dt_nota,dt_atendido,cliente_tipo,documento,cliente_nome,valor_centavos,caixas_24,caixas_48,caixas_outras';
     var PED_COLETA_VELHA_MIN = WA.COLETA_PARADA_MIN + 5;   // coletor de pedidos roda a cada 5 min
     function coletarPedidosDia(sb, agora) {
         // margem de 1 dia antes da meia-noite de SP; o recorte exato é por core.diaSP em montarPedidosDia.
@@ -606,14 +620,14 @@
         return Promise.all([
             todas(function () { return q().gte('dt_pedido', desde).order('cd_pedido', { ascending: true }); }, 20000),
             todas(function () { return q().eq('etapa', 'conferido').order('cd_pedido', { ascending: true }); }, 20000),
-            todas(function () { return q().eq('etapa', 'saiu').gte('dt_saida', desde).order('cd_pedido', { ascending: true }); }, 20000),
-            todas(function () { return q().eq('etapa', 'atendido').gte('dt_atendido', desde).order('cd_pedido', { ascending: true }); }, 20000),
-            sb.from('solidcon_pedidos_erp_sync').select('coletado_em').eq('status', 'ok').order('coletado_em', { ascending: false }).limit(1)
+            todas(function () { return q().in('etapa', ['saiu', 'atendido']).order('cd_pedido', { ascending: true }); }, 20000),
+            sb.from('solidcon_pedidos_erp_sync').select('coletado_em').eq('status', 'ok').order('coletado_em', { ascending: false }).limit(1),
+            coletarCanhotos(sb)
         ]).then(function (rs) {
             var porCd = {}, pedidos = [], docs = {};
-            [rs[0], rs[1], rs[2], rs[3]].forEach(function (l) { l.forEach(function (p) { if (!porCd[p.cd_pedido]) { porCd[p.cd_pedido] = true; pedidos.push(p); if (p.documento) docs[p.documento] = true; } }); });
-            var sy = rs[4] && !rs[4].error && rs[4].data && rs[4].data[0];
-            return nomesDe(sb, Object.keys(docs)).then(function (nomes) { return { pedidos: pedidos, nomes: nomes, coletado: sy ? sy.coletado_em : null }; });
+            [rs[0], rs[1], rs[2]].forEach(function (l) { l.forEach(function (p) { if (!porCd[p.cd_pedido]) { porCd[p.cd_pedido] = true; pedidos.push(p); if (p.documento) docs[p.documento] = true; } }); });
+            var sy = rs[3] && !rs[3].error && rs[3].data && rs[3].data[0];
+            return nomesDe(sb, Object.keys(docs)).then(function (nomes) { return { pedidos: pedidos, nomes: nomes, coletado: sy ? sy.coletado_em : null, canhotos: rs[4] }; });
         });
     }
     function nomePedido(p, nomes, max) {
@@ -668,8 +682,8 @@
         (d.pedidos || []).forEach(function (p) {
             if (!p) return;
             if (noDia(p.dt_pedido)) entrou.push(p);
-            if (p.etapa === 'conferido') pronto.push(p);
-            if ((p.etapa === 'saiu' && noDia(p.dt_saida)) || (p.etapa === 'atendido' && noDia(p.dt_atendido))) enviou.push(p);
+            if (p.etapa === 'conferido' && !core.temCanhoto(d.canhotos, p.cd_pedido)) pronto.push(p);
+            if (core.etapaEnviada(p) && noDia(core.faturadoEm(p))) enviou.push(p);
         });
         // {{1}} "segunda, 23/11 às 17:00"; coleta do ERP atrasada ou ausente vai junto (os números podem estar velhos).
         var t = new Date(agora).getTime(), col = d.coletado ? new Date(d.coletado).getTime() : NaN;

@@ -89,7 +89,8 @@
                planoVeic: {}, semVeiculo: 's10', frotaSalvando: false, frotaEdit: null, msgFrota: '', focoFrota: null, mapaVeic: 's10',
                // 050 (rota do dia fechada): tabela lida? linha de hoje, foto (itens), erro de leitura, gravação, mensagem,
                // confirmação de "Reabrir" na tela e se o plano desenhado agora é o de HOJE FECHADO
-               fx050: false, fxLinha: null, fxFoto: null, fxErro: null, fxSalvando: false, msgFx: '', fxConfirmaReabrir: false, fxRender: false, focoFx: null };
+               fx050: false, fxLinha: null, fxFoto: null, fxErro: null, fxSalvando: false, msgFx: '', fxConfirmaReabrir: false, fxRender: false, focoFx: null,
+               canhotos: {} };
     var NUM = new Intl.NumberFormat('pt-BR'), NUM1 = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 });
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
     function brl(c) { return c == null ? '—' : (Number(c) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
@@ -160,10 +161,13 @@
             // 050 (opcional): rota de HOJE fechada (foto), cabeçalho + itens numa leitura só (Sentinela RF-1). Ausente = previsão viva.
             sb.rpc('rota_050_ler', { p_data: hojeSP() }),
             // 051 (opcional): paradas feitas pelo motorista hoje ("4 de 9 feitas"). Ausente = sem o contador.
-            sb.from('rota_saida_progresso').select('veiculo_id,ordem').eq('data', hojeSP())
+            sb.from('rota_saida_progresso').select('veiculo_id,ordem').eq('data', hojeSP()),
+            paginar(function () { return sb.from('pedido_canhoto').select('cd_pedido').is('substituido_em', null).order('id', { ascending: true }); }, 50000)
         ]).then(function (rs) {
             if (seq !== st.seq) return;
             if (rs[0].error) throw rs[0].error;
+            if (rs[15].error && !tabelaAusente(rs[15].error, 'pedido_canhoto')) throw rs[15].error;
+            if ((rs[15].data || []).length >= 50000) throw new Error('Limite de leitura de canhotos atingido; nao e seguro calcular a rota.');
             var pedidos = rs[0].data || [];
             var docs = {}; pedidos.forEach(function (p) { if (p.documento) docs[p.documento] = true; });
             var lista = Object.keys(docs);
@@ -205,6 +209,7 @@
                 if (!rp) mapa.forEach(posDe);   // sem a 041: posição vem do mapa (comportamento anterior)
                 if (rp && rp.linhas) rp.linhas.forEach(posDe);
                 st.pedidos = pedidos; st.clientes = cli;
+                st.canhotos = {}; (rs[15].data || []).forEach(function (c) { st.canhotos[c.cd_pedido] = true; });
                 st.temCaixas = pedidos.some(function (p) { return 'caixas_24' in p; });
                 var sy = rs[1] && !rs[1].error && rs[1].data && rs[1].data[0];
                 st.coletado = sy ? sy.coletado_em : null;
@@ -1512,6 +1517,14 @@
                     '<td data-rotulo="Veículo">' + (st.v2 ? seletorPedidoV2(x, nome, false) : seloMotivo(x) + menuVeiculo(x.p.documento, nome)) + '</td></tr>';
             }).join('') + '</tbody></table></div></section>';
     }
+    function htmlEnviadosAntigos(pl) {
+        var lista = pl.enviadosAntigos || [];
+        if (!lista.length) return '';
+        return '<section class="adm-card p-4 mb-5 rota-cartao" id="rota-enviados-antigos"><p class="rota-tit">Enviados sem canhoto há +7 dias (' + NUM.format(lista.length) + ')</p>' +
+            '<p class="rota-sub">Fora do cálculo por segurança. Abra o pedido em Pedidos para anexar o canhoto ou conferir com o Márcio.</p>' +
+            '<ul>' + lista.map(function (p) { return '<li>#' + esc(p.cd_pedido) + ' · ' + esc(nomeCliente(st.clientes[p.documento], { p: p })) +
+                ' · faturado em ' + esc(dataBr(diaSP(core.faturadoEm(p)))) + '</li>'; }).join('') + '</ul></section>';
+    }
 
     // ===================== SUGESTÕES DE JUNTAR PEDIDO À ROTA S10 (Etapa 2-B: só informativo) =====================
     function chaveJuntar(s) {
@@ -1527,7 +1540,7 @@
             regras: st.v2 ? st.regras : {},
             ignorados: st.v2 && st.ign045 ? st.ignorados : {},
             excluir: excluir || {},
-            hoje: hojeSP()
+            hoje: hojeSP(), canhotos: st.canhotos
         });
         var todas = (sj && sj.sugestoes) || [];
         var ativas = [], disp = 0, porDia = {};
@@ -1765,7 +1778,7 @@
         return '<details class="rota-config-resumo rota-regras adm-card p-4 mt-2 no-print" id="rota-ajuda"' + (st.cfgAberto ? ' open' : '') + '>' +
             '<summary id="rota-ajuda-sum"><i class="fa-regular fa-circle-question" aria-hidden="true"></i> Regras da rota e como funciona</summary>' +
             '<ul>' + itens.map(function (t) { return '<li>' + t + '</li>'; }).join('') +
-            '<li>Candidatos: pedidos do ERP nas etapas aberto, na carga, separando, separado ou conferido.</li>' +
+            '<li>Candidatos: pedidos sem canhoto ativo; inclui faturados (saiu/atendido) de até 7 dias. Canhoto confirma entrega; faturamento não.</li>' +
             (st.v2 ? htmlAjudaV2() : htmlAjudaV1()) +
             '<li>Prazo: data do pedido + ' + ROTA.PRAZO_DIAS_UTEIS + ' dias úteis (S10 sai de segunda a sexta; caminhão do CEASA de segunda a sábado; feriado conforme as regras acima; pedido depois do corte conta do dia seguinte).</li>' +
             '</ul>' + aviso + '</details>';
@@ -2742,7 +2755,7 @@
         return { cfg: st.cfg, excecoes: st.excecoes, marcacao: st.v2, padroes: st.excecoes, porPedido: st.porPedido, regras: st.regras,
                  ignorados: st.v2 && st.ign045 ? st.ignorados : {}, plano: st.v2 ? planoEfetivo() : {}, veiculos: linhasFrota(),
                  fechada: st.v2 && st.fx050 && !st.fxErro ? st.fxFoto : null,
-                 projetarSeparando: false };   // fechada: só mostra inclusao já confirmada pela054
+                 projetarSeparando: false, canhotos: st.canhotos, hoje: hojeSP() };   // fechada: só mostra inclusao já confirmada pela054
     }
     function planos() {
         var hoje = hojeSP(), pl = {};
@@ -2853,7 +2866,7 @@
         if (pl.hoje.semSaida && !pl.proxima) {   // nenhum dia com saída no limite: nada a planejar (configuração de feriados)
             alvo.innerHTML = cab + '</div><div class="adm-card p-6 rota-banner" role="status"><p><i class="fa-solid fa-calendar-xmark" aria-hidden="true"></i> ' +
                 'Hoje não tem saída e não há ' + esc(semDias.replace('sem saída ', 'saída ')) + ' pelas regras atuais (feriados/datas extras). Confira "Regras da rota".</p></div>' +
-                htmlConfigResumo(pl.hoje) + (podeConfigurar() ? '<button type="button" class="adm-botao-fantasma mt-3" id="rota-configurar"><i class="fa-solid fa-sliders" aria-hidden="true"></i> Configurar rota</button>' + htmlDialogo() : '');
+                htmlEnviadosAntigos(pl.hoje) + htmlConfigResumo(pl.hoje) + (podeConfigurar() ? '<button type="button" class="adm-botao-fantasma mt-3" id="rota-configurar"><i class="fa-solid fa-sliders" aria-hidden="true"></i> Configurar rota</button>' + htmlDialogo() : '');
             var cb0 = alvo.querySelector('#rota-configurar'); if (cb0) cb0.addEventListener('click', abrirDialogo);
             return;
         }
@@ -2868,7 +2881,7 @@
         var semIni = semanaAlvo();
         var sem = st.v2 && st.vista === 'semana'
             ? planejarSemana(st.pedidos, st.clientes, semIni, { cfg: st.cfg, padroes: st.excecoes, porPedido: st.porPedido, regras: st.regras,
-                ignorados: st.ign045 ? st.ignorados : {}, plano: planoSemanaObj(semIni), veiculos: linhasFrota(), veiculo: semVeiculoAtual() })
+                ignorados: st.ign045 ? st.ignorados : {}, plano: planoSemanaObj(semIni), veiculos: linhasFrota(), veiculo: semVeiculoAtual(), canhotos: st.canhotos, hoje: hojeSP() })
             : null;
         var motivoSem = pl.hoje.feriado ? 'feriado' : 'domingo';
         var nFora = st.v2 && st.ign045 && atual.ignorados ? atual.ignorados.length : 0;
@@ -2929,10 +2942,10 @@
         var cds = ordem.filter(function (id) { var b = pl.veiculos && pl.veiculos[id]; return b && b.modo === 'cd_ceasa'; });
         if (!pl.veiculos) { portas = ['s10']; cds = ['caminhao']; }
         if (!portas.length && !cds.length) {
-            return '<div class="adm-card p-6 mb-5 rota-banner" role="status"><p><i class="fa-solid fa-truck-fast" aria-hidden="true"></i> Nenhum veículo ativo na frota — ative um veículo em <strong>Frota</strong>.</p></div>' + htmlFica(pl);
+            return '<div class="adm-card p-6 mb-5 rota-banner" role="status"><p><i class="fa-solid fa-truck-fast" aria-hidden="true"></i> Nenhum veículo ativo na frota — ative um veículo em <strong>Frota</strong>.</p></div>' + htmlFica(pl) + htmlEnviadosAntigos(pl);
         }
         return '<div class="rota-grade-principal"><div class="rota-col-s10">' +
-            portas.map(function (id) { return htmlVeiculoPorta(pl, pl.veiculos ? pl.veiculos[id] : pl.s10); }).join('') + htmlFica(pl) +
+            portas.map(function (id) { return htmlVeiculoPorta(pl, pl.veiculos ? pl.veiculos[id] : pl.s10); }).join('') + htmlFica(pl) + htmlEnviadosAntigos(pl) +
             '</div><div class="rota-col-ceasa">' +
             cds.map(function (id) { return htmlCaminhao(pl, pl.veiculos ? pl.veiculos[id] : pl.caminhao); }).join('') +
             '</div></div>';
@@ -3216,7 +3229,7 @@
         // Logout: além de encerrar, esquece dados e cliente (outra conta pode entrar na mesma aba do navegador).
         sair: function () {
             raiz.TempRioRota.encerrar();
-            st.carregado = false; st.erro = null; st.pedidos = []; st.clientes = {}; st.coletado = null; st.sb = null; st.alvo = null;
+            st.carregado = false; st.erro = null; st.pedidos = []; st.clientes = {}; st.canhotos = {}; st.coletado = null; st.sb = null; st.alvo = null;
             st.cfgLinha = null; st.cfg = cfgDe(CFG_PADRAO); st.excecoes = {}; st.msgVeiculo = ''; st.cfgAberto = false;
             st.v2 = false; st.podeMarcar = false; st.porPedido = {}; st.regras = {}; st.gravandoVeiculo = {}; st.seqVeiculo = {};
             st.focoVeiculo = null; st.focoPedido = null; st.focoRegra = null; st.regraSalvando = false; st.redesenhoPendente = false;

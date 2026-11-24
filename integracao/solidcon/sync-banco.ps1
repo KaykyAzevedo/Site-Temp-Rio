@@ -16,7 +16,7 @@
 #   Backfill da margem: sync-banco.ps1 -BackfillMargemDesde 2026-05-29 (so vendas da margem,
 #   blocos de 31 dias ate hoje; nao mexe na agenda nem nos outros modulos).
 # 'pedidos' (pedidos de venda da filial 4 com a etapa do WMS e o valor Soma(qt*vl) dos itens, toda
-#   execucao; 30 dias, concluidos so nos ultimos 3 dias; no log so contagens, nunca valores). Conferencia sem gravar nada: sync-banco.ps1 -Testar [-Simular]
+#   execucao; 30 dias, inclusive faturados sem comprovacao de entrega; no log so contagens, nunca valores). Conferencia sem gravar nada: sync-banco.ps1 -Testar [-Simular]
 #   (so o modulo pedidos; imprime contagens por etapa e a AMOSTRA de valor dos 5 pedidos mais
 #   recentes: codigo, data e totais candidatos, sem cliente; sem Supabase, sem agenda, sem arquivo).
 #   Caixas por pedido (Rota do dia, migracao 039): 'pedidos.produtos' = Soma(qtPedidoItem) por pedido e
@@ -1025,7 +1025,6 @@ function Modulo-Margem($Modulo) {
 # Etapas, na ordem do fluxo. Mesma lista no CHECK da 035.
 $EtapasPedido = @('aberto', 'na_carga', 'separando', 'separado', 'conferido', 'saiu', 'atendido')
 $PedidosDiasJanela = 30
-$PedidosDiasConcluidos = 3
 # So METADADOS (nomes/tipos de colunas) para o -Testar real: candidatas a valor do pedido em
 # tbPedidoItem, colunas de valor do cabecalho (tbPedido/tbPedidoVenda: so money/decimal/float) e a
 # documento em tbCliente. Texto interno fixo; nunca le dados; so roda no -Testar.
@@ -1142,7 +1141,7 @@ function Mapa-Produtos($Linhas) {
     return $m
 }
 
-function Normalizar-Pedidos($Linhas, $Clientes, [datetime]$Recente, $Valores, $Produtos) {
+function Normalizar-Pedidos($Linhas, $Clientes, $Valores, $Produtos) {
     # Codigo do cliente -> documento so digitos. Codigo repetido com documentos diferentes = indefinido.
     $docs = @{}
     foreach ($p in $Clientes) {
@@ -1153,7 +1152,7 @@ function Normalizar-Pedidos($Linhas, $Clientes, [datetime]$Recente, $Valores, $P
     }
     $itens = New-Object Collections.ArrayList
     $vistos = @{}
-    $cont = [ordered]@{ canceladas = 0; fora_da_janela = 0; cnpj = 0; cpf = 0; indefinido = 0; com_valor = 0; sem_valor = 0; valor_negativo = 0; valor_fora_limite = 0; itens_desc_ipi_st = 0
+    $cont = [ordered]@{ canceladas = 0; cnpj = 0; cpf = 0; indefinido = 0; com_valor = 0; sem_valor = 0; valor_negativo = 0; valor_fora_limite = 0; itens_desc_ipi_st = 0
                         com_produtos = 0; sem_produtos = 0; produtos_invalidos = 0; qt_fracionada = 0 }
     $porEtapa = [ordered]@{}
     foreach ($e in $EtapasPedido) { $porEtapa[$e] = 0 }
@@ -1167,8 +1166,8 @@ function Normalizar-Pedidos($Linhas, $Clientes, [datetime]$Recente, $Valores, $P
         if ($l.dt_cancelada -is [datetime] -and $l.dt_cancelada.Year -ge 2000) { $cont.canceladas++; continue }
         $etapa = Etapa-Pedido $l
         $saida = Menor-Data $l.dt_carregou $l.dt_partida
-        # Concluidos so ficam enquanto recentes; o resto da janela de 30 dias vai inteiro.
-        if (($etapa -ceq 'atendido' -and $l.dt_atendido -lt $Recente) -or ($etapa -ceq 'saiu' -and $saida -lt $Recente)) { $cont.fora_da_janela++; continue }
+        # Faturamento NAO comprova entrega: manter tambem saiu/atendido na janela de 30 dias.
+        # O painel cruza canhoto e retira da rota os faturados ha +7 dias, sem perder a lista de resolucao.
         $codCli = Inteiro-Banco $l.cd_cliente
         $doc = if ($null -ne $codCli -and $docs.ContainsKey($codCli)) { $docs[$codCli] } else { '' }
         # LGPD: so CNPJ valido identifica; CPF e indefinido viajam so como tipo.
@@ -1228,7 +1227,7 @@ $ModuloPedidos = @{
             colunas = @('cd_pedido', 'dt_pedido', 'dt_atendido', 'cd_cliente', 'cd_carga', 'dt_carga', 'dt_partida', 'dt_nota', 'dt_cancelada',
                         'dt_sep_inicio', 'dt_sep_fim', 'dt_conferencia', 'dt_carregou', 'saidas_abertas')
             sql = "SELECT p.cdPedido AS cd_pedido, p.dtPedido AS dt_pedido, p.dtAtendido AS dt_atendido, v.cdPessoaComercial AS cd_cliente, v.cdWmsCarga AS cd_carga, c.dtCarga AS dt_carga, c.dtLiberadaPartida AS dt_partida, c.dtEmissaoNota AS dt_nota, c.dtCancelada AS dt_cancelada, s.sep_ini AS dt_sep_inicio, s.sep_fim AS dt_sep_fim, s.conf AS dt_conferencia, s.carregou AS dt_carregou, s.saidas_abertas AS saidas_abertas FROM dbo.tbPedido AS p JOIN dbo.tbPedidoVenda AS v ON v.cdPedidoVenda = p.cdPedido AND v.cdPessoaFilial = p.cdPessoaFilial LEFT JOIN dbo.tbWmsCarga AS c ON c.cdWmsCarga = v.cdWmsCarga AND c.cdPessoaFilial = p.cdPessoaFilial LEFT JOIN (SELECT u.cdPessoaFilial, u.cdPedido, MIN(u.dtInicio) AS sep_ini, MAX(u.dtFim) AS sep_fim, MAX(u.dtConferencia) AS conf, MAX(u.dtCarregou) AS carregou, SUM(CASE WHEN u.dtFim IS NULL THEN 1 ELSE 0 END) AS saidas_abertas FROM dbo.tbWmsCargaUmaSaida AS u WHERE u.cdPessoaFilial = 4 AND u.cdPedido IN (SELECT q.cdPedido FROM dbo.tbPedido AS q WHERE q.cdPessoaFilial = 4 AND q.dtPedido >= @desde) GROUP BY u.cdPessoaFilial, u.cdPedido) AS s ON s.cdPedido = p.cdPedido AND s.cdPessoaFilial = p.cdPessoaFilial WHERE p.cdPessoaFilial = 4 AND p.dtPedido >= @desde"
-            # FICTICIO: um pedido por etapa + cancelado + atendido antigo (fora da janela).
+            # FICTICIO: um pedido por etapa + cancelado + faturado antigo (mantido para resolucao).
             simulacao = {
                 param($v)
                 $h = [datetime]::Now
@@ -1342,7 +1341,6 @@ function Modulo-Pedidos($Modulo) {
     $amostraCxErro = $null
     $agoraSp = [TimeZoneInfo]::ConvertTimeFromUtc([DateTime]::UtcNow, [TimeZoneInfo]::FindSystemTimeZoneById('E. South America Standard Time'))
     $desde = $agoraSp.Date.AddDays(-$PedidosDiasJanela)
-    $recente = $agoraSp.AddDays(-$PedidosDiasConcluidos)
     try {
         $sessao = Abrir-Sessao
         $linhas = Executar-Consulta $sessao $Modulo 'lista' @{ desde = $desde }
@@ -1379,7 +1377,7 @@ function Modulo-Pedidos($Modulo) {
     try {
         $mapaValores = if ($null -ne $valoresLinhas) { Mapa-Valores $valoresLinhas } else { $null }
         $mapaProdutos = if ($null -ne $produtosLinhas) { Mapa-Produtos $produtosLinhas } else { $null }
-        $normal = Normalizar-Pedidos $linhas $clientes $recente $mapaValores $mapaProdutos
+        $normal = Normalizar-Pedidos $linhas $clientes $mapaValores $mapaProdutos
     }
     catch {
         # Inteiro-Banco usa o codigo do modulo receber; aqui o texto certo e o de pedido.
@@ -1399,8 +1397,8 @@ function Modulo-Pedidos($Modulo) {
             if ($script:LinhaTrava) { Write-Output $script:LinhaTrava }
             Write-Output ('transacao com rollback: ' + $(if ($script:ProtecoesConfirmadas) { 'sim (ReadOnly, READ UNCOMMITTED, 1 transacao aberta; rollback ao fechar)' } else { 'NAO confirmada' }))
         }
-        Write-Output ('TESTE pedidos{0} (nada gravado): lidos={1} enviaria={2} canceladas_fora={3} concluidos_antigos_fora={4}' -f
-            $(if ($Simular) { ' SIMULADO' } else { '' }), $linhas.Count, $normal.itens.Count, $c.canceladas, $c.fora_da_janela)
+        Write-Output ('TESTE pedidos{0} (nada gravado): lidos={1} enviaria={2} canceladas_fora={3}; faturados mantidos na janela de 30 dias' -f
+            $(if ($Simular) { ' SIMULADO' } else { '' }), $linhas.Count, $normal.itens.Count, $c.canceladas)
         Write-Output ('  por etapa: ' + $etapasTxt)
         Write-Output ('  cliente: cnpj={0} cpf={1} indefinido={2} (codigos de cliente distintos lidos no parceiro: {3})' -f $c.cnpj, $c.cpf, $c.indefinido, $clientes.Count)
         # So contagens (nunca valores): Soma(qt*vl) em centavos; desconto/IPI/ST so contados.
@@ -1465,9 +1463,9 @@ function Modulo-Pedidos($Modulo) {
     if ($produtosErro) { Log ('AVISO pedidos modo={0} fase=produtos motivo={1}; pedidos enviados sem caixas. execucao={2}' -f $Cfg.modo, $produtosErro, $ExecucaoId) }
     Log ('INFO pedidos caixas com_produtos={0} sem_produtos={1} produtos_invalidos={2} qt_fracionada={3} envio={4} execucao={5}' -f
         $c.com_produtos, $c.sem_produtos, $c.produtos_invalidos, $c.qt_fracionada, $(if ($EnviarCaixas) { 'sim' } else { 'nao' }), $ExecucaoId)
-    Log ('OK pedidos modo={0}{1} linhas={2} {3} cnpj={4} cpf={5} indefinido={6} canceladas={7} antigos={8} pedidos_com_valor={9} sem_valor={10} valor_negativo={11} valor_fora_limite={12} itens_desc_ipi_st={13} duracao_ms={14} enviado={15} execucao={16}' -f
+    Log ('OK pedidos modo={0}{1} linhas={2} {3} cnpj={4} cpf={5} indefinido={6} canceladas={7} pedidos_com_valor={8} sem_valor={9} valor_negativo={10} valor_fora_limite={11} itens_desc_ipi_st={12} duracao_ms={13} enviado={14} execucao={15}' -f
         $Cfg.modo, $(if ($Simular) { ' SIMULADO' } else { '' }), $normal.itens.Count, $etapasTxt, $c.cnpj, $c.cpf, $c.indefinido,
-        $c.canceladas, $c.fora_da_janela, $c.com_valor, $c.sem_valor, $c.valor_negativo, $c.valor_fora_limite, $c.itens_desc_ipi_st, $relogio.ElapsedMilliseconds, $enviado, $ExecucaoId)
+        $c.canceladas, $c.com_valor, $c.sem_valor, $c.valor_negativo, $c.valor_fora_limite, $c.itens_desc_ipi_st, $relogio.ElapsedMilliseconds, $enviado, $ExecucaoId)
 }
 
 $Modulos = @(

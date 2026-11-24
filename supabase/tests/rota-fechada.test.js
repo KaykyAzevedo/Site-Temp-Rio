@@ -135,12 +135,14 @@ test('veículo desativado depois de fechar: os pedidos dele vão para "aguardand
     assert.ok(daStrada.length > 0 && daStrada.every((cd) => pl.aguardando.some((x) => x.p.cd_pedido === cd && x.veiculoInativo)));
 });
 
-test('pedido da foto que já saiu no ERP some da rota (não é pendente); itens inválidos da foto são ignorados', () => {
+test('faturamento nao retira pedido da foto; so canhoto confirma; itens invalidos ignorados', () => {
     const d = base(8), f = foto(plan(d));
     d.pedidos[0] = Object.assign({}, d.pedidos[0], { etapa: 'saiu', dt_saida: '2026-11-23T08:30:00-03:00' });
     const pl = plan(d, HOJE, Object.assign({}, f, { itens: f.itens.concat([{ cd_pedido: 1, veiculo_id: 'constructor', ordem: 1 }, null, { cd_pedido: null }]) }));
-    assert.ok(!pl.entregues[d.pedidos[0].cd_pedido]);
-    assert.equal(Object.keys(pl.entregues).length, 7);
+    assert.ok(pl.entregues[d.pedidos[0].cd_pedido]);
+    assert.equal(Object.keys(pl.entregues).length, 8);
+    const recebido=plan(d,HOJE,f,{canhotos:{[d.pedidos[0].cd_pedido]:true}});
+    assert.ok(!recebido.entregues[d.pedidos[0].cd_pedido]);
 });
 
 test('Sentinela RF-4: perder ou ganhar o pino depois de fechar NÃO muda a ordem de entrega (sequência salva)', () => {

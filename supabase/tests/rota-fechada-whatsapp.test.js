@@ -28,7 +28,7 @@ function banco(o) {
     const sb = {
         rpcs,
         from(t) {
-            const q = { select() { return q; }, eq() { return q; }, in() { return q; }, gte() { return q; }, order() { return q; }, limit() { return q; },
+            const q = { select() { return q; }, eq() { return q; }, is() { return q; }, in() { return q; }, gte() { return q; }, order() { return q; }, limit() { return q; },
                 range(a, b) { q._r = [a, b]; return q; },
                 then(ok, ko) {
                     if (o.sem050 && /^rota_dia_/.test(t)) return Promise.resolve({ data: null, error: { code: 'PGRST205', message: "Could not find the table 'public." + t + "' in the schema cache" } }).then(ok, ko);

@@ -33,7 +33,7 @@ function sbFalso(tabelas, clientes, erros) {
             let linhas = (tabelas[nome] || []).slice(), de = 0, ate = 1e9, lim = null;
             const erro = erros[nome] || (tabelas[nome] ? null : { code: 'PGRST205', message: 'Could not find the table public.' + nome });
             const b = {
-                select() { return b; }, order() { return b; },
+                select() { return b; }, order() { return b; }, is(c, v) { linhas = linhas.filter(r => r[c] == v); return b; },
                 in(c, v) { linhas = linhas.filter((r) => v.includes(r[c])); return b; }, eq(c, v) { linhas = linhas.filter((r) => r[c] === v); return b; },
                 limit(n) { lim = n; return b; }, range(a, z) { de = a; ate = z; return b; },
                 then(ok, er) { const d = erro ? null : linhas.slice(de, ate + 1).slice(0, lim == null ? undefined : lim); return Promise.resolve({ data: d, error: erro }).then(ok, er); }

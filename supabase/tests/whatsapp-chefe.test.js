@@ -36,7 +36,7 @@ function ped(etapa, o) {
                            cliente_nome: 'CLIENTE ' + (n % 50), valor_centavos: 10000, caixas_24: 2, caixas_48: 1, caixas_outras: 0 }, o || {});
 }
 
-test('pedidos_do_dia: regra de cada bloco (dia de SP) = Kanban: Entrou dt_pedido, Tá pronto conferido agora, Enviou saiu/atendido pela data da coluna', () => {
+test('pedidos_do_dia: Entrou dt_pedido, pronto conferido, Enviou saiu/atendido pela data de faturamento SP', () => {
     const ps = [
         ped('aberto', { dt_pedido: '2026-11-23T00:05:00-03:00', valor_centavos: 500000 }),   // entrou (00:05 SP)
         ped('aberto', { dt_pedido: '2026-11-22T23:55:00-03:00' }),                           // ontem: fora
@@ -57,7 +57,7 @@ test('pedidos_do_dia: regra de cada bloco (dia de SP) = Kanban: Entrou dt_pedido
     assert.match(p.params[1], /^4 pedidos · R\$\s7\.630,00$/);
     assert.equal(p.params[2], 'PETRO FRUTAS · CLIENTE 2 · CLIENTE 3 · +1');   // cadastro > cliente_nome; +1 = PF
     assert.equal(p.params[3], '2 pedidos · 14 caixas + 5 potes (1 sem caixas no ERP)');
-    assert.match(p.params[5], /^2 pedidos · R\$\s1\.200,00 \(1 sem valor no ERP\)$/);
+    assert.match(p.params[5], /^2 pedidos · R\$\s1\.300,00$/);
     assert.equal(p.params[7], URL_P + '/admin.html#pedidos');
     assert.ok(m.texto.startsWith('📦 *Resumo dos pedidos do dia — segunda, 23/11 às 17:00*\n\n📥 *Entrou* (pedidos que chegaram no ERP)\n4 pedidos'), m.texto);
     // PF nunca pelo nome
@@ -203,7 +203,7 @@ test('rota_chefe / pedidos_dia: rotinas fixas, só gestor, "rota_chefe" não é 
 test('gerar: pedidos_dia e rota_chefe chamam a coleta certa (cliente supabase falso, sem rede)', async () => {
     const lidas = [];
     function consulta(tabela) {
-        const q = { _t: tabela, select() { return q; }, eq() { return q; }, gte() { return q; }, lt() { return q; }, in() { return q; }, order() { return q; }, limit() { return q; },
+        const q = { _t: tabela, select() { return q; }, eq() { return q; }, is() { return q; }, gte() { return q; }, lt() { return q; }, in() { return q; }, order() { return q; }, limit() { return q; },
                     range() { return q; }, then(ok, ko) { lidas.push(tabela); return Promise.resolve({ data: tabela === 'rota_veiculos' ? FROTA : [], error: null }).then(ok, ko); } };
         return q;
     }

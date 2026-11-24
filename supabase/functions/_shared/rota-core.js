@@ -39,8 +39,9 @@
         // somando domingos e feriados, 400 dias cobre o pior caso. Se esgotar: INDISPONÍVEL (null), nunca uma data
         // que não foi validada como dia com saída.
         BUSCA_SAIDA_DIAS: 400,
-        // Etapas do Kanban do ERP que ainda vão sair (saiu/atendido ficam de fora).
-        ETAPAS_PENDENTES: ['aberto', 'na_carga', 'separando', 'separado', 'conferido'],
+        // Etapas candidatas à entrega; faturamento (saiu/atendido) ainda exige canhoto.
+        ETAPAS_PENDENTES: ['aberto', 'na_carga', 'separando', 'separado', 'conferido', 'saiu', 'atendido'],
+        ENVIADO_MAX_DIAS: 7,
         // CEASA-RJ (Av. Brasil, 19001 — Irajá): vai no CAMINHÃO, sem limite de capacidade. Um cliente é do CEASA se:
         //   (a) logradouro, complemento ou bairro do cadastro do ERP contém "CEASA"; ou
         //   (b) logradouro é a Av. Brasil e o número é 19001; ou
@@ -212,6 +213,25 @@
     }
     function somaDias(dia, n) { var d = new Date(dia + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
     function diaSemana(dia) { return new Date(dia + 'T12:00:00Z').getUTCDay(); }
+    function etapaEnviada(p) { return !!p && (p.etapa === 'saiu' || p.etapa === 'atendido'); }
+    function faturadoEm(p) {
+        var campos = ['dt_saida', 'dt_nota', 'dt_atendido'];
+        for (var i = 0; p && i < campos.length; i++) if (p[campos[i]] && isFinite(Date.parse(p[campos[i]]))) return p[campos[i]];
+        return null;
+    }
+    function temCanhoto(canhotos, cd) {
+        var v = canhotos && canhotos[cd];
+        return Array.isArray(v) ? v.some(function (c) { return c && !c.substituido_em; }) : !!v;
+    }
+    function enviadoAntigo(p, canhotos, hoje) {
+        var em = faturadoEm(p);
+        return etapaEnviada(p) && !temCanhoto(canhotos, p.cd_pedido) && !!em &&
+            Date.parse(hoje + 'T12:00:00Z') - Date.parse(diaSP(em) + 'T12:00:00Z') > ROTA.ENVIADO_MAX_DIAS * 864e5;
+    }
+    function pendenteEntrega(p, canhotos, hoje) {
+        return !!p && ROTA.ETAPAS_PENDENTES.indexOf(p.etapa) >= 0 && !temCanhoto(canhotos, p.cd_pedido) &&
+            (!etapaEnviada(p) || (!!faturadoEm(p) && !enviadoAntigo(p, canhotos, hoje)));
+    }
     // Domingo de Páscoa (algoritmo de Meeus/Jones/Butcher, calendário gregoriano).
     function pascoa(ano) {
         var a = ano % 19, b = Math.floor(ano / 100), c = ano % 100, d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25),
@@ -709,7 +729,8 @@
         var fx = v2 && opts.fechada && opts.fechada.data === dia ? fechadaDe(opts.fechada) : null;
         var res = { dia: dia, semSaida: !temSaida(dia, cfg), feriado: ehFeriado(dia, cfg), cfg: cfg, modo: v2 ? 'marcacao' : 'auto',
                     veiculos: Object.create(null), ordem: [], frota: cfg.veiculos, fica: [], aguardando: [], ignorados: [], entregues: {},
-                    fechada: fx ? fx.meta : null, adicoesSeparando: [] };
+                    fechada: fx ? fx.meta : null, adicoesSeparando: [],
+                    enviadosAntigos: (pedidos || []).filter(function (p) { return enviadoAntigo(p, opts.canhotos, opts.hoje || dia); }) };
         function bloco(v, inativo) {
             var b = { id: v.id, nome: v.nome, modo: v.modo, cor: v.cor, capacidade: v.capacidade, semLimite: v.capacidade == null, inativo: !!inativo,
                       pedidos: [], paradas: [], semPosicao: [], volume: 0, ocupacao: null, c24: 0, c48: 0, avulsos: 0, desconhecidos: 0, km: 0, kmReta: 0,
@@ -729,7 +750,7 @@
         res.semProxima = !proximaDe('s10');
         var cands = [];
         (pedidos || []).forEach(function (p) {
-            if (ROTA.ETAPAS_PENDENTES.indexOf(p.etapa) < 0 || excluir[p.cd_pedido]) return;
+            if (!pendenteEntrega(p, opts.canhotos, opts.hoje || dia) || excluir[p.cd_pedido]) return;
             var c = p.documento ? clientes[p.documento] || null : null;
             var v = volumePedido(p), ve, x, prazo, vq;
             if (v2) {
@@ -972,7 +993,7 @@
         var dd = dias.map(function (d) { return { dia: d, nome: nomeDia(d), lista: [], usado: 0, regiao: null, centro: null }; });
         var s10 = [];
         (pedidos || []).forEach(function (p) {
-            if (ROTA.ETAPAS_PENDENTES.indexOf(p.etapa) < 0 || excluir[p.cd_pedido] || ignorados[p.cd_pedido]) return;
+            if (!pendenteEntrega(p, opts.canhotos, opts.hoje || semanaInicio) || excluir[p.cd_pedido] || ignorados[p.cd_pedido]) return;
             var c = p.documento ? clientes[p.documento] || null : null, m = marcacaoDe(p, padroes, porPedido);
             var x = { p: p, c: c, prazo: prazoDe(p.dt_pedido, cfg, m ? m.veiculo : null), v: volumePedido(p), veiculo: m ? m.veiculo : null, marcacao: m ? m.origem : null,
                       regra: p.documento ? regras[p.documento] || null : null, dia: null, origemDia: null, diaSugerido: null, estoura: false, diaFechado: false, regiao: null, ang: null };
@@ -1220,7 +1241,7 @@
         // ---- candidatos por cliente (e veículo marcado) ----
         var unid = Object.create(null), lista = [];
         (pedidos || []).forEach(function (p) {
-            if (!p || ROTA.ETAPAS_PENDENTES.indexOf(p.etapa) < 0 || excluir[p.cd_pedido] || ignorados[p.cd_pedido] || naRota[p.cd_pedido]) return;
+            if (!pendenteEntrega(p, opts.canhotos, hoje) || excluir[p.cd_pedido] || ignorados[p.cd_pedido] || naRota[p.cd_pedido]) return;
             var c = p.documento ? clientes[p.documento] || null : null, m = marcacaoDe(p, padroes, porPedido), precisaMarcar = false, alvo = null;
             if (m) {
                 var vm = veiculoDaFrota(m.veiculo, cfg);
@@ -1336,6 +1357,7 @@
         horaSP: horaSP,
         somaDias: somaDias,
         diaSemana: diaSemana,
+        etapaEnviada: etapaEnviada, faturadoEm: faturadoEm, temCanhoto: temCanhoto, enviadoAntigo: enviadoAntigo, pendenteEntrega: pendenteEntrega,
         pascoa: pascoa,
         feriadosDoAno: feriadosDoAno,
         ehFeriado: ehFeriado,
