@@ -90,7 +90,7 @@
                // 050 (rota do dia fechada): tabela lida? linha de hoje, foto (itens), erro de leitura, gravação, mensagem,
                // confirmação de "Reabrir" na tela e se o plano desenhado agora é o de HOJE FECHADO
                fx050: false, fxLinha: null, fxFoto: null, fxErro: null, fxSalvando: false, msgFx: '', fxConfirmaReabrir: false, fxRender: false, focoFx: null,
-               canhotos: {}, diasSaida: {} };
+               canhotos: {}, confirmacoes: {}, entrega063: false, diasSaida: {} };
     var NUM = new Intl.NumberFormat('pt-BR'), NUM1 = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 });
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
     function brl(c) { return c == null ? '—' : (Number(c) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
@@ -187,7 +187,7 @@
                 }, function (e) { return { erro: String((e && e.message) || e) }; });
             return Promise.all([Promise.all(blocos.map(function (b) {
                 return sb.from('solidcon_clientes').select('documento,nome,logradouro,numero,complemento,bairro,cidade,estado,telefone,celular').in('documento', b);
-            })), posicoes, core.coletarSaidas(sb, pedidos)]).then(function (cp) {
+            })), posicoes, core.coletarSaidas(sb, pedidos), core.coletarConfirmacoes(sb, pedidos)]).then(function (cp) {
                 if (seq !== st.seq) return;
                 // UI1: alguma gravação terminou (ou começou) durante esta leitura: o retrato pode ser anterior a ela.
                 // Descarta e lê de novo (ou espera a gravação pendente terminar).
@@ -209,7 +209,7 @@
                 var mapa = rs[2] && !rs[2].error ? rs[2].data || [] : [];
                 if (!rp) mapa.forEach(posDe);   // sem a 041: posição vem do mapa (comportamento anterior)
                 if (rp && rp.linhas) rp.linhas.forEach(posDe);
-                st.pedidos = pedidos; st.clientes = cli; st.diasSaida = cp[2];
+                st.pedidos = pedidos; st.clientes = cli; st.diasSaida = cp[2]; st.confirmacoes = cp[3].porPedido; st.entrega063 = cp[3].instalada;
                 st.canhotos = {}; (rs[15].data || []).forEach(function (c) { st.canhotos[c.cd_pedido] = true; });
                 st.temCaixas = pedidos.some(function (p) { return 'caixas_24' in p; });
                 var sy = rs[1] && !rs[1].error && rs[1].data && rs[1].data[0];
@@ -517,9 +517,14 @@
         return out;
     }
     // Seletor CEASA / S10 por pedido + botão Tirar na mesma linha (sem repetir pílula "S10 · padrão do cliente" acima do select).
+    function contextoEntrega() { return Object.assign({}, optsPlano(), { sb: st.sb, papel: st.papel, podeMarcar: st.podeMarcar, instalada: st.entrega063, sessao: st.seq }); }
+    function entregaRecebido(p) { return raiz.TempRioEntregaAdmin ? raiz.TempRioEntregaAdmin.html(p, contextoEntrega()) : ''; }
+    if (typeof raiz.addEventListener === 'function') raiz.addEventListener('temprio-entrega063', function () {
+        if (!st.sb) return;st.mut++;st.carregado = false;if (st.ativo) recarregarTudo();
+    });
     function seletorPedidoV2(x, nome, mostrarId) {
         var tagId = mostrarId ? '<span class="rota-ped-tag">#' + esc(x.p.cd_pedido) + '</span>' : '';
-        if (!podeEditar()) return '<div class="rota-marc-item">' + tagId + seloMarcacaoLeitura(x) + '</div>';
+        if (!podeEditar()) return '<div class="rota-marc-item">' + tagId + seloMarcacaoLeitura(x) + entregaRecebido(x.p) + '</div>';
         var cd = x.p.cd_pedido, ch = chaveTrava(x.p), travado = !!st.gravandoVeiculo[ch];
         var atual = x.veiculo || '';
         var rotulo = 'Veículo do pedido ' + cd + ' de ' + nome;
@@ -532,7 +537,7 @@
             (atual ? '<option value="">Desmarcar</option>' : '') +
             '</select></label>';
         var imp = atual ? '<span class="rota-imp-veic">' + esc(rotuloMarca(atual)) + '</span>' : '';
-        return '<div class="rota-marc-item"><div class="rota-marc-linha">' + tagId + sel + botaoTirar(x, nome) + soHoje + imp + '</div></div>';
+        return '<div class="rota-marc-item"><div class="rota-marc-linha">' + tagId + sel + botaoTirar(x, nome) + soHoje + imp + '</div>' + entregaRecebido(x.p) + '</div>';
     }
     // 045: botão "Tirar da rota" do pedido (trava junto com o seletor do mesmo cliente: data-rota-marcar-chave).
     function botaoTirar(x, nome) {
@@ -563,7 +568,7 @@
         var trazido = xs.some(function (x) { return x.origemFechada === 'adicionado'; });
         return '<div class="rota-marc-item"><div class="rota-marc-linha"><span class="rota-selo rota-selo-plano" title="Veículo da rota fechada">' + pontoCor(veic) + esc(rotuloMarca(veic)) + '</span>' +
             (trazido ? '<span class="rota-selo rota-selo-pri" title="Trazido para hoje depois de fechar"><i class="fa-solid fa-calendar-plus" aria-hidden="true"></i>trazido p/ hoje</span>' : '') +
-            botaoRemoverHoje(xs, veic, nome) + xs.map(function (x) { return botaoTirar(x, nome); }).join('') + '</div></div>';
+            botaoRemoverHoje(xs, veic, nome) + xs.map(function (x) { return botaoTirar(x, nome) + entregaRecebido(x.p); }).join('') + '</div></div>';
     }
     function selosSeparando(xs) {
         var entrou = xs.some(function (x) { return x.entrouAoSeparar; });
@@ -743,7 +748,7 @@
     }
     function celulaVeiculoParada(sp, nome) {
         if (st.fxRender) return celulaFechada(sp.pedidos, sp.veiculo || (sp.pedidos[0] && sp.pedidos[0].veiculo), nome);
-        if (!st.v2) return seloMotivo(sp) + menuVeiculo(sp.documento, nome);
+        if (!st.v2) return seloMotivo(sp) + menuVeiculo(sp.documento, nome) + sp.pedidos.map(function (x) { return entregaRecebido(x.p); }).join('');
         var mult = sp.pedidos.length > 1;
         return sp.pedidos.map(function (x) { return seletorPedidoV2(x, nome, mult); }).join('');
     }
@@ -1546,7 +1551,7 @@
             regras: st.v2 ? st.regras : {},
             ignorados: st.v2 && st.ign045 ? st.ignorados : {},
             excluir: excluir || {},
-            hoje: hojeSP(), saidas: st.diasSaida, canhotos: st.canhotos
+            hoje: hojeSP(), saidas: st.diasSaida, canhotos: st.canhotos, confirmacoes: st.confirmacoes
         });
         var todas = (sj && sj.sugestoes) || [];
         var ativas = [], disp = 0, porDia = {};
@@ -2784,7 +2789,7 @@
         return { cfg: st.cfg, excecoes: st.excecoes, marcacao: st.v2, padroes: st.excecoes, porPedido: st.porPedido, regras: st.regras,
                  ignorados: st.v2 && st.ign045 ? st.ignorados : {}, plano: st.v2 ? planoEfetivo() : {}, veiculos: linhasFrota(),
                  fechada: st.v2 && st.fx050 && !st.fxErro ? st.fxFoto : null,
-                 projetarSeparando: false, saidas: st.diasSaida, canhotos: st.canhotos, hoje: hojeSP() };   // fechada: só mostra inclusao já confirmada pela054
+                 projetarSeparando: false, saidas: st.diasSaida, canhotos: st.canhotos, confirmacoes: st.confirmacoes, hoje: hojeSP(), agora: new Date().toISOString() };   // fechada: só mostra inclusao já confirmada pela054
     }
     function planos() {
         var hoje = hojeSP(), pl = {};
@@ -2910,7 +2915,7 @@
         var semIni = semanaAlvo();
         var sem = st.v2 && st.vista === 'semana'
             ? planejarSemana(st.pedidos, st.clientes, semIni, { cfg: st.cfg, padroes: st.excecoes, porPedido: st.porPedido, regras: st.regras,
-                ignorados: st.ign045 ? st.ignorados : {}, plano: planoSemanaObj(semIni), veiculos: linhasFrota(), veiculo: semVeiculoAtual(), saidas: st.diasSaida, canhotos: st.canhotos, hoje: hojeSP() })
+                ignorados: st.ign045 ? st.ignorados : {}, plano: planoSemanaObj(semIni), veiculos: linhasFrota(), veiculo: semVeiculoAtual(), saidas: st.diasSaida, canhotos: st.canhotos, confirmacoes: st.confirmacoes, hoje: hojeSP() })
             : null;
         var motivoSem = pl.hoje.feriado ? 'feriado' : 'domingo';
         var nFora = st.v2 && st.ign045 && atual.ignorados ? atual.ignorados.length : 0;
@@ -2997,6 +3002,7 @@
             '<li>Ordem (S10 e caminhão): sai da sede, vai sempre para o cliente mais perto e depois desfaz cruzamentos (2-opt). Distância em linha reta × ' + NUM1.format(ROTA.FATOR_ESTRADA) + ' (estimativa).</li>';
     }
     function ligarEventos(alvo, atual, sem) {
+        if (raiz.TempRioEntregaAdmin) raiz.TempRioEntregaAdmin.ligar(alvo, contextoEntrega);
         alvo.querySelectorAll('[data-rota-vista]').forEach(function (b) { b.addEventListener('click', function () { st.vista = b.getAttribute('data-rota-vista'); desenhar(); }); });
         ligarFechamento(alvo);   // 050
         alvo.querySelector('#rota-atualizar').addEventListener('click', recarregarTudo);
@@ -3258,7 +3264,7 @@
         // Logout: além de encerrar, esquece dados e cliente (outra conta pode entrar na mesma aba do navegador).
         sair: function () {
             raiz.TempRioRota.encerrar();
-            st.carregado = false; st.erro = null; st.pedidos = []; st.clientes = {}; st.canhotos = {}; st.diasSaida = {}; st.coletado = null; st.sb = null; st.alvo = null;
+            st.carregado = false; st.erro = null; st.pedidos = []; st.clientes = {}; st.canhotos = {}; st.confirmacoes = {}; st.entrega063 = false; st.diasSaida = {}; st.coletado = null; st.sb = null; st.alvo = null;
             st.cfgLinha = null; st.cfg = cfgDe(CFG_PADRAO); st.excecoes = {}; st.msgVeiculo = ''; st.cfgAberto = false;
             st.v2 = false; st.podeMarcar = false; st.porPedido = {}; st.regras = {}; st.gravandoVeiculo = {}; st.seqVeiculo = {};
             st.focoVeiculo = null; st.focoPedido = null; st.focoRegra = null; st.regraSalvando = false; st.redesenhoPendente = false;

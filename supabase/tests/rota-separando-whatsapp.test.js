@@ -6,7 +6,7 @@ const source=fs.readFileSync(fixture,'utf8');
 // Reutiliza SOMENTE a fixture anterior, sem registrar/executar seus testes.
 const {banco}=vm.runInNewContext(source.slice(0,source.indexOf('const SEG_0830'))+';({banco})',{require:createRequire(fixture)});
 const W=require('../functions/_shared/whatsapp-core.js');
-const hoje='2026-11-23',agora=new Date('2026-11-23T12:00:00Z');
+const hoje='2026-11-23',agora=new Date('2026-11-23T10:59:00Z');
 function base(){
  const b=banco({linha:{data:hoje,estado:'fechada',revisao:4,versao:1},itens:[{cd_pedido:8000,veiculo_id:'s10',ordem:1,origem:'previsao'},{cd_pedido:8005,veiculo_id:'caminhao',ordem:7,origem:'previsao'}]});
  b.T.solidcon_pedidos_erp[1].etapa='separando';
@@ -38,4 +38,21 @@ test('erro da054 propaga; dia reaberto nao recebe inclusao automatica',async()=>
  const b=base(),original=b.sb.rpc.bind(b.sb);b.sb.rpc=(name,args)=>name==='rota_054_incluir'?Promise.resolve({error:{code:'42501',message:'negado'}}):original(name,args);
  await assert.rejects(W.fecharRotaAuto(b.sb,agora),e=>e.code==='42501');
  b.T.rota_dia_fechada[0].estado='reaberta';assert.equal((await W.fecharRotaAuto(b.sb,agora)).motivo,'reaberta');
+});
+
+test('tique 10:30 nao chama054 nem muda a foto que ja saiu',async()=>{
+ const b=base(),original=b.sb.rpc.bind(b.sb);let chamou=0;
+ b.sb.rpc=(name,args)=>{if(name==='rota_054_incluir')chamou++;return original(name,args);};
+ const antes=JSON.stringify([b.T.rota_dia_item,b.T.rota_dia_fechada]);
+ assert.equal((await W.fecharRotaAuto(b.sb,new Date('2026-11-23T13:30:00Z'))).motivo,'ja_fechada');
+ assert.equal(chamou,0);assert.equal(JSON.stringify([b.T.rota_dia_item,b.T.rota_dia_fechada]),antes);
+});
+test('primeiro tique atrasado nao fecha pedido criado ou separado apos0800',async()=>{
+ const b=banco(),antes=b.T.solidcon_pedidos_erp[0];
+ b.T.solidcon_pedidos_erp.push({...antes,cd_pedido:8098,dt_sep_inicio:'2026-11-23T10:30:00-03:00'},
+  {...antes,cd_pedido:8099,dt_pedido:'2026-11-23T10:30:00-03:00'});
+ b.T.rota_pedido_veiculo.push({cd_pedido:8098,veiculo:'s10'},{cd_pedido:8099,veiculo:'s10'});
+ await W.fecharRotaAuto(b.sb,new Date('2026-11-23T13:45:00Z'));
+ const chamada=b.sb.rpcs.find(x=>x.nome==='rota_050_fechar_auto');assert.ok(chamada);
+ assert.equal(chamada.args.p_itens.length,6);assert.ok(!chamada.args.p_itens.some(x=>[8098,8099].includes(x.cd_pedido)));
 });

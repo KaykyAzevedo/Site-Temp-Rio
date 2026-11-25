@@ -36,7 +36,7 @@ function ped(etapa, o) {
                            cliente_nome: 'CLIENTE ' + (n % 50), valor_centavos: 10000, caixas_24: 2, caixas_48: 1, caixas_outras: 0 }, o || {});
 }
 
-test('pedidos_do_dia: Entrou dt_pedido, pronto conferido, Enviou saiu/atendido pela data de faturamento SP', () => {
+test('pedidos_do_dia: Entrou dt_pedido, pronto conferido, Enviou pela primeira saida SP compativel com faturamento', () => {
     const ps = [
         ped('aberto', { dt_pedido: '2026-11-23T00:05:00-03:00', valor_centavos: 500000 }),   // entrou (00:05 SP)
         ped('aberto', { dt_pedido: '2026-11-22T23:55:00-03:00' }),                           // ontem: fora
@@ -44,7 +44,7 @@ test('pedidos_do_dia: Entrou dt_pedido, pronto conferido, Enviou saiu/atendido p
         ped('conferido', { dt_pedido: '2026-11-23T08:00:00-03:00', dt_conferencia: '2026-11-23T12:00:00-03:00', caixas_24: 10, caixas_48: 4, caixas_outras: 5 }),   // entrou + pronto
         ped('conferido', { dt_conferencia: '2026-11-19T12:00:00-03:00', caixas_24: null, caixas_48: null, caixas_outras: null }),   // pronto (velho, sem caixas)
         ped('saiu', { dt_saida: '2026-11-23T07:00:00-03:00', valor_centavos: 120000 }),     // enviou
-        ped('saiu', { dt_saida: '2026-11-22T23:59:00-03:00' }),                             // saiu ontem: fora
+        ped('saiu', { dt_saida: '2026-11-22T23:59:00-03:00' }),                             // faturou ontem depois da saida: despacho hoje pela061
         ped('atendido', { dt_saida: '2026-11-22T07:00:00-03:00', dt_atendido: '2026-11-23T09:00:00-03:00', valor_centavos: null }),   // entregue hoje
         ped('atendido', { dt_saida: '2026-11-23T07:00:00-03:00', dt_atendido: '2026-11-24T09:00:00-03:00' }),   // entregue amanhã (fora, data da coluna)
         ped('aberto', { dt_pedido: '2026-11-23T10:00:00-03:00', cliente_tipo: 'cpf', documento: null, cliente_nome: null, valor_centavos: 3000 })   // PF: entrou, nome neutro
@@ -52,12 +52,12 @@ test('pedidos_do_dia: Entrou dt_pedido, pronto conferido, Enviou saiu/atendido p
     const m = confere(W.montarPedidosDia({ saidas: Object.fromEntries(ps.filter(R.etapaEnviada).map(p=>[p.cd_pedido,R.diaSP(R.faturadoEm(p))])), pedidos: ps, nomes: { [ps[0].documento]: { nome: 'PETRO FRUTAS' } }, coletado: '2026-11-23T19:58:00Z' }, AG_PED, { template: 'pedidos_do_dia', painelUrl: URL_P }));
     const p = m.partes[0];
     assert.equal(p.template, 'pedidos_do_dia');
-    assert.deepEqual(m.resumo, { entrou: 4, pronto: 2, enviou: 2 });
+    assert.deepEqual(m.resumo, { entrou: 4, pronto: 2, enviou: 3 });
     assert.equal(p.params[0], 'segunda, 23/11 às 17:00');
     assert.match(p.params[1], /^4 pedidos · R\$\s7\.630,00$/);
     assert.equal(p.params[2], 'PETRO FRUTAS · CLIENTE 2 · CLIENTE 3 · +1');   // cadastro > cliente_nome; +1 = PF
     assert.equal(p.params[3], '2 pedidos · 14 caixas + 5 potes (1 sem caixas no ERP)');
-    assert.match(p.params[5], /^2 pedidos · R\$\s1\.300,00$/);
+    assert.match(p.params[5], /^3 pedidos · R\$\s1\.400,00$/);
     assert.equal(p.params[7], URL_P + '/admin.html#pedidos');
     assert.ok(m.texto.startsWith('📦 *Resumo dos pedidos do dia — segunda, 23/11 às 17:00*\n\n📥 *Entrou* (pedidos que chegaram no ERP)\n4 pedidos'), m.texto);
     // PF nunca pelo nome
@@ -77,7 +77,7 @@ test('pedidos_do_dia: pior caso — 5000 pedidos, nomes gigantes com quebra/tab,
     const longo = 'Nome\tComprido\n de     Cliente Ficticio '.repeat(10);
     const ps = [];
     for (let i = 0; i < 5000; i++) ps.push(ped(['aberto', 'conferido', 'saiu', 'atendido'][i % 4], { dt_pedido: '2026-11-23T10:00:00-03:00', dt_conferencia: '2026-11-23T11:00:00-03:00',
-        dt_saida: '2026-11-23T12:00:00-03:00', dt_atendido: '2026-11-23T13:00:00-03:00', documento: String(40000000000000 + i), cliente_nome: longo + i, valor_centavos: 999999999999999, caixas_24: 99999, caixas_48: 99999, caixas_outras: 99999 }));
+        dt_saida: i % 4 === 2 ? '2026-11-23T07:00:00-03:00' : '2026-11-23T12:00:00-03:00', dt_atendido: '2026-11-23T13:00:00-03:00', documento: String(40000000000000 + i), cliente_nome: longo + i, valor_centavos: 999999999999999, caixas_24: 99999, caixas_48: 99999, caixas_outras: 99999 }));
     const m = confere(W.montarPedidosDia({ saidas: Object.fromEntries(ps.filter(R.etapaEnviada).map(p=>[p.cd_pedido,R.diaSP(R.faturadoEm(p))])), pedidos: ps, nomes: {}, coletado: null }, AG_PED, { painelUrl: 'https://' + 'sub.'.repeat(40) + 'exemplo.test' }));
     for (const k of [2, 4, 6]) assert.match(m.partes[0].params[k], / · \+\d+$/, 'o "+N" nunca é cortado');
 });

@@ -11,7 +11,7 @@ const frota=[
 function dados(){
  const pedidos=[1,2,3].map(n=>({cd_pedido:n,documento:String(12000000000000+n),etapa:n===3?'separando':'conferido',dt_pedido:'2026-11-23T09:00:00-03:00',caixas_24:2,caixas_48:0,caixas_outras:0}));
  const clientes={};pedidos.forEach((p,n)=>{clientes[p.documento]={nome:'Cliente '+p.cd_pedido,pos:[R.ROTA.ORIGEM[0]+.01*(n+1),R.ROTA.ORIGEM[1]+.01],bairro:'B',cidade:'Rio'};});
- const opts={marcacao:true,veiculos:frota,padroes:{},porPedido:{1:'s10',2:'strada'},cfg:{feriados_sem_saida:true},regras:{},ignorados:{}};
+ const opts={agora:'2026-11-23T07:59:00-03:00',marcacao:true,veiculos:frota,padroes:{},porPedido:{1:'s10',2:'strada'},cfg:{hora_saida:'08:00',feriados_sem_saida:true},regras:{},ignorados:{}};
  return {pedidos,clientes,opts};
 }
 function fechada(d){d.opts.fechada={data:DIA,revisao:4,itens:[{cd_pedido:1,documento:d.pedidos[0].documento,veiculo_id:'s10',ordem:1,origem:'previsao'},{cd_pedido:2,documento:d.pedidos[1].documento,veiculo_id:'strada',ordem:9,origem:'previsao'}]};return d;}

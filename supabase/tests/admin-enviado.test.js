@@ -42,10 +42,18 @@ test('056 Kanban: legado identifica Recebido; cinco pedidos17h permanecem Enviad
 test('056 carga do Kanban le corte com select*; ausencia da coluna conserva055 e erro nao presume legado',async()=>{
  let cfg={id:1,canhoto_desde:'2026-11-23T12:00:00-03:00'},falha=false,sel;
  const velho={...p,dt_saida:'2026-11-23T11:00:00-03:00'};
- const sb={rpc:()=>Promise.resolve({data:true}),from(t){const q={select(s){if(t==='rota_config')sel=s;return q;},order(){return q;},in(){return q;},is(){return q;},eq(){return q;},limit(){return q;},then(ok,bad){return Promise.resolve(t==='rota_config'&&falha?{error:{code:'57014',message:'timeout'}}:{data:t==='rota_config'?[cfg]:t==='solidcon_pedidos_erp'?[velho]:[]}).then(ok,bad);}};return q;}};
+ const sb={rpc:n=>Promise.resolve({data:n==='rota_063_ler_entregas'?[]:true}),from(t){const q={select(s){if(t==='rota_config')sel=s;return q;},order(){return q;},in(){return q;},is(){return q;},eq(){return q;},limit(){return q;},then(ok,bad){return Promise.resolve(t==='rota_config'&&falha?{error:{code:'57014',message:'timeout'}}:{data:t==='rota_config'?[cfg]:t==='solidcon_pedidos_erp'?[velho]:[]}).then(ok,bad);}};return q;}};
  const q=app(sb);await q.carregarPedidosErp();assert.equal(sel,'*');assert.equal(q.peIndice(velho),6);
  cfg={id:1};await q.carregarPedidosErp();assert.equal(q.peIndice(velho),5);
  falha=true;await q.carregarPedidosErp();assert.equal(q.pe.carregado,false);assert.match(q.pe.erro,/timeout/);
+});
+test('063 Kanban e Historico usam data e autor da marca; foto tem precedencia e desfazer sem foto reabre',()=>{
+ const q=app();q.pe.itens=[p];q.pe.confirmacoes={1528:{id:10,confirmado_em:'2026-11-24T10:00:00-03:00',confirmado_nome:'Marcio <QA>'}};
+ assert.equal(q.peIndice(p),6);assert.match(q.peCartaoCompacto(p),/Recebido \(marcado por Marcio &lt;QA&gt;\)/);
+ q.pe.confirmacoes[1528].confirmado_em='2026-11-21T10:00:00-03:00';assert.equal(q.peItensDa(q.PE_COLUNAS[6]).length,0);
+ assert.equal(q.peHistoricoLista().length,1);assert.match(q.peHistoricoHtml(),/Recebido \(marcado por Marcio &lt;QA&gt;\)/);
+ q.pe.canhotos[1528]=[{enviado_em:'2026-11-24T11:00:00-03:00'}];assert.match(q.peCartaoDetalhado(p,true),/Recebido \(canhoto\)/);
+ q.pe.confirmacoes={};assert.equal(q.peIndice(p),6);q.pe.canhotos={};assert.equal(q.peIndice(p),5);
 });
 
 test('059 histórico: só hoje/ontem no Recebido, total exclusivo, busca local, ordem, 25 por página, foto e escape',()=>{

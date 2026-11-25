@@ -57,7 +57,9 @@
     }
     // 1B: a cobertura diária distingue "nenhuma NF válida" de "dia ainda não coletado".
     // Um dia coberto não pode ressuscitar nota cancelada através do pedido provisório.
-    function juntarFontes(cupons, pedidos, notas, cobertura) {
+    function juntarFontes(cupons, pedidos, notas, cobertura, fornecedores) {
+        function cliente(l) { return !fornecedores || !Object.prototype.hasOwnProperty.call(fornecedores, cnpj(l.documento)); }
+        cupons = (cupons || []).filter(cliente); pedidos = (pedidos || []).filter(cliente);
         if (notas == null && cobertura == null) {
             var antigo = juntar(cupons, pedidos);
             antigo.notas = []; antigo.nfPDV = []; antigo.nfSemPdv = 0; antigo.nfInstalada = false;
@@ -70,7 +72,7 @@
             if (!x || !/^\d{4}-\d{2}-\d{2}$/.test(x.dia)) throw new Error('Cobertura NF inválida.');
             dias[x.dia] = true;
         });
-        notas.forEach(function (n) {
+        notas.filter(cliente).forEach(function (n) {
             var cd = Number(n.cd_nota), doc = cnpj(n.documento);
             if (!Number.isSafeInteger(cd) || cd < 1 || !doc || centavos(n.valor_centavos) == null ||
                 centavos(n.total_nota_centavos) == null || (n.st_centavos != null && centavos(n.st_centavos) == null)) throw new Error('Nota fiscal inválida.');

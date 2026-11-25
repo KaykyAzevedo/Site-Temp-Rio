@@ -1,12 +1,12 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const R=require('../functions/_shared/rota-core.js');
-function app(){
+function app(hora='2026-11-23T10:59:00Z'){
  const window={TempRioRotaCore:R};
  const src=fs.readFileSync(require.resolve('../../js/admin-rota.js'),'utf8').replace('raiz.TempRioRota = {','raiz.__sep={st,sincronizarSeparando,selosSeparando,optsPlano};raiz.TempRioRota = {');
- class Clock extends Date{constructor(...a){super(...(a.length?a:['2026-11-23T12:00:00Z']));}}
+ class Clock extends Date{constructor(...a){super(...(a.length?a:[hora]));}}
  vm.runInNewContext(src,{window,Intl,Date:Clock,setTimeout,clearTimeout,console});
- const q=window.__sep,s=q.st;s.ativo=true;s.seq=1;s.papel='admin';s.v2=true;s.podeMarcar=true;s.fx050=true;s.fxRev=1;s.cfg=R.cfgDe({feriados_sem_saida:true});
+ const q=window.__sep,s=q.st;s.ativo=true;s.seq=1;s.papel='admin';s.v2=true;s.podeMarcar=true;s.fx050=true;s.fxRev=1;s.cfg=R.cfgDe({hora_saida:'08:00',feriados_sem_saida:true});
  s.frota047=true;s.frotaLinhas=[{id:'s10',nome:'S10',ativo:true,modo:'porta',dias_sem_saida:[0,6],capacidade_volume:null}];
  s.pedidos=[{cd_pedido:1,documento:'12000000000001',etapa:'conferido',dt_pedido:'2026-11-23T06:00:00-03:00',caixas_24:1},{cd_pedido:3,documento:'12000000000003',etapa:'separando',dt_pedido:'2026-11-23T06:00:00-03:00',caixas_24:1}];
  s.clientes={};s.porPedido={1:'s10'};s.fxFoto={data:'2026-11-23',estado:'fechada',revisao:1,itens:[{cd_pedido:1,veiculo_id:'s10',ordem:1,origem:'previsao'}]};
@@ -24,4 +24,8 @@ test('painel nao mascara erro da054 nem grava para leitor',async()=>{
  const q=app();q.st.sb={rpc(){return Promise.resolve({error:{code:'40001',message:'mudou'}});}};await assert.rejects(q.sincronizarSeparando(q.st.sb),e=>e.code==='40001');assert.equal(q.st.fxRev,1);
  q.st.podeMarcar=false;q.st.sb={rpc(){throw Error('nao deveria chamar');}};await q.sincronizarSeparando(q.st.sb);
  assert.match(q.selosSeparando([{entrouAoSeparar:true,diaSemReceber:true}]),/entrou ao separar/);assert.match(q.selosSeparando([{entrouAoSeparar:true,diaSemReceber:true}]),/conferir/);
+});
+test('painel1030 nao envia proposta de inclusao para a rota que ja saiu',async()=>{
+ const q=app('2026-11-23T13:30:00Z');q.st.sb={rpc(){throw Error('nao deveria chamar');}};
+ await q.sincronizarSeparando(q.st.sb);assert.equal(q.st.fxRev,1);assert.equal(q.st.fxFoto.itens.length,1);
 });

@@ -230,9 +230,17 @@
         var desde = cfgOk(cfg).canhotoDesde, em = faturadoEm(p);
         return etapaEnviada(p) && !!desde && !!em && Date.parse(em) < Date.parse(desde);
     }
-    function recebidoEntrega(p, canhotos, cfg) { return !!p && (temCanhoto(canhotos, p.cd_pedido) || legadoRecebido(p, cfg)); }
-    // 059: dia salvo na rota fechada prevalece; sem rota, faturado ate a hora da
-    // saida (inclusive) sai no mesmo dia, depois no dia CORRIDO seguinte.
+    function confirmacaoEntrega(confirmacoes, cd) {
+        var c = confirmacoes && confirmacoes[cd];
+        return c && !c.desfeito_em && isFinite(Date.parse(c.confirmado_em)) ? c : null;
+    }
+    function recebidoEntrega(p, canhotos, cfg, confirmacoes) { return !!p && (temCanhoto(canhotos, p.cd_pedido) || !!confirmacaoEntrega(confirmacoes, p.cd_pedido) || legadoRecebido(p, cfg)); }
+    function instanteSaida(dia, cfg) {
+        var min = cfg.horaSaida;
+        return dia + 'T' + String(Math.floor(min / 60)).padStart(2, '0') + ':' + String(min % 60).padStart(2, '0') + ':00-03:00';
+    }
+    // 061: a foto nunca antecipa o faturamento. Saida = max(foto, primeira
+    // hora de saida >= faturamento), mantendo o fallback de dia CORRIDO da059.
     // Sao Paulo usa UTC-3 nas datas operacionais deste sistema (sem horario de verao).
     function saidaEntrega(p, ctx) {
         ctx = ctx || {};
@@ -240,17 +248,16 @@
         if (!em) return null;
         var dia = ctx.saidas && ctx.saidas[p.cd_pedido], fx = ctx.fechada;
         if (!dia && fx && fx.estado !== 'reaberta' && (fx.itens || []).some(function (i) { return i.cd_pedido === p.cd_pedido && !i.removido_em; })) dia = fx.data;
-        var min = cfg.horaSaida, h = String(Math.floor(min / 60)).padStart(2, '0'), m = String(min % 60).padStart(2, '0');
-        function instante(d) { return d + 'T' + h + ':' + m + ':00-03:00'; }
-        if (dia && /^\d{4}-\d{2}-\d{2}$/.test(dia)) return instante(dia);
+        function instante(d) { return instanteSaida(d, cfg); }
+        var salvo = dia && /^\d{4}-\d{2}-\d{2}$/.test(dia) ? dia : null;
         dia = diaSP(em);
         if (Date.parse(em) > Date.parse(instante(dia))) dia = somaDias(dia, 1);
-        return instante(dia);
+        return instante(salvo && salvo > dia ? salvo : dia);
     }
     function etapaEntrega(p, ctx) {
         ctx = ctx || {};
         if (!p) return 'aberto';
-        if (recebidoEntrega(p, ctx.canhotos, ctx.cfg)) return 'recebido';
+        if (recebidoEntrega(p, ctx.canhotos, ctx.cfg, ctx.confirmacoes)) return 'recebido';
         if (!etapaEnviada(p)) return p.etapa;
         var em = saidaEntrega(p, ctx), agora = ctx.agora == null ? Date.now() : new Date(ctx.agora).getTime();
         return em && agora >= Date.parse(em) ? 'enviado' : 'pronto_despacho';
@@ -261,12 +268,20 @@
         if (Array.isArray(lista)) lista.forEach(function (c) {
             if (c && !c.substituido_em && isFinite(Date.parse(c.enviado_em)) && (!ultimo || Date.parse(c.enviado_em) > Date.parse(ultimo))) ultimo = c.enviado_em;
         });
-        return ultimo || (legadoRecebido(p, ctx.cfg) ? faturadoEm(p) : null);
+        if (temCanhoto(ctx.canhotos, p.cd_pedido)) return ultimo;
+        var confirmacao = confirmacaoEntrega(ctx.confirmacoes, p.cd_pedido);
+        return (confirmacao && confirmacao.confirmado_em) || (legadoRecebido(p, ctx.cfg) ? faturadoEm(p) : null);
     }
     function recebidoRecente(p, ctx) {
         ctx = ctx || {};
         var em = recebidoEm(p, ctx), hoje = diaSP(ctx.agora == null ? new Date() : ctx.agora), dia = diaSP(em);
         return !!dia && (dia === hoje || dia === somaDias(hoje, -1));
+    }
+    function recebidoRotulo(p, ctx) {
+        ctx = ctx || {};
+        if (temCanhoto(ctx.canhotos, p.cd_pedido)) return 'Recebido (canhoto)';
+        var c = confirmacaoEntrega(ctx.confirmacoes, p.cd_pedido);
+        return c ? 'Recebido (marcado por ' + (c.confirmado_nome || 'equipe') + ')' : legadoRecebido(p, ctx.cfg) ? 'Recebido (legado)' : '';
     }
     // Uma linha por pedido, consulta limitada aos ids ja carregados. Erros (inclusive
     // falta da059) interrompem a leitura: nao inventar ausencia de rota fechada.
@@ -284,12 +299,33 @@
     }
     function enviadoAntigo(p, canhotos, hoje, cfg, ctx) {
         var em = saidaEntrega(p, Object.assign({}, ctx, { cfg: cfg }));
-        return etapaEnviada(p) && !recebidoEntrega(p, canhotos, cfg) && !!em &&
+        return etapaEnviada(p) && !recebidoEntrega(p, canhotos, cfg, ctx && ctx.confirmacoes) && !!em &&
             Date.parse(hoje + 'T12:00:00Z') - Date.parse(diaSP(em) + 'T12:00:00Z') > ROTA.ENVIADO_MAX_DIAS * 864e5;
     }
     function pendenteEntrega(p, canhotos, hoje, cfg, ctx) {
-        return !!p && ROTA.ETAPAS_PENDENTES.indexOf(p.etapa) >= 0 && !recebidoEntrega(p, canhotos, cfg) &&
+        return !!p && ROTA.ETAPAS_PENDENTES.indexOf(p.etapa) >= 0 && !recebidoEntrega(p, canhotos, cfg, ctx && ctx.confirmacoes) &&
             (!etapaEnviada(p) || (!!faturadoEm(p) && !enviadoAntigo(p, canhotos, hoje, cfg, ctx)));
+    }
+    // 063 opcional. Nao confundir ausencia da migracao com erro real de leitura.
+    function coletarConfirmacoes(sb, pedidos) {
+        var ids = Array.from(new Set((pedidos || []).map(function (p) { return p.cd_pedido; }))), mapa = {}, instalada = true, corrente = Promise.resolve();
+        for (var i = 0; i < ids.length; i += 200) (function (bloco) {
+            corrente = corrente.then(function () {
+                if (!instalada) return;
+                return sb.rpc('rota_063_ler_entregas', { p_cds: bloco }).then(function (r) {
+                    if (r.error) {
+                        if (['PGRST202', '42883'].indexOf(String(r.error.code)) >= 0) { instalada = false; mapa = {}; return; }
+                        throw new Error('Confirmacoes de entrega (063): ' + (r.error.message || r.error.code));
+                    }
+                    if (r.data != null && !Array.isArray(r.data)) throw new Error('Resposta de entregas063 invalida');
+                    (r.data || []).forEach(function (c) {
+                        if (!c || bloco.indexOf(c.cd_pedido) < 0 || c.desfeito_em || !isFinite(Date.parse(c.confirmado_em)) || !Number.isSafeInteger(c.id) || c.id < 1) throw new Error('Status de entrega063 invalido');
+                        mapa[c.cd_pedido] = c;
+                    });
+                });
+            });
+        })(ids.slice(i, i + 200));
+        return corrente.then(function () { return { instalada: instalada, porPedido: mapa }; });
     }
     // Domingo de Páscoa (algoritmo de Meeus/Jones/Butcher, calendário gregoriano).
     function pascoa(ano) {
@@ -825,7 +861,12 @@
             var v = volumePedido(p), ve, x, prazo, vq;
             if (v2) {
                 var m = marcacaoDe(p, padroes, porPedido), sug = sugestaoDe(p, c, cfg);
-                if (!m && p.etapa === 'separando') m = { veiculo: ROTA.VEICULO_SEPARANDO, origem: 'separando' };
+                // O ERP pode avancar a etapa durante a noite. O inicio da separacao
+                // depois da saida conserva o fallback S10 para a proxima rota,
+                // sem criar marcacao permanente nem sobrescrever escolha manual.
+                var sepDia = p.dt_sep_inicio && diaSP(p.dt_sep_inicio);
+                var sepAdiado = !!sepDia && sepDia < dia && Date.parse(p.dt_sep_inicio) > Date.parse(instanteSaida(sepDia, cfg));
+                if (!m && (p.etapa === 'separando' || sepAdiado)) m = { veiculo: ROTA.VEICULO_SEPARANDO, origem: 'separando' };
                 vq = m ? m.veiculo : null; prazo = prazoDe(p.dt_pedido, cfg, vq);
                 x = { p: p, c: c, prazo: prazo, situacao: situacaoPrazo(prazo, dia, cfg, vq), v: v, sugestao: sug, marcacao: m ? m.origem : null,
                       veiculo: m ? m.veiculo : null, motivo: m ? 'marcado' : null, detalhe: m ? m.origem : null, ceasa: motivoCeasa(c) };
@@ -838,7 +879,7 @@
                       veiculo: ve.veiculo, motivo: ve.motivo, detalhe: ve.detalhe, ceasa: ve.motivo === 'ceasa' ? ve.detalhe : null };
             }
             x.regra = p.documento ? regras[p.documento] || null : null;
-            x.separando = v2 && p.etapa === 'separando';
+            x.separando = v2 && (p.etapa === 'separando' || sepAdiado);
             var ig = ignorados[p.cd_pedido];
             if (ig) { x.ignorado = ig === true ? {} : ig; res.ignorados.push(x); return; }   // 045: fora da rota até reativar
             var pd = plano[p.cd_pedido];
@@ -848,7 +889,11 @@
         });
         // A decisão é calculada antes de percorrer os itens: até as paradas anteriores do veículo afetado
         // perdem a ordem fixa. A foto original é imutável e a RPC 054 revalida tudo antes de persistir.
-        if (fx && opts.projetarSeparando !== false) cands.forEach(function (x) {
+        // Corte SP do proprio dia: apos a saida nao se acrescenta nem reordena
+        // automaticamente uma foto. A inclusao manual ja salva continua livre.
+        var limite = Date.parse(instanteSaida(dia, cfg));
+        var agoraInclusao = opts.agora == null ? Date.now() : new Date(opts.agora).getTime();
+        if (fx && agoraInclusao <= limite && opts.projetarSeparando !== false) cands.forEach(function (x) {
             var cd = x.p.cd_pedido, b = x.veiculo && res.veiculos[x.veiculo];
             if (x.separando && !temProp(fx.porCd, cd) && !temProp(fx.removidos, cd) &&
                 !(x.p.documento && fx.docsRemovidos[x.p.documento]) && b && !b.semSaida) {
@@ -866,6 +911,12 @@
             return Number(a.p.cd_pedido) - Number(b.p.cd_pedido);
         });
         cands.forEach(function (x) {
+            // Se o primeiro tique do dia atrasar, o fechamento automatico ainda
+            // nao pode capturar um pedido criado/separado depois da saida.
+            if (!fx && opts.fechamentoAutomatico && [x.p.dt_pedido, x.p.dt_sep_inicio].some(function (em) { return em && Date.parse(em) > limite; })) {
+                x.motivoFica = 'rota_fechada'; x.proxima = proximaDe(x.veiculo || 's10');
+                x.estoura = !x.proxima || (!!x.prazo && x.prazo < x.proxima); res.fica.push(x); return;
+            }
             if (fx) {   // 050: dia FECHADO — só a foto, no veículo da foto (sem capacidade/dia fechado: o Márcio decidiu)
                 var it = temProp(fx.porCd, x.p.cd_pedido) ? fx.porCd[x.p.cd_pedido] : null;
                 if (!it) {   // entrou depois / removido de hoje: vai para o próximo dia (com saída) em que o cliente recebe
@@ -1429,6 +1480,7 @@
         diaSemana: diaSemana,
         saidaEntrega: saidaEntrega, etapaEntrega: etapaEntrega, recebidoEm: recebidoEm, recebidoRecente: recebidoRecente, coletarSaidas: coletarSaidas,
         etapaEnviada: etapaEnviada, faturadoEm: faturadoEm, temCanhoto: temCanhoto, legadoRecebido: legadoRecebido, recebidoEntrega: recebidoEntrega, enviadoAntigo: enviadoAntigo, pendenteEntrega: pendenteEntrega,
+        confirmacaoEntrega: confirmacaoEntrega, coletarConfirmacoes: coletarConfirmacoes, recebidoRotulo: recebidoRotulo,
         pascoa: pascoa,
         feriadosDoAno: feriadosDoAno,
         ehFeriado: ehFeriado,

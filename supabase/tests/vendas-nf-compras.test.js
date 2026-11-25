@@ -33,3 +33,13 @@ test('1B nota conflitante e soma acima da precisao inteira sao recusadas',()=>{
 test('1B ST desconhecida nao vira zero nem elimina produtos conhecidos',()=>{
  const r=C.juntarFontes([],[],[nf({st_centavos:null})],[]);assert.equal(r.linhas[0].valor_centavos,2164320);assert.equal(r.notas[0].st_centavos,null);
 });
+test('062 fornecedor Vida em Graos nao e maior cliente: 44 NF fora de TODAS as saidas comerciais',()=>{
+ const fornecedor='18285535000111',mapa={[fornecedor]:''};
+ const ns=Array.from({length:44},(_,i)=>nf({documento:fornecedor,cd_nota:800000+i,valor_centavos:2120454+(i<24?1:0)}));
+ const bruto=ns.reduce((s,n)=>s+n.valor_centavos,0);assert.equal(bruto,93300000);
+ const r=C.juntarFontes([cup()],[],ns.concat([nf()]),[{dia}],mapa);
+ assert.equal(r.notas.length,1);assert.equal(r.linhas.length,2);assert.ok(r.linhas.every(x=>x.documento===doc));
+ assert.ok(!Object.hasOwn(r.clientes,fornecedor));assert.ok(!r.nfPDV.some(x=>x.documento===fornecedor));
+ const vinc=C.juntarFontes([],[],[nf({documento:fornecedor,nf_cupom:true})],[{dia}],mapa);assert.equal(vinc.nfSemPdv,0);assert.equal(vinc.notas.length,0);
+ const fallback=C.juntarFontes([], [pedido({documento:fornecedor})],null,null,mapa);assert.equal(fallback.linhas.length,0);
+});

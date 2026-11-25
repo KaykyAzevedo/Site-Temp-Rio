@@ -13,9 +13,9 @@ test('059 véspera, limites SP 07:59:59.999/08h, igualdade faturamento e instant
  assert.equal(R.saidaEntrega(p({dt_saida:null,dt_nota:'2026-11-24T17:48-03:00'}),ctx()),'2026-11-25T08:00:00-03:00');
  assert.equal(R.etapaEntrega(p({dt_saida:null}),ctx('2026-11-25T12:00Z')),'pronto_despacho');
 });
-test('059 rota fechada prevalece, domingo não é pulado; hora configurável e legado07h',()=>{
+test('061 rota fechada pode adiar mas nunca antecipar, domingo não é pulado; hora configurável e legado07h',()=>{
  assert.equal(R.saidaEntrega(p(),ctx(null,{saidas:{1537:'2026-11-28'}})),'2026-11-28T08:00:00-03:00');
- assert.equal(R.etapaEntrega(p(),ctx('2026-11-24T18:00-03:00',{saidas:{1537:'2026-11-24'}})),'enviado','dia fechado prevalece mesmo com faturamento posterior');
+ assert.equal(R.etapaEntrega(p(),ctx('2026-11-24T18:00-03:00',{saidas:{1537:'2026-11-24'}})),'pronto_despacho','faturamento posterior espera a proxima saida');
  assert.equal(R.saidaEntrega(p({dt_saida:'2026-11-28T17:00-03:00'}),ctx()),'2026-11-29T08:00:00-03:00');
  assert.equal(R.saidaEntrega(p(),{cfg:R.cfgDe({hora_saida:'09:30'})}),'2026-11-25T09:30:00-03:00');
  assert.equal(R.saidaEntrega(p(),{}),'2026-11-25T07:00:00-03:00');
