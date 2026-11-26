@@ -1,0 +1,1006 @@
+/* =====================================================================
+ * 065 + 066 — Quadro da Semana + Mapa + Assistente de Planejamento
+ * Reutiliza tokens --adm-* de css/admin.css e classes .rota-* de css/admin-rota.css.
+ * Desktop primeiro; responsivo no celular sem quebrar nem estourar largura.
+ * ===================================================================== */
+
+.rq-quadro {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    min-width: 0;
+}
+
+/* ---------- Cabeçalho do quadro (semana, veículos, status salvo/rascunho) ---------- */
+.rq-topo {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.rq-topo-linha {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.rq-titulo-bloco {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    min-width: 0;
+}
+
+.rq-nav-semana {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.rq-barra-veiculos {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.65rem;
+    padding-top: 0.65rem;
+    border-top: 1px solid var(--adm-borda);
+}
+
+.rq-veiculos-grupo {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.38rem;
+}
+
+.rq-veiculos-grupo .adm-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.rq-veic-meta {
+    font-size: 0.68rem;
+    font-weight: 400;
+    color: var(--adm-tinta-3);
+}
+
+.rq-status-acoes {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.rq-selo-estado {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.22rem 0.65rem;
+    border-radius: 999px;
+    font-size: 0.74rem;
+    font-weight: 700;
+    border: 1px solid var(--adm-borda);
+    background: var(--adm-neutro-fundo);
+    color: var(--adm-tinta-2);
+}
+
+.rq-selo-estado.is-salvo {
+    color: var(--adm-ok);
+    background: var(--adm-ok-fundo);
+    border-color: rgba(95, 194, 138, 0.45);
+}
+
+.rq-selo-estado.is-rascunho {
+    color: var(--adm-atencao);
+    background: var(--adm-atencao-fundo);
+    border-color: var(--adm-atencao-borda);
+}
+
+.rq-msg-barra {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.55rem 0.8rem;
+    border-radius: 0.6rem;
+    font-size: 0.8rem;
+    background: var(--adm-neutro-fundo-2);
+    border: 1px solid var(--adm-borda-forte);
+    color: var(--adm-tinta);
+}
+
+.rq-msg-barra.is-erro,
+.rq-msg-barra.is-atraso-confirma {
+    background: var(--adm-ruim-fundo);
+    border-color: var(--adm-ruim-borda);
+    color: var(--adm-ruim);
+}
+
+.rq-confirma-acoes {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
+}
+
+/* ---------- 066: Mapa interativo da semana ---------- */
+.rq-mapa-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+}
+
+.rq-mapa-topo {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.rq-mapa-tit-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+}
+
+.rq-mapa-acoes {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
+}
+
+.rq-mapa-legenda {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.rq-mapa-legenda-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.32rem;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--adm-tinta-2);
+    background: var(--adm-superficie-2);
+    border: 1px solid var(--adm-borda);
+    cursor: pointer;
+    transition: border-color 0.14s ease, background-color 0.14s ease, color 0.14s ease;
+}
+
+.rq-mapa-legenda-item:hover,
+.rq-mapa-legenda-item.is-ativo {
+    color: var(--adm-tinta);
+    border-color: var(--adm-acao);
+    background: var(--adm-acao-fundo);
+}
+
+.rq-mapa-cor {
+    width: 0.68rem;
+    height: 0.68rem;
+    border-radius: 999px;
+    flex-shrink: 0;
+}
+
+.rq-mapa-meta {
+    font-size: 0.67rem;
+    font-weight: 400;
+    color: var(--adm-tinta-3);
+}
+
+.rq-mapa-canvas {
+    width: 100%;
+    height: 15.5rem;
+    border-radius: 0.65rem;
+    border: 1px solid var(--adm-borda);
+    overflow: hidden;
+    background: var(--adm-neutro-fundo);
+}
+
+.rq-mapa-svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+@media (max-width: 760px) {
+    .rq-mapa-canvas {
+        height: 12.5rem;
+    }
+}
+
+/* ---------- Grade de colunas dos dias da semana (Seg..Sáb) ---------- */
+.rq-grade-dias {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(11.75rem, 1fr));
+    gap: 0.6rem;
+    align-items: stretch;
+    overflow-x: auto;
+    padding-bottom: 0.25rem;
+}
+
+@media (max-width: 1279px) {
+    .rq-grade-dias {
+        grid-template-columns: repeat(3, minmax(14rem, 1fr));
+    }
+}
+
+@media (max-width: 760px) {
+    .rq-grade-dias {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+.rq-coluna-dia {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 17rem;
+    background: var(--adm-superficie);
+    border: 1px solid var(--adm-borda);
+    border-radius: 0.75rem;
+    transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.rq-coluna-dia.is-leitura {
+    background: rgba(24, 28, 34, 0.72);
+    border-color: var(--adm-borda);
+}
+
+.rq-coluna-dia.is-excesso,
+.rq-coluna-dia.is-com-atraso {
+    border-color: var(--adm-ruim-borda);
+    box-shadow: inset 0 3px 0 var(--adm-ruim);
+}
+
+.rq-coluna-dia.is-mapa-destaque {
+    border-color: var(--adm-acao);
+    box-shadow: 0 0 0 1px var(--adm-acao-borda);
+}
+
+.rq-coluna-dia.is-alvo-solta {
+    border-color: var(--adm-acao);
+    background: var(--adm-acao-fundo);
+    box-shadow: 0 0 0 2px var(--adm-acao-borda);
+}
+
+/* Topo da coluna do dia: data clicável, região, totais (pedidos, cx, % capacidade) */
+.rq-dia-topo {
+    padding: 0.65rem 0.7rem 0.55rem;
+    border-bottom: 1px solid var(--adm-borda);
+    display: flex;
+    flex-direction: column;
+    gap: 0.32rem;
+}
+
+.rq-dia-titulo-linha {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.35rem;
+    min-width: 0;
+}
+
+.rq-dia-titulo {
+    font-size: 0.86rem;
+    font-weight: 800;
+    color: var(--adm-tinta);
+    white-space: nowrap;
+    margin: 0;
+}
+
+.rq-dia-titulo-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.1rem 0.32rem;
+    margin-left: -0.32rem;
+    border-radius: 0.4rem;
+    font: inherit;
+    color: inherit;
+    background: transparent;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: color 0.14s ease, background-color 0.14s ease, border-color 0.14s ease;
+}
+
+.rq-dia-titulo-btn:hover,
+.rq-dia-titulo-btn:focus-visible {
+    color: var(--adm-acao);
+    background: var(--adm-acao-fundo);
+    border-color: var(--adm-acao-borda);
+}
+
+.rq-dia-abrir-ic {
+    font-size: 0.65rem;
+    opacity: 0.65;
+}
+
+.rq-dia-titulo-btn:hover .rq-dia-abrir-ic {
+    opacity: 1;
+}
+
+.rq-dia-selo-modo {
+    font-size: 0.64rem;
+    font-weight: 700;
+    padding: 0.08rem 0.42rem;
+    border-radius: 999px;
+    white-space: nowrap;
+    border: 1px solid var(--adm-borda);
+    color: var(--adm-tinta-3);
+    background: var(--adm-neutro-fundo);
+}
+
+.rq-dia-selo-modo.is-editavel {
+    color: var(--adm-dados);
+    border-color: var(--adm-acao-borda);
+    background: var(--adm-acao-fundo);
+}
+
+.rq-dia-selo-modo.is-hoje {
+    color: var(--adm-azul);
+    border-color: rgba(111, 168, 224, 0.45);
+    background: var(--adm-azul-fundo);
+}
+
+.rq-dia-regiao {
+    font-size: 0.71rem;
+    color: var(--adm-tinta-2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.rq-dia-regiao i {
+    color: var(--adm-acao);
+    margin-right: 0.22rem;
+}
+
+.rq-dia-metricas {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.25rem 0.5rem;
+    font-size: 0.74rem;
+    color: var(--adm-tinta-2);
+    font-variant-numeric: tabular-nums;
+}
+
+.rq-dia-metricas strong {
+    color: var(--adm-tinta);
+}
+
+.rq-dia-ocup-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    margin-top: 0.1rem;
+}
+
+.rq-dia-ocup {
+    height: 0.48rem;
+    border-radius: 999px;
+    background: var(--adm-neutro-fundo-2);
+    overflow: hidden;
+    border: 1px solid var(--adm-borda);
+}
+
+.rq-dia-ocup-barra {
+    height: 100%;
+    background: linear-gradient(90deg, #5fc28a, #f0915a);
+    border-radius: 999px;
+    transition: width 0.22s ease;
+}
+
+.rq-dia-ocup-barra.is-cheia {
+    background: linear-gradient(90deg, #f0915a, #f08a80);
+}
+
+.rq-dia-alertas {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem;
+    margin-top: 0.15rem;
+}
+
+.rq-dia-sugestoes {
+    display: flex;
+    flex-direction: column;
+    gap: 0.28rem;
+    margin-top: 0.18rem;
+}
+
+/* ---------- 066: Chips discretos de sugestão (no cartão e na coluna) ---------- */
+.rq-chip-sugestao {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.28rem 0.45rem;
+    padding: 0.22rem 0.45rem;
+    margin-top: 0.15rem;
+    border-radius: 0.45rem;
+    font-size: 0.67rem;
+    line-height: 1.25;
+    color: var(--adm-tinta-2);
+    background: rgba(111, 168, 224, 0.11);
+    border: 1px dashed rgba(111, 168, 224, 0.42);
+}
+
+.rq-chip-sugestao.is-coluna {
+    background: rgba(95, 194, 138, 0.1);
+    border-color: rgba(95, 194, 138, 0.4);
+}
+
+.rq-chip-sug-texto {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.rq-chip-sug-texto i {
+    color: var(--adm-acao);
+    flex-shrink: 0;
+}
+
+.rq-chip-sug-acoes {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    flex-shrink: 0;
+}
+
+.rq-sug-btn {
+    padding: 0.1rem 0.4rem;
+    border-radius: 0.34rem;
+    font-size: 0.64rem;
+    font-weight: 700;
+    cursor: pointer;
+    border: 1px solid var(--adm-borda-forte);
+    background: var(--adm-superficie);
+    color: var(--adm-tinta-2);
+}
+
+.rq-sug-btn.is-aceitar {
+    color: var(--adm-ok);
+    border-color: rgba(95, 194, 138, 0.55);
+    background: var(--adm-ok-fundo);
+}
+
+.rq-sug-btn.is-aceitar:hover {
+    border-color: var(--adm-ok);
+}
+
+.rq-sug-btn.is-ignorar:hover {
+    color: var(--adm-tinta);
+    border-color: var(--adm-tinta-3);
+}
+
+.rq-btn-pilha {
+    align-self: flex-start;
+    font-size: 0.66rem;
+    font-weight: 700;
+    color: var(--adm-tinta-3);
+    background: transparent;
+    border: none;
+    padding: 0.1rem 0;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.rq-btn-pilha:hover {
+    color: var(--adm-tinta);
+}
+
+/* ---------- Pilha de cartões dentro do dia (baralho compacto que expande) ---------- */
+.rq-dia-corpo {
+    padding: 0.55rem;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 9rem;
+}
+
+.rq-pilha {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.rq-pilha:not(.is-expandida) .rq-cartao {
+    padding: 0.36rem 0.5rem 0.42rem 0.55rem;
+}
+
+.rq-pilha:not(.is-expandida) .rq-cartao:not(:last-child):not(:hover):not(:focus-within):not(.is-aberto):not(.is-menu-aberto) {
+    min-height: 4.55rem;
+}
+
+.rq-pilha:not(.is-expandida) .rq-cartao + .rq-cartao {
+    margin-top: -2.05rem;
+    box-shadow: 0 -6px 14px rgba(0, 0, 0, 0.68), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.rq-pilha:not(.is-expandida) .rq-cartao:not(:last-child):not(:hover):not(:focus-within):not(.is-aberto):not(.is-menu-aberto) .rq-cartao-corpo {
+    opacity: 0.18;
+    pointer-events: none;
+    max-height: 1.85rem;
+    overflow: hidden;
+}
+
+.rq-pilha.is-expandida .rq-cartao + .rq-cartao,
+.rq-pilha .rq-cartao:hover + .rq-cartao,
+.rq-pilha .rq-cartao:focus-within + .rq-cartao,
+.rq-pilha .rq-cartao.is-aberto + .rq-cartao,
+.rq-pilha .rq-cartao.is-menu-aberto + .rq-cartao {
+    margin-top: 0.38rem;
+}
+
+.rq-pilha .rq-cartao:hover .rq-cartao-corpo,
+.rq-pilha .rq-cartao:focus-within .rq-cartao-corpo,
+.rq-pilha.is-expandida .rq-cartao .rq-cartao-corpo,
+.rq-cartao.is-aberto .rq-cartao-corpo,
+.rq-cartao.is-menu-aberto .rq-cartao-corpo,
+.rq-pilha:not(.is-expandida) .rq-cartao:last-child .rq-cartao-corpo,
+.rq-bandeja-grade .rq-cartao .rq-cartao-corpo {
+    opacity: 1;
+    max-height: 24rem;
+    pointer-events: auto;
+}
+
+/* ---------- Cartão de pedido (mesmo componente nos dias e na bandeja) ---------- */
+.rq-cartao {
+    position: relative;
+    background: var(--adm-superficie-2);
+    border: 1px solid var(--adm-borda-forte);
+    border-left: 4px solid var(--veic-cor, var(--adm-dados));
+    border-radius: 0.6rem;
+    padding: 0.48rem 0.55rem 0.52rem 0.6rem;
+    box-shadow: 0 -3px 8px rgba(0, 0, 0, 0.32);
+    transition: margin-top 0.16s ease, transform 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+    min-width: 0;
+}
+
+.rq-cartao[draggable="true"] {
+    cursor: grab;
+}
+
+.rq-cartao[draggable="true"]:active {
+    cursor: grabbing;
+}
+
+.rq-cartao:hover,
+.rq-cartao:focus-within,
+.rq-cartao.is-aberto {
+    border-color: var(--adm-acao);
+    z-index: 5;
+}
+
+.rq-cartao.is-menu-aberto {
+    z-index: 30;
+}
+
+.rq-cartao.is-arrastando {
+    opacity: 0.42;
+    border-style: dashed;
+}
+
+.rq-cartao.is-vencido {
+    border-color: var(--adm-ruim-borda);
+    background: linear-gradient(180deg, rgba(240, 138, 128, 0.11), var(--adm-superficie-2) 68%);
+}
+
+/* 066: Borda/selo vermelho para cartão programado em dia DEPOIS do prazo */
+.rq-cartao.is-atrasado {
+    border-color: var(--adm-ruim);
+    box-shadow: 0 0 0 1px var(--adm-ruim-borda), 0 -3px 8px rgba(0, 0, 0, 0.32);
+    background: linear-gradient(180deg, rgba(240, 138, 128, 0.18), var(--adm-superficie-2) 72%);
+}
+
+.rq-cartao.is-vence-hoje {
+    border-color: var(--adm-atencao-borda);
+}
+
+.rq-cartao.is-bloqueado {
+    opacity: 0.78;
+    cursor: default;
+}
+
+.rq-ic-sem-geo {
+    font-size: 0.66rem;
+    color: var(--adm-atencao);
+    flex-shrink: 0;
+}
+
+.rq-selo-sem-geo {
+    color: var(--adm-atencao);
+    border-color: var(--adm-atencao-borda);
+    background: var(--adm-atencao-fundo);
+}
+
+/* Faixa superior do cartão */
+.rq-cartao-faixa {
+    display: flex;
+    flex-direction: column;
+    gap: 0.16rem;
+    min-width: 0;
+}
+
+.rq-cartao-topo {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.3rem;
+    min-width: 0;
+}
+
+.rq-cartao-topo .rota-sit {
+    font-size: 0.63rem;
+    padding: 0.04rem 0.32rem;
+    gap: 0.18rem;
+    flex-shrink: 0;
+}
+
+.rq-cartao-id {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.25rem;
+    min-width: 0;
+    flex: 1 1 0;
+    overflow: hidden;
+}
+
+.rq-cartao-ord {
+    font-size: 0.71rem;
+    font-weight: 800;
+    color: var(--adm-acao);
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+
+.rq-cartao-num {
+    font-size: 0.72rem;
+    font-weight: 800;
+    color: var(--adm-tinta-2);
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+
+.rq-cartao-cliente-faixa {
+    font-size: 0.76rem;
+    font-weight: 700;
+    color: var(--adm-tinta);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+
+.rq-cartao-subfaixa {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.35rem;
+    font-size: 0.69rem;
+    color: var(--adm-tinta-2);
+    min-width: 0;
+}
+
+.rq-cartao-veic {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.22rem;
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: var(--adm-tinta-2);
+    background: var(--adm-neutro-fundo);
+    border: 1px solid var(--adm-borda);
+    border-radius: 999px;
+    padding: 0.04rem 0.38rem;
+    white-space: nowrap;
+}
+
+.rq-cartao-loc {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.rq-cartao-vol {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.22rem;
+    font-weight: 700;
+    color: var(--adm-tinta);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+
+/* Corpo inferior do cartão */
+.rq-cartao-corpo {
+    margin-top: 0.28rem;
+    padding-top: 0.26rem;
+    border-top: 1px dashed var(--adm-borda);
+    display: flex;
+    flex-direction: column;
+    gap: 0.26rem;
+    transition: max-height 0.16s ease, opacity 0.14s ease;
+}
+
+.rq-cartao-detalhe-linha {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.35rem;
+    font-size: 0.68rem;
+    color: var(--adm-tinta-3);
+}
+
+.rq-cartao-cidade {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.rq-cartao-selos {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.rq-cartao-acoes {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.3rem;
+}
+
+.rq-menu {
+    position: relative;
+    width: 100%;
+}
+
+.rq-menu-btn {
+    list-style: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.28rem;
+    padding: 0.2rem 0.5rem;
+    min-height: 1.65rem;
+    border-radius: 0.42rem;
+    font-size: 0.69rem;
+    font-weight: 700;
+    color: var(--adm-tinta-2);
+    background: var(--adm-superficie);
+    border: 1px solid var(--adm-borda-forte);
+    cursor: pointer;
+    user-select: none;
+}
+
+.rq-menu-btn::-webkit-details-marker {
+    display: none;
+}
+
+.rq-menu-btn:hover,
+.rq-menu[open] > .rq-menu-btn {
+    color: var(--adm-tinta);
+    border-color: var(--adm-acao);
+    background: var(--adm-acao-fundo);
+}
+
+.rq-menu-painel {
+    position: static;
+    margin-top: 0.32rem;
+    width: 100%;
+    padding: 0.4rem;
+    border-radius: 0.5rem;
+    background: var(--adm-superficie);
+    border: 1px solid var(--adm-borda-forte);
+    display: flex;
+    flex-direction: column;
+    gap: 0.18rem;
+}
+
+.rq-menu-titulo {
+    font-size: 0.66rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--adm-tinta-3);
+    padding: 0.1rem 0.35rem 0.2rem;
+}
+
+.rq-menu-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem;
+    width: 100%;
+    text-align: left;
+    padding: 0.34rem 0.5rem;
+    min-height: 1.75rem;
+    border-radius: 0.4rem;
+    font-size: 0.74rem;
+    font-weight: 700;
+    color: var(--adm-tinta);
+    background: transparent;
+    border: 1px solid transparent;
+    cursor: pointer;
+}
+
+.rq-menu-item:hover:not(:disabled) {
+    background: var(--adm-acao-fundo);
+    border-color: var(--adm-acao-borda);
+}
+
+.rq-menu-item:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.rq-menu-item.is-atual {
+    background: var(--adm-neutro-fundo-2);
+    border-color: var(--adm-borda);
+}
+
+.rq-menu-item.is-remover {
+    color: var(--adm-ruim);
+    margin-top: 0.15rem;
+    border-top: 1px solid var(--adm-borda);
+    border-radius: 0 0 0.4rem 0.4rem;
+    padding-top: 0.42rem;
+}
+
+.rq-menu-item.is-remover:hover:not(:disabled) {
+    background: var(--adm-ruim-fundo);
+    border-color: var(--adm-ruim-borda);
+}
+
+.rq-menu-sub {
+    font-size: 0.66rem;
+    font-weight: 400;
+    color: var(--adm-tinta-3);
+}
+
+.rq-ordem-botoes {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.2rem;
+}
+
+.rq-btn-ordem {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.55rem;
+    height: 1.55rem;
+    border-radius: 0.38rem;
+    background: var(--adm-superficie);
+    border: 1px solid var(--adm-borda);
+    color: var(--adm-tinta-2);
+    font-size: 0.68rem;
+    cursor: pointer;
+}
+
+.rq-btn-ordem:hover:not(:disabled) {
+    color: var(--adm-tinta);
+    border-color: var(--adm-acao);
+}
+
+.rq-btn-ordem:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+/* Dia vazio */
+.rq-dia-vazio {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    padding: 1rem 0.5rem;
+    text-align: center;
+    font-size: 0.74rem;
+    color: var(--adm-tinta-3);
+    border: 1px dashed var(--adm-borda);
+    border-radius: 0.55rem;
+}
+
+/* ---------- Bandeja inferior: "Fora da rota / sem dia" ---------- */
+.rq-bandeja {
+    background: var(--adm-superficie);
+    border: 1px solid var(--adm-borda);
+    border-radius: 0.85rem;
+    padding: 0.9rem 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.rq-bandeja.is-alvo-solta {
+    border-color: var(--adm-acao);
+    background: var(--adm-acao-fundo);
+    box-shadow: 0 0 0 2px var(--adm-acao-borda);
+}
+
+.rq-bandeja-topo {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.65rem;
+}
+
+.rq-bandeja-controles {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
+}
+
+.rq-bandeja-busca {
+    width: min(17rem, 100%);
+    padding: 0.38rem 0.65rem !important;
+    font-size: 0.78rem !important;
+    height: 2.05rem;
+}
+
+.rq-bandeja-grade {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(14.5rem, 1fr));
+    gap: 0.55rem;
+}
+
+@media (max-width: 900px) {
+    .rq-pilha:not(.is-expandida) .rq-cartao + .rq-cartao {
+        margin-top: 0.45rem;
+    }
+    .rq-pilha:not(.is-expandida):not(:hover):not(:focus-within) .rq-cartao:not(.is-aberto) .rq-cartao-extra {
+        max-height: 12rem;
+        opacity: 1;
+        margin-top: 0.35rem;
+        padding-top: 0.32rem;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .rq-coluna-dia,
+    .rq-dia-ocup-barra,
+    .rq-cartao,
+    .rq-cartao-extra,
+    .rq-bandeja {
+        transition: none !important;
+    }
+}

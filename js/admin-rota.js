@@ -61,7 +61,7 @@
     var DIAS_CURTOS = [[1, 'Seg'], [2, 'Ter'], [3, 'Qua'], [4, 'Qui'], [5, 'Sex'], [6, 'Sáb'], [0, 'Dom']];
     var DIAS_ROTULO = { 0: 'dom', 1: 'seg', 2: 'ter', 3: 'qua', 4: 'qui', 5: 'sex', 6: 'sáb' };
     var st = { carregado: false, carregando: false, erro: null, pedidos: [], clientes: {}, coletado: null, temCaixas: false,
-               vista: 'hoje', mapa: null, ro: null, sb: null, papel: null, alvo: null, seq: 0, ativo: false,
+               vista: 'semana', diaDetalhe: null, mapa: null, ro: null, sb: null, papel: null, alvo: null, seq: 0, ativo: false,
                // 040: configuração (linha de rota_config ou null), padrões/exceções por cliente
                cfgLinha: null, cfg: cfgDe(CFG_PADRAO), cfgAusente: false, cfgErro: null, excecoes: {},
                cfgAberto: false, msgVeiculo: '', focoVeiculo: null,
@@ -89,8 +89,13 @@
                planoVeic: {}, semVeiculo: 's10', frotaSalvando: false, frotaEdit: null, msgFrota: '', focoFrota: null, mapaVeic: 's10',
                // 050 (rota do dia fechada): tabela lida? linha de hoje, foto (itens), erro de leitura, gravação, mensagem,
                // confirmação de "Reabrir" na tela e se o plano desenhado agora é o de HOJE FECHADO
-               fx050: false, fxLinha: null, fxFoto: null, fxErro: null, fxSalvando: false, msgFx: '', fxConfirmaReabrir: false, fxRender: false, focoFx: null,
-               canhotos: {}, confirmacoes: {}, entrega063: false, diasSaida: {} };
+               fx050: false, fxLinha: null, fxFoto: null, fxDias: {}, fxDiasErro: {}, fxErro: null, fxSalvando: false, msgFx: '', fxConfirmaReabrir: false, fxRender: false, focoFx: null,
+               canhotos: {}, confirmacoes: {}, entrega063: false, diasSaida: {},
+               // 065 (quadro da semana): leitura/gravação por RPC rota_065_ler_semana / rota_065_salvar_semana / rota_065_marcar_sem_saida
+               sem065: false, sem065Dados: {}, semQuadroRasc: {}, semFiltroVeic: 'todos', semVersaoConflito: false,
+               semMsgErro: false, semPilhasExp: {}, semBuscaBandeja: '', semFiltroBandeja: 'todos', semMapaAberto: true,
+               // 066 (assistente da semana): rota_066_sugestoes / rota_066_registrar (stub local até RPC existir)
+               sug066: false, sug066Dados: {}, sug066Ignoradas: {}, seqSug066: 0, relendoSug066: {}, sessao: 0 };
     var NUM = new Intl.NumberFormat('pt-BR'), NUM1 = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 });
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
     function brl(c) { return c == null ? '—' : (Number(c) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
@@ -185,9 +190,16 @@
                     if (e) return rpcAusente(e.error) ? null : { erro: String(e.error.message || e.error) };
                     return { linhas: [].concat.apply([], ps.map(function (r) { return r.data || []; })) };
                 }, function (e) { return { erro: String((e && e.message) || e) }; });
+            var semIni0 = semanaAlvo();
+            var lerSem065 = Promise.resolve().then(function () {
+                return sb.rpc('rota_065_ler_semana', { p_inicio: semIni0 });
+            }).catch(function (e) { return { error: e }; });
+            var lerSug066 = Promise.resolve().then(function () {
+                return sb.rpc('rota_066_sugestoes', { p_semana: semIni0 });
+            }).catch(function (e) { return { error: e }; });
             return Promise.all([Promise.all(blocos.map(function (b) {
                 return sb.from('solidcon_clientes').select('documento,nome,logradouro,numero,complemento,bairro,cidade,estado,telefone,celular').in('documento', b);
-            })), posicoes, core.coletarSaidas(sb, pedidos), core.coletarConfirmacoes(sb, pedidos)]).then(function (cp) {
+            })), posicoes, core.coletarSaidas(sb, pedidos), core.coletarConfirmacoes(sb, pedidos), lerSem065, lerSug066]).then(function (cp) {
                 if (seq !== st.seq) return;
                 // UI1: alguma gravação terminou (ou começou) durante esta leitura: o retrato pode ser anterior a ela.
                 // Descarta e lê de novo (ou espera a gravação pendente terminar).
@@ -218,6 +230,8 @@
                 lerFrota(rs[10], rs[11], rs[12]);   // antes da marcação: só vale veículo que existe na frota
                 lerConfig(rs[3], rs[4], rs[5], rs[6], rs[7], rs[8], rs[9]);
                 lerFechada(rs[13]);
+                aplicarLeituraSemana065(semIni0, cp[4]);
+                aplicarLeituraSugestoes066(semIni0, cp[5]);
                 st.progresso = {};   // { veiculo: nº de paradas feitas hoje } (051); erro/ausente = sem contador
                 if (rs[14] && !rs[14].error) (rs[14].data || []).forEach(function (x) { st.progresso[x.veiculo_id] = (st.progresso[x.veiculo_id] || 0) + 1; });
                 st.frota = core.frotaDe(linhasFrota());   // v1 (sem 044): só caminhão e S10
@@ -590,6 +604,10 @@
     function txtHoraSaida() { var m = st.cfg && st.cfg.horaSaida != null ? st.cfg.horaSaida : 8 * 60; return core.hhmm(m); }
     // Faixa do topo (só na vista Hoje, com a 050 e saída hoje): Previsão (não fechada) / Fechada às … por … / automaticamente.
     function htmlFechamento(pl) {
+        if (st.vista === 'dia' && pl && pl.fxErroHistorico) {
+            return '<div class="adm-card p-4 mb-5 rota-banner rota-banner-erro" role="alert" data-rota-fx-erro-hist="1"><p><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> ' +
+                '<strong>Não foi possível ler a rota fechada histórica de ' + esc(dataBr(pl.dia)) + '</strong> (' + esc(pl.fxErroHistorico) + '). A foto histórica está indisponível no momento.</p></div>';
+        }
         if (!st.v2 || !st.fx050 || pl.semSaida || st.vista !== 'hoje') return '';
         var msg = st.msgFx ? '<p class="rota-sub mt-2" role="status" id="rota-fx-msg" tabindex="-1">' + esc(st.msgFx) + '</p>' : '';
         if (st.fxErro) {
@@ -2342,11 +2360,1110 @@
         q.then(function (r) { fim(r.error ? (r.error.message || String(r.error)) : null); }, function (e) { fim(String((e && e.message) || e)); });
     }
 
-    // ===================== PLANO DA SEMANA DA S10 (046: referência seg–sex) =====================
+    // ===================== PLANO DA SEMANA (046/047 + 065 Quadro de arrastar) =====================
     function cap(s) { var t = String(s || ''); return t ? t.charAt(0).toUpperCase() + t.slice(1) : ''; }
     function semanaAlvo() {
         var ini = st.semanaIni && /^\d{4}-\d{2}-\d{2}$/.test(st.semanaIni) ? segundaDe(st.semanaIni) : null;
-        return ini || proximaSemana(hojeSP());
+        if (ini) return ini;
+        var h = hojeSP();
+        return diaSemana(h) === 0 ? proximaSemana(h) : segundaDe(h);
+    }
+    function obterQuadroMod() {
+        return (raiz && raiz.TempRioRotaQuadro) || null;
+    }
+    function sincronizarPlanoLocalDe065(ini, itens) {
+        var fim = somaDias(ini, 5);
+        Object.keys(st.plano).forEach(function (k) {
+            if (st.plano[k] >= ini && st.plano[k] <= fim) {
+                delete st.plano[k];
+                delete st.planoVeic[k];
+            }
+        });
+        (itens || []).forEach(function (it) {
+            if (it && !it.removido && it.cd_pedido != null && /^\d{4}-\d{2}-\d{2}/.test(String(it.dia || ''))) {
+                st.plano[it.cd_pedido] = String(it.dia).slice(0, 10);
+                st.planoVeic[it.cd_pedido] = it.veiculo_id || 's10';
+            }
+        });
+    }
+    function aplicarLeituraSemana065(semIni, r) {
+        var ini = segundaDe(semIni || semanaAlvo());
+        if (!r) return;
+        if (r.error) {
+            if (rpcAusente(r.error)) { st.sem065 = false; return; }
+            st.sem065 = true;
+            st.msgSemana = 'Não foi possível ler a programação da semana: ' + String(r.error.message || r.error);
+            st.semMsgErro = true;
+            return;
+        }
+        var d = r.data;
+        if (!d || typeof d !== 'object' || Array.isArray(d) || !d.status) {
+            st.sem065 = false;
+            return;
+        }
+        st.sem065 = true;
+        st.pln046 = true;
+        if (d.status === 'erro') {
+            st.msgSemana = msgErroMotivo065(d.motivo, d.cd_pedido);
+            st.semMsgErro = true;
+            return;
+        }
+        var iniLido = d.inicio ? segundaDe(String(d.inicio).slice(0, 10)) : ini;
+        var itens = Array.isArray(d.itens) ? d.itens.map(function (it) {
+            return {
+                cd_pedido: Number(it.cd_pedido),
+                dia: String(it.dia || '').slice(0, 10),
+                veiculo_id: String(it.veiculo_id || 's10'),
+                ordem: it.ordem != null ? Number(it.ordem) : null,
+                removido: !!it.removido
+            };
+        }) : [];
+        var novaVersaoLida = Number(d.versao) || 0;
+        st.sem065Dados[iniLido] = {
+            inicio: iniLido,
+            hoje: d.hoje ? String(d.hoje).slice(0, 10) : hojeSP(),
+            versao: novaVersaoLida,
+            itens: itens,
+            sem_saida: Array.isArray(d.sem_saida) ? d.sem_saida : [],
+            fechados: Array.isArray(d.fechados) ? d.fechados : []
+        };
+        sincronizarPlanoLocalDe065(iniLido, itens);
+        // UI065-R1: se existir rascunho local da semana com versaoBase diferente da recém-lida,
+        // mantém versaoBase original do rascunho imutável e sinaliza conflito de versão.
+        var rascExistente = st.semQuadroRasc[iniLido];
+        if (rascExistente && rascExistente.versaoBase != null && Number(rascExistente.versaoBase) !== novaVersaoLida) {
+            st.semVersaoConflito = true;
+            st.semMsgErro = true;
+            st.msgSemana = msgErroMotivo065('versao_antiga');
+        }
+        // UI066-R4: se houver sugestão 066 em cache com versão diferente da versão 065 recém-lida, invalida e relê
+        var sugExistente = st.sug066Dados[iniLido];
+        if (sugExistente && sugExistente.versao != null && isFinite(Number(sugExistente.versao)) && Number(sugExistente.versao) !== novaVersaoLida) {
+            st.sug066Dados[iniLido] = {
+                status: 'divergente',
+                semana: iniLido,
+                versao: Number(sugExistente.versao),
+                invalida: true,
+                versaoDivergente: true,
+                pedidos: [],
+                dias: [],
+                encaixes: []
+            };
+            recarregarSugestoes066(iniLido);
+        }
+    }
+    function msgErroMotivo065(motivo, cd) {
+        var m = String(motivo || '');
+        if (m === 'versao_antiga') return 'Outro usuário salvou o plano desta semana antes. Recarregue a semana para atualizar.';
+        if (m === 'parametro_invalido') return 'Não foi possível salvar a semana: parâmetros inválidos.';
+        if (m === 'veiculo_invalido') return 'Não foi possível salvar a semana: veículo inativo ou inválido.';
+        if (m === 'dia_sem_saida') return 'Não foi possível salvar a semana: há pedido em dia sem saída do veículo.';
+        if (m === 'dia_bloqueado') return 'Não foi possível salvar a semana: dia passado, hoje ou já fechado é somente leitura.';
+        if (m === 'pedido_inexistente') return 'O pedido' + (cd ? ' #' + cd : '') + ' mudou de etapa ou não está mais pendente no ERP. Atualize a aba.';
+        if (m === 'pedido_duplicado') return 'Não foi possível salvar a semana: pedido duplicado em mais de um dia/veículo.';
+        if (m === 'ordem_invalida') return 'Não foi possível salvar a semana: ordem das paradas inválida.';
+        return 'Não foi possível salvar a semana' + (m ? ' (' + m + ').' : '.');
+    }
+    function aplicarLeituraSugestoes066(semIni, r) {
+        var ini = segundaDe(semIni || semanaAlvo());
+        if (!r || r.error) {
+            if (r && r.error && rpcAusente(r.error)) {
+                st.sug066 = false;
+                delete st.sug066Dados[ini];
+            } else if (st.sug066) {
+                st.sug066Dados[ini] = { status: 'erro', semana: ini, invalida: true, pedidos: [], dias: [], encaixes: [] };
+            } else {
+                delete st.sug066Dados[ini];
+            }
+            return;
+        }
+        var d = r.data;
+        if (!d || typeof d !== 'object' || Array.isArray(d)) {
+            st.sug066 = false;
+            delete st.sug066Dados[ini];
+            return;
+        }
+        if (d.status === 'erro') {
+            st.sug066 = true;
+            st.sug066Dados[ini] = { status: 'erro', motivo: d.motivo || null, semana: ini, invalida: true, pedidos: [], dias: [], encaixes: [] };
+            return;
+        }
+        if (!Array.isArray(d.pedidos) && !Array.isArray(d.encaixes) && !Array.isArray(d.dias)) {
+            st.sug066 = false;
+            delete st.sug066Dados[ini];
+            return;
+        }
+        st.sug066 = true;
+        var semResp = d.semana ? segundaDe(String(d.semana).slice(0, 10)) : ini;
+        var versaoSug = d.versao != null && isFinite(Number(d.versao)) ? Number(d.versao) : null;
+        var d065 = st.sem065Dados[ini] || null;
+        var rasc = st.semQuadroRasc[ini] || null;
+        var versaoPlano = rasc && rasc.versaoBase != null ? Number(rasc.versaoBase) : (d065 && d065.versao != null ? Number(d065.versao) : null);
+        // UI066-R4: comparar semana e versão reais da 066 com o snapshot 065/rascunho antes de exibir/aplicar
+        if (semResp !== ini || (versaoPlano != null && versaoSug != null && versaoSug !== versaoPlano)) {
+            st.sug066Dados[ini] = {
+                status: 'divergente',
+                semana: semResp,
+                hoje: d.hoje || null,
+                versao: versaoSug != null ? versaoSug : -1,
+                invalida: true,
+                versaoDivergente: true,
+                pedidos: [],
+                dias: [],
+                encaixes: []
+            };
+            if (rasc && rasc.versaoBase != null && versaoSug != null && versaoSug !== Number(rasc.versaoBase)) {
+                st.semVersaoConflito = true;
+                st.semMsgErro = true;
+                if (!st.msgSemana) st.msgSemana = msgErroMotivo065('versao_antiga');
+            }
+            if (!st.relendoSug066[ini]) {
+                st.relendoSug066[ini] = true;
+                recarregarSemanaESugestoes066(ini);
+            }
+            return;
+        }
+        delete st.relendoSug066[ini];
+        st.sug066Dados[ini] = d;
+    }
+    function recarregarSemanaESugestoes066(semIni) {
+        var ini = segundaDe(semIni || semanaAlvo());
+        if (!st.sb) return Promise.resolve();
+        var sb0 = st.sb, sessao0 = st.sessao, seqSug0 = ++st.seqSug066;
+        var pSem, pSug;
+        try { pSem = Promise.resolve(sb0.rpc('rota_065_ler_semana', { p_inicio: ini })).catch(function (e) { return { error: e }; }); }
+        catch (e) { pSem = Promise.resolve({ error: e }); }
+        try { pSug = Promise.resolve(sb0.rpc('rota_066_sugestoes', { p_semana: ini })).catch(function (e) { return { error: e }; }); }
+        catch (e) { pSug = Promise.resolve({ error: e }); }
+        return Promise.all([pSem, pSug]).then(function (rs) {
+            if (st.sb !== sb0 || st.sessao !== sessao0 || st.seqSug066 !== seqSug0 || !st.ativo) return;
+            aplicarLeituraSemana065(ini, rs[0]);
+            aplicarLeituraSugestoes066(ini, rs[1]);
+            desenhar();
+        });
+    }
+    function recarregarSugestoes066(semIni) {
+        var ini = segundaDe(semIni || semanaAlvo());
+        if (!st.sb || !st.sug066) return Promise.resolve();
+        var sb0 = st.sb, sessao0 = st.sessao, seqSug0 = ++st.seqSug066;
+        var pSug;
+        try { pSug = Promise.resolve(sb0.rpc('rota_066_sugestoes', { p_semana: ini })); }
+        catch (e) { pSug = Promise.reject(e); }
+        return pSug.then(function (r) {
+            if (st.sb !== sb0 || st.sessao !== sessao0 || st.seqSug066 !== seqSug0 || !st.ativo) return;
+            aplicarLeituraSugestoes066(ini, r);
+            desenhar();
+        }, function () { /* ignora falha de releitura de sugestoes */ });
+    }
+    function registrarFeedback066(cd, acao, dia) {
+        if (!st.sb || !podeSalvarSemana() || !cd || !acao) return Promise.resolve();
+        var sb0 = st.sb, sessao0 = st.sessao;
+        return Promise.resolve().then(function () {
+            return sb0.rpc('rota_066_registrar', { p_cd: Number(cd), p_acao: String(acao), p_dia: dia ? String(dia).slice(0, 10) : null });
+        }).then(function (r) {
+            if (st.sb !== sb0 || st.sessao !== sessao0 || !st.ativo) return;
+            if (r && r.error && rpcAusente(r.error)) st.sug066 = false;
+        }, function () { /* ignora erro de feedback quando stub 066 ativo */ });
+    }
+    function carregarFotoDiaDetalhe(diaIso) {
+        if (!st.sb || !diaIso || diaIso === hojeSP()) return Promise.resolve();
+        if (st.fxDias && Object.prototype.hasOwnProperty.call(st.fxDias, diaIso) && !(st.fxDiasErro && st.fxDiasErro[diaIso])) return Promise.resolve();
+        var sb0 = st.sb, sessao0 = st.sessao;
+        return Promise.resolve().then(function () {
+            return sb0.rpc('rota_050_ler', { p_data: diaIso });
+        }).then(function (r) {
+            if (st.sb !== sb0 || st.sessao !== sessao0 || !st.ativo) return;
+            if (!r || r.error) {
+                var errObj = (r && r.error) || { message: 'sem resposta' };
+                if (rpcAusente(errObj) || tabelaAusente(errObj, 'rota_dia_fechada')) {
+                    st.fxDias[diaIso] = null;
+                    if (st.fxDiasErro) delete st.fxDiasErro[diaIso];
+                } else {
+                    if (!st.fxDiasErro) st.fxDiasErro = {};
+                    st.fxDiasErro[diaIso] = String(errObj.message || errObj.code || errObj);
+                    delete st.fxDias[diaIso];
+                }
+                if (st.vista === 'dia' && st.diaDetalhe === diaIso) desenhar();
+                return;
+            }
+            if (st.fxDiasErro) delete st.fxDiasErro[diaIso];
+            var o = r.data, l = o && o.linha ? o.linha : null;
+            if (l && l.estado === 'fechada') {
+                st.fxDias[diaIso] = {
+                    data: String(l.data).slice(0, 10),
+                    itens: Array.isArray(o.itens) ? o.itens : [],
+                    fechada_em: l.fechada_em,
+                    fechada_nome: l.fechada_nome,
+                    automatico: !!l.automatico,
+                    versao: l.versao,
+                    alterada_em: l.alterada_em || null
+                };
+            } else {
+                st.fxDias[diaIso] = null;
+            }
+            if (st.vista === 'dia' && st.diaDetalhe === diaIso) desenhar();
+        }, function (e) {
+            if (st.sb !== sb0 || st.sessao !== sessao0 || !st.ativo) return;
+            if (!st.fxDiasErro) st.fxDiasErro = {};
+            st.fxDiasErro[diaIso] = String((e && e.message) || e || 'falha de rede');
+            delete st.fxDias[diaIso];
+            if (st.vista === 'dia' && st.diaDetalhe === diaIso) desenhar();
+        });
+    }
+    function planejarDetalheDia(diaAlvo, pl, oDia) {
+        var d = String(diaAlvo || '').slice(0, 10);
+        var hoje = (oDia && oDia.hoje) || hojeSP();
+        if (d === pl.hoje.dia && pl.hoje.fechada) return pl.hoje;
+        // UI066-R1-A: se houve falha ao ler a foto histórica de d, sinaliza erro sem apresentar o plano como foto confirmada
+        if (st.fxDiasErro && st.fxDiasErro[d]) {
+            var resErro = planejar([], st.clientes, d, Object.assign({}, oDia, {
+                hoje: d < hoje ? d : hoje,
+                fechada: { data: d, itens: [] },
+                projetarSeparando: false
+            }));
+            resErro.fechada = null;
+            resErro.fxErroHistorico = st.fxDiasErro[d];
+            resErro.somenteLeituraDia = true;
+            return resErro;
+        }
+        var fotoReal = (st.fxFoto && st.fxFoto.data === d) ? st.fxFoto : ((st.fxDias && st.fxDias[d]) || null);
+        if (fotoReal && Array.isArray(fotoReal.itens)) {
+            // UI066-R1-A: montar visualização histórica pelos itens ativos reais da foto sem submetê-los à elegibilidade atual de pendentes
+            var porCd = Object.create(null);
+            (st.pedidos || []).forEach(function (p) { if (p && p.cd_pedido != null) porCd[Number(p.cd_pedido)] = p; });
+            var pedidosFoto = [];
+            var vistosFoto = Object.create(null);
+            fotoReal.itens.forEach(function (it) {
+                if (!it || it.cd_pedido == null || it.removido_em) return;
+                var cd = Number(it.cd_pedido);
+                if (vistosFoto[cd]) return;
+                vistosFoto[cd] = true;
+                var pOrig = porCd[cd];
+                if (pOrig) {
+                    pedidosFoto.push(Object.assign({}, pOrig, {
+                        etapa: 'conferido',
+                        dt_saida: null,
+                        dt_nota: null,
+                        dt_atendido: null
+                    }));
+                } else {
+                    pedidosFoto.push({
+                        cd_pedido: cd,
+                        documento: it.documento || null,
+                        cliente_nome: it.cliente_nome || it.nome || ('Pedido #' + cd),
+                        etapa: 'conferido',
+                        dt_pedido: d + 'T08:00:00-03:00',
+                        caixas_24: it.c24 != null ? Number(it.c24) : (it.caixas_24 != null ? Number(it.caixas_24) : 0),
+                        caixas_48: it.c48 != null ? Number(it.c48) : (it.caixas_48 != null ? Number(it.caixas_48) : 0),
+                        caixas_outras: it.avulsos != null ? Number(it.avulsos) : (it.caixas_outras != null ? Number(it.caixas_outras) : 0),
+                        _historicoAusente: true
+                    });
+                }
+            });
+            var cfgHist = Object.assign({}, oDia.cfg || st.cfg, { canhotoDesde: null });
+            var resFoto = planejar(pedidosFoto, st.clientes, d, Object.assign({}, oDia, {
+                hoje: d,
+                cfg: cfgHist,
+                canhotos: {},
+                confirmacoes: {},
+                ignorados: {},
+                excluir: {},
+                fechada: fotoReal,
+                projetarSeparando: false
+            }));
+            resFoto.somenteLeituraDia = d <= hoje;
+            return resFoto;
+        }
+        var iniSem = segundaDe(d);
+        var qMod = obterQuadroMod();
+        var qBruto = montarDadosQuadro065(iniSem);
+        var qNorm = qMod ? qMod.normalizarEstado(qBruto) : qBruto;
+        var colDia = (qNorm && qNorm.dias || []).filter(function (c) { return c.dia === d; })[0];
+        if (!colDia) {
+            return planejar(st.pedidos, st.clientes, d, Object.assign({}, oDia, {
+                excluir: (!pl.hoje.semSaida && d > pl.hoje.dia) ? pl.hoje.entregues : {}
+            }));
+        }
+        var contOrd = Object.create(null);
+        var cartoesFonte = (colDia.cartoes || []).slice();
+        // Se for dia passado e houver itens salvos no banco que já saíram/receberam, preserva-os na reconstituição histórica
+        if (d <= hoje && !cartoesFonte.length && st.sem065Dados[iniSem] && Array.isArray(st.sem065Dados[iniSem].itens)) {
+            st.sem065Dados[iniSem].itens.forEach(function (it) {
+                if (it && !it.removido && String(it.dia).slice(0, 10) === d) {
+                    cartoesFonte.push({ cd_pedido: it.cd_pedido, veiculo: it.veiculo_id || 's10', ordem: it.ordem, origemDia: 'salvo' });
+                }
+            });
+        }
+        var itensQuadro = cartoesFonte.map(function (c) {
+            var vid = String(c.veiculo || c.veiculo_id || 's10');
+            contOrd[vid] = (contOrd[vid] || 0) + 1;
+            var ord = c.ordem != null ? Number(c.ordem) : contOrd[vid];
+            return {
+                cd_pedido: Number(c.cd_pedido),
+                veiculo_id: vid,
+                ordem: ord,
+                origem: c.origemDia || 'plano'
+            };
+        });
+        var optsDia = Object.assign({}, oDia, {
+            fechada: { data: d, itens: itensQuadro },
+            projetarSeparando: false
+        });
+        if (d < hoje) {
+            optsDia.hoje = d;
+            optsDia.canhotos = {};
+            optsDia.confirmacoes = {};
+        }
+        var resDia = planejar(st.pedidos, st.clientes, d, optsDia);
+        if (!fotoReal) {
+            resDia.fechada = null;
+            resDia.doQuadroSemana = true;
+            resDia.somenteLeituraDia = !colDia.editavel || d <= hoje;
+        }
+        return resDia;
+    }
+    function abrirDetalheDia(diaIso) {
+        var d = String(diaIso || '').slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return;
+        var hoje = hojeSP();
+        st.diaDetalhe = d;
+        // UI066-R1: abrir um dia a partir do quadro usa a vista 'dia' (alimentada pelo plano/rascunho do quadro ou foto real),
+        // exceto quando for o próprio dia de hoje sem rascunho específico de hoje.
+        st.vista = (d === hoje) ? 'hoje' : 'dia';
+        if (d <= hoje && d !== hoje) carregarFotoDiaDetalhe(d);
+        desenhar();
+    }
+    function carregarSemana065(novaSem, forcar) {
+        var ini = segundaDe(novaSem || semanaAlvo());
+        st.semanaIni = ini;
+        st.msgSemana = '';
+        st.semMsgErro = false;
+        var rascIni = st.semQuadroRasc[ini];
+        var d065Ini = st.sem065Dados[ini];
+        st.semVersaoConflito = !!(rascIni && d065Ini && rascIni.versaoBase != null && Number(rascIni.versaoBase) !== Number(d065Ini.versao));
+        if (!st.sb || (!st.sem065 && !forcar)) {
+            desenhar();
+            return Promise.resolve();
+        }
+        var sb0 = st.sb, seq0 = st.seq, sessao0 = st.sessao, seqSug0 = ++st.seqSug066;
+        desenhar();
+        var pSem = Promise.resolve().then(function () {
+            return sb0.rpc('rota_065_ler_semana', { p_inicio: ini });
+        }).catch(function (e) { return { error: e }; });
+        var pSug = Promise.resolve().then(function () {
+            return sb0.rpc('rota_066_sugestoes', { p_semana: ini });
+        }).catch(function (e) { return { error: e }; });
+        return Promise.all([pSem, pSug]).then(function (rs) {
+            if (!sb0 || st.sb !== sb0 || st.seq !== seq0 || st.sessao !== sessao0 || !st.ativo) return;
+            aplicarLeituraSemana065(ini, rs[0]);
+            if (st.seqSug066 === seqSug0) aplicarLeituraSugestoes066(ini, rs[1]);
+            desenhar();
+        });
+    }
+    // UI065-R2: pedido cuja primeira saída fechada ativa (rota_059_saidas / st.diasSaida ou foto fechada de hoje)
+    // é <= hoje já saiu em rota fechada; não entra na bandeja, em sugestões nem em programação futura (dia > hoje).
+    function diaSaidaFechadaAteHoje(cd, hoje) {
+        var dSaida = st.diasSaida && st.diasSaida[cd] ? String(st.diasSaida[cd]).slice(0, 10) : null;
+        if (dSaida && dSaida <= hoje) return dSaida;
+        if (st.fx050 && st.fxFoto && st.fxFoto.data) {
+            var dFx = String(st.fxFoto.data).slice(0, 10);
+            if (dFx <= hoje && Array.isArray(st.fxFoto.itens)) {
+                for (var i = 0; i < st.fxFoto.itens.length; i++) {
+                    var it = st.fxFoto.itens[i];
+                    if (it && !it.removido_em && Number(it.cd_pedido) === Number(cd)) return dFx;
+                }
+            }
+        }
+        return null;
+    }
+    function montarDadosQuadro065(semIni) {
+        var ini = segundaDe(semIni || semanaAlvo());
+        var d065 = st.sem065Dados[ini] || null;
+        var hoje = (d065 && d065.hoje) ? String(d065.hoje).slice(0, 10) : hojeSP();
+        var fim = somaDias(ini, 5);
+        var frotaLista = linhasFrota();
+        var cfgFrota = core.comFrota(st.cfg, frotaLista);
+        var opts = optsPlano();
+        var versaoBase = d065 ? (Number(d065.versao) || 0) : 0;
+        var semSaidaLista = d065 && Array.isArray(d065.sem_saida) ? d065.sem_saida.slice() : [];
+        var fechadosLista = d065 && Array.isArray(d065.fechados) ? d065.fechados.slice() : [];
+        if (st.fx050 && st.fxFoto && st.fxFoto.data && fechadosLista.indexOf(st.fxFoto.data) < 0) {
+            fechadosLista.push(st.fxFoto.data);
+        }
+        var fechadosSet = Object.create(null);
+        fechadosLista.forEach(function (d) { fechadosSet[String(d).slice(0, 10)] = true; });
+        var semSaidaPorDia = Object.create(null);
+        semSaidaLista.forEach(function (s) {
+            if (!s || !s.dia || !s.veiculo_id) return;
+            var iso = String(s.dia).slice(0, 10);
+            if (!semSaidaPorDia[iso]) semSaidaPorDia[iso] = Object.create(null);
+            semSaidaPorDia[iso][String(s.veiculo_id)] = s.motivo != null ? String(s.motivo) : '';
+        });
+
+        var pendentesPorCd = Object.create(null);
+        var elegiveisFuturoPorCd = Object.create(null);
+        (st.pedidos || []).forEach(function (p) {
+            if (!p || p.cd_pedido == null) return;
+            if (st.ign045 && st.ignorados[p.cd_pedido]) return;
+            if (!core.pendenteEntrega(p, st.canhotos, hoje, cfgFrota, opts)) return;
+            pendentesPorCd[p.cd_pedido] = p;
+            if (!diaSaidaFechadaAteHoje(p.cd_pedido, hoje)) {
+                elegiveisFuturoPorCd[p.cd_pedido] = p;
+            }
+        });
+
+        var rasc = st.semQuadroRasc[ini];
+        if (rasc && rasc.dias && rasc.bandeja) {
+            // UI065-R1: versaoBase do rascunho é imutável (a versão sobre a qual a edição começou).
+            var versaoBaseRasc = rasc.versaoBase != null ? Number(rasc.versaoBase) : versaoBase;
+            var conflitoVersao = !!st.semVersaoConflito || (d065 != null && Number(d065.versao) !== versaoBaseRasc);
+            if (conflitoVersao) {
+                st.semVersaoConflito = true;
+                if (!st.msgSemana) {
+                    st.msgSemana = msgErroMotivo065('versao_antiga');
+                    st.semMsgErro = true;
+                }
+            }
+            var diasRasc = rasc.dias.map(function (col) {
+                var ehLeituraPassado = col.dia <= hoje || !!fechadosSet[col.dia];
+                return Object.assign({}, col, {
+                    cartoes: (col.cartoes || []).filter(function (c) {
+                        if (!c) return false;
+                        return ehLeituraPassado ? !!pendentesPorCd[c.cd_pedido] : !!elegiveisFuturoPorCd[c.cd_pedido];
+                    })
+                });
+            });
+            var bandejaRasc = (rasc.bandeja || []).filter(function (c) {
+                return c && !!elegiveisFuturoPorCd[c.cd_pedido];
+            });
+            var sugRasc = st.sug066Dados[ini] || (st.sug066
+                ? { status: 'carregando', semana: ini, versao: versaoBaseRasc, invalida: true, pedidos: [], dias: [], encaixes: [] }
+                : (rasc.sugestoes || null));
+            return Object.assign({}, rasc, {
+                inicio: ini,
+                fim: fim,
+                hoje: hoje,
+                versaoBase: versaoBaseRasc,
+                podeEditar: podeSalvarSemana() && !conflitoVersao,
+                salvando: !!st.semSalvando,
+                versaoConflito: conflitoVersao,
+                mapaAberto: st.semMapaAberto !== false,
+                msg: st.msgSemana || '',
+                msgErro: !!st.semMsgErro,
+                veiculoAtual: st.semFiltroVeic || 'todos',
+                pilhasExpandidas: st.semPilhasExp,
+                buscaBandeja: st.semBuscaBandeja,
+                filtroBandeja: st.semFiltroBandeja,
+                sugestoes: sugRasc,
+                sugestoesIgnoradas: st.sug066Ignoradas[ini] || rasc.sugestoesIgnoradas || {},
+                veiculos: frotaLista,
+                fechados: fechadosLista,
+                sem_saida: semSaidaLista,
+                dias: diasRasc,
+                bandeja: bandejaRasc
+            });
+        }
+
+        var itensSalvos = [];
+        if (d065 && Array.isArray(d065.itens)) {
+            itensSalvos = d065.itens.slice();
+        } else {
+            Object.keys(st.plano).forEach(function (cd) {
+                var diaP = st.plano[cd];
+                if (diaP && diaP >= ini && diaP <= fim) {
+                    itensSalvos.push({
+                        cd_pedido: Number(cd),
+                        dia: diaP,
+                        veiculo_id: st.planoVeic[cd] || 's10',
+                        ordem: null,
+                        removido: false
+                    });
+                }
+            });
+        }
+        var temSalvo = versaoBase > 0 || itensSalvos.length > 0;
+
+        var diasMapa = Object.create(null);
+        var diasArr = [0, 1, 2, 3, 4, 5].map(function (i) {
+            var iso = somaDias(ini, i);
+            var ehFer = !!(cfgFrota.feriadosSemSaida && ((core.feriadosDoAno && core.feriadosDoAno(Number(iso.slice(0, 4)))[iso]) || (cfgFrota.feriadosExtras && cfgFrota.feriadosExtras[iso])));
+            var col = {
+                dia: iso,
+                nome: cap(nomeDia(iso)),
+                feriado: ehFer,
+                fechada: !!fechadosSet[iso],
+                semSaidaVeiculos: semSaidaPorDia[iso] || {},
+                regiao: '',
+                cartoes: []
+            };
+            diasMapa[iso] = col;
+            return col;
+        });
+
+        function fazerCartao(p, veicId, extra) {
+            var c = core.clienteDoPedido(p, st.clientes);
+            var m = core.marcacaoDe(p, st.excecoes, st.v2 ? st.porPedido : {});
+            var vid = veicId != null && veicId !== '' ? String(veicId) : (m ? m.veiculo : '');
+            var regra = p.documento ? st.regras[p.documento] || null : null;
+            var v = core.volumePedido(p);
+            var prazo = core.prazoDe(p.dt_pedido, cfgFrota, vid || null);
+            var diaAlvo = extra && extra.dia ? extra.dia : null;
+            var diaFechado = !!(diaAlvo && regra && regra.dias && regra.dias[diaSemana(diaAlvo)]);
+            var posCli = c && Array.isArray(c.pos) && c.pos.length >= 2 && isFinite(Number(c.pos[0])) && isFinite(Number(c.pos[1]))
+                ? [Number(c.pos[0]), Number(c.pos[1])]
+                : null;
+            return Object.assign({
+                cd_pedido: Number(p.cd_pedido),
+                documento: p.documento || '',
+                cliente: nomeCliente(c, { p: p }),
+                bairro: (c && c.bairro) || p.entrega_bairro || '',
+                cidade: (c && c.cidade) || p.entrega_cidade || '',
+                pos: posCli,
+                prazo: prazo,
+                diaFechado: diaFechado,
+                prioridade: !!(regra && regra.prioridade),
+                janela: (regra && regra.janela) || '',
+                obs: (regra && regra.obs) || '',
+                c24: v.c24,
+                c48: v.c48,
+                avulsos: v.avulsos,
+                volume: v.vol,
+                veiculo: vid,
+                faltaMarcar: !vid
+            }, extra || {});
+        }
+
+        var usados = Object.create(null);
+        var bandejaArr = [];
+        // UI065-R2: todo pedido já saído em rota fechada <= hoje entra em usados para nunca ir à bandeja nem a dias futuros (> hoje).
+        (st.pedidos || []).forEach(function (p) {
+            if (p && p.cd_pedido != null && diaSaidaFechadaAteHoje(p.cd_pedido, hoje)) {
+                usados[Number(p.cd_pedido)] = true;
+            }
+        });
+
+        if (st.fx050 && st.fxFoto && st.fxFoto.data && Array.isArray(st.fxFoto.itens)) {
+            var dataFx = String(st.fxFoto.data).slice(0, 10);
+            st.fxFoto.itens.slice().sort(function (a, b) {
+                return (a.ordem || 999999) - (b.ordem || 999999) || Number(a.cd_pedido) - Number(b.cd_pedido);
+            }).forEach(function (fxIt) {
+                if (!fxIt || fxIt.cd_pedido == null || fxIt.removido_em) return;
+                var cdFx = Number(fxIt.cd_pedido);
+                usados[cdFx] = true;
+                if (diasMapa[dataFx] && pendentesPorCd[cdFx]) {
+                    diasMapa[dataFx].cartoes.push(fazerCartao(pendentesPorCd[cdFx], fxIt.veiculo_id || 's10', {
+                        dia: dataFx,
+                        ordem: fxIt.ordem != null ? Number(fxIt.ordem) : null,
+                        origemDia: 'salvo',
+                        bloqueado: true
+                    }));
+                }
+            });
+        }
+
+        itensSalvos.slice().sort(function (a, b) {
+            var da = String(a.dia || ''), db = String(b.dia || '');
+            if (da !== db) return da < db ? -1 : 1;
+            var va = String(a.veiculo_id || ''), vb = String(b.veiculo_id || '');
+            if (va !== vb) return va < vb ? -1 : 1;
+            var oa = a.ordem != null ? Number(a.ordem) : 999999;
+            var ob = b.ordem != null ? Number(b.ordem) : 999999;
+            return oa - ob || Number(a.cd_pedido) - Number(b.cd_pedido);
+        }).forEach(function (it) {
+            if (!it || it.cd_pedido == null) return;
+            var cd = Number(it.cd_pedido);
+            var p = pendentesPorCd[cd];
+            if (!p) return;
+            var isoDia = String(it.dia || '').slice(0, 10);
+            var ehDiaPassadoLeitura = isoDia <= hoje || !!fechadosSet[isoDia];
+            if (!ehDiaPassadoLeitura && !elegiveisFuturoPorCd[cd]) return;
+            if (usados[cd] && !(ehDiaPassadoLeitura && !it.removido && diasMapa[isoDia])) return;
+            usados[cd] = true;
+            if (it.removido) {
+                if (!elegiveisFuturoPorCd[cd]) return;
+                bandejaArr.push(fazerCartao(p, it.veiculo_id, {
+                    origemDia: 'removido',
+                    motivoBandeja: 'removido',
+                    diaAnterior: isoDia
+                }));
+            } else if (diasMapa[isoDia]) {
+                diasMapa[isoDia].cartoes.push(fazerCartao(p, it.veiculo_id, {
+                    dia: isoDia,
+                    ordem: it.ordem != null ? Number(it.ordem) : null,
+                    origemDia: 'salvo'
+                }));
+            }
+        });
+
+        if (!temSalvo) {
+            portaAtivos().forEach(function (vp) {
+                var ferExtras = Object.keys((st.cfg && st.cfg.feriadosExtras) || {});
+                diasArr.forEach(function (col) {
+                    var naoEdit = col.dia <= hoje || col.fechada || (col.semSaidaVeiculos && Object.prototype.hasOwnProperty.call(col.semSaidaVeiculos, vp.id));
+                    if (naoEdit && ferExtras.indexOf(col.dia) < 0) ferExtras.push(col.dia);
+                });
+                var cfgSug = cfgDe(Object.assign({}, st.cfgLinha || CFG_PADRAO, {
+                    feriados_sem_saida: true,
+                    feriados_extras: ferExtras
+                }));
+                var semSug = planejarSemana(st.pedidos, st.clientes, ini, {
+                    cfg: cfgSug,
+                    padroes: st.excecoes,
+                    porPedido: st.porPedido,
+                    regras: st.regras,
+                    ignorados: st.ign045 ? st.ignorados : {},
+                    excluir: Object.assign({}, usados),
+                    plano: {},
+                    veiculos: frotaLista,
+                    veiculo: vp.id,
+                    saidas: st.diasSaida,
+                    canhotos: st.canhotos,
+                    confirmacoes: st.confirmacoes,
+                    hoje: hoje
+                });
+                (semSug.dias || []).forEach(function (dSug) {
+                    var col = diasMapa[dSug.dia];
+                    if (!col || col.dia <= hoje || col.fechada) return;
+                    if (!col.regiao && dSug.pedidos && dSug.pedidos.length) {
+                        col.regiao = resumoRegiaoDia(dSug, semSug.regioes);
+                    }
+                    var listaOrd = [];
+                    (dSug.paradas || []).forEach(function (sp) { (sp.pedidos || []).forEach(function (x) { listaOrd.push(x); }); });
+                    (dSug.semPosicao || []).forEach(function (sp) { (sp.pedidos || []).forEach(function (x) { listaOrd.push(x); }); });
+                    if (!listaOrd.length) listaOrd = dSug.pedidos || [];
+                    listaOrd.forEach(function (x) {
+                        var cdX = Number(x.p.cd_pedido);
+                        if (!elegiveisFuturoPorCd[cdX] || usados[cdX]) return;
+                        usados[cdX] = true;
+                        col.cartoes.push(fazerCartao(x.p, vp.id, {
+                            dia: dSug.dia,
+                            origemDia: 'sugestao'
+                        }));
+                    });
+                });
+                (semSug.sobra || []).forEach(function (x) {
+                    var cdX = Number(x.p.cd_pedido);
+                    if (!elegiveisFuturoPorCd[cdX] || usados[cdX]) return;
+                    usados[cdX] = true;
+                    bandejaArr.push(fazerCartao(x.p, vp.id, {
+                        motivoBandeja: x.motivoSobra === 'dia_fechado' ? 'dia_fechado' : 'capacidade'
+                    }));
+                });
+                (semSug.semPosicao || []).forEach(function (x) {
+                    var cdX = Number(x.p.cd_pedido);
+                    if (!elegiveisFuturoPorCd[cdX] || usados[cdX]) return;
+                    usados[cdX] = true;
+                    bandejaArr.push(fazerCartao(x.p, vp.id, {
+                        motivoBandeja: 'sem_posicao'
+                    }));
+                });
+            });
+        }
+
+        (st.pedidos || []).forEach(function (p) {
+            var cd = Number(p && p.cd_pedido);
+            if (!cd || !elegiveisFuturoPorCd[cd] || usados[cd]) return;
+            usados[cd] = true;
+            var m = core.marcacaoDe(p, st.excecoes, st.v2 ? st.porPedido : {});
+            var vid = m ? m.veiculo : '';
+            var diaOutro = st.plano[cd];
+            var mot = !vid ? 'falta_marcar' : (diaOutro && (diaOutro < ini || diaOutro > fim) && diaOutro > hoje ? 'outra_semana' : 'sem_dia');
+            bandejaArr.push(fazerCartao(p, vid, {
+                motivoBandeja: mot
+            }));
+        });
+
+        var sugQuad = st.sug066Dados[ini] || (st.sug066
+            ? { status: 'carregando', semana: ini, versao: versaoBase, invalida: true, pedidos: [], dias: [], encaixes: [] }
+            : null);
+        return {
+            inicio: ini,
+            fim: fim,
+            hoje: hoje,
+            versaoBase: versaoBase,
+            podeEditar: podeSalvarSemana() && !st.semVersaoConflito,
+            salvando: !!st.semSalvando,
+            temRascunho: false,
+            temSalvo: temSalvo,
+            versaoConflito: !!st.semVersaoConflito,
+            mapaAberto: st.semMapaAberto !== false,
+            msg: st.msgSemana || '',
+            msgErro: !!st.semMsgErro,
+            veiculoAtual: st.semFiltroVeic || 'todos',
+            pilhasExpandidas: st.semPilhasExp,
+            buscaBandeja: st.semBuscaBandeja,
+            filtroBandeja: st.semFiltroBandeja,
+            sugestoes: sugQuad,
+            sugestoesIgnoradas: st.sug066Ignoradas[ini] || {},
+            veiculos: frotaLista,
+            fechados: fechadosLista,
+            sem_saida: semSaidaLista,
+            dias: diasArr,
+            bandeja: bandejaArr
+        };
+    }
+    // UI065-R6 e UI065-R4: fallback para 047/046 nunca chama rota_047_salvar_semana para veículo cd_ceasa (modo != 'porta'),
+    // preserva dias somente leitura (<= hoje) omitidos pelo payload 065 e valida a sessão antes de aplicar a resposta.
+    function salvarSemanaFallback047(payload, limpar, sb0, sessao0) {
+        if (!sb0 || st.sb !== sb0 || st.sessao !== sessao0 || !st.ativo) return Promise.resolve();
+        var ini = payload.inicio, fim = somaDias(ini, 5), hoje = hojeSP();
+        var portas = portaAtivos();
+        var portaSet = Object.create(null);
+        portas.forEach(function (v) { portaSet[v.id] = true; });
+        var itensAtivos = limpar ? [] : (payload.itens || []).filter(function (it) { return it && !it.removido; });
+        var temNaoPorta = itensAtivos.some(function (it) { return !portaSet[it.veiculo_id || 's10']; });
+        if (temNaoPorta) {
+            st.semSalvando = false;
+            st.semMsgErro = true;
+            st.msgSemana = 'Para salvar programação do CEASA (caminhão), aplique a migração 065 no banco. Nenhuma alteração foi gravada.';
+            aposMutacao();
+            desenhar();
+            return Promise.resolve();
+        }
+        var porVeic = Object.create(null);
+        portas.forEach(function (v) { porVeic[v.id] = []; });
+        // Preserva linhas já salvas em dias somente leitura (<= hoje) que o payload 065 omite
+        var vistosPorVeic = Object.create(null);
+        Object.keys(st.plano).forEach(function (cdKey) {
+            var diaSalvo = st.plano[cdKey];
+            var vSalvo = st.planoVeic[cdKey] || 's10';
+            if (diaSalvo && diaSalvo >= ini && diaSalvo <= fim && diaSalvo <= hoje && portaSet[vSalvo]) {
+                var cdNum = Number(cdKey);
+                if (!vistosPorVeic[cdNum]) {
+                    vistosPorVeic[cdNum] = true;
+                    porVeic[vSalvo].push({ cd_pedido: cdNum, dia: diaSalvo });
+                }
+            }
+        });
+        itensAtivos.forEach(function (it) {
+            var vid = it.veiculo_id || 's10';
+            var cdNum = Number(it.cd_pedido);
+            if (!portaSet[vid] || vistosPorVeic[cdNum]) return;
+            vistosPorVeic[cdNum] = true;
+            porVeic[vid].push({ cd_pedido: cdNum, dia: it.dia });
+        });
+        var veicsChamar = st.frota047 ? Object.keys(porVeic) : ['s10'];
+        var chamadas = st.frota047
+            ? veicsChamar.map(function (vid) {
+                return sb0.rpc('rota_047_salvar_semana', { p_inicio: ini, p_veiculo: vid, p_itens: porVeic[vid] });
+            })
+            : [sb0.rpc('rota_046_salvar_semana', { p_inicio: ini, p_itens: porVeic.s10 || [] })];
+        return Promise.all(chamadas).then(function (rs) {
+            if (st.sb !== sb0 || st.sessao !== sessao0 || !st.ativo) return;
+            st.semSalvando = false;
+            var comErro = rs.filter(function (r) { return r && r.error; })[0];
+            if (comErro) {
+                var cod = String(comErro.error.code || '');
+                st.msgSemana = cod === '42501' ? 'Não foi possível salvar a semana: sem permissão.'
+                    : cod === 'P0002' ? 'Um pedido mudou de etapa no ERP. Atualize a aba e tente de novo.'
+                    : cod === '22023' ? 'Não foi possível salvar a semana: veículo desativado ou dia em que ele não sai. Atualize a aba.'
+                    : 'Não foi possível salvar a semana: ' + String(comErro.error.message || comErro.error);
+                st.semMsgErro = true;
+            } else {
+                Object.keys(st.plano).forEach(function (k) {
+                    var vAnt = st.planoVeic[k] || 's10';
+                    if (st.plano[k] >= ini && st.plano[k] <= fim && st.plano[k] > hoje && portaSet[vAnt]) {
+                        delete st.plano[k];
+                        delete st.planoVeic[k];
+                    }
+                });
+                itensAtivos.forEach(function (it) {
+                    st.plano[it.cd_pedido] = it.dia;
+                    st.planoVeic[it.cd_pedido] = it.veiculo_id || 's10';
+                });
+                delete st.semQuadroRasc[ini];
+                st.semMsgErro = false;
+                st.msgSemana = limpar
+                    ? 'Plano salvo da semana removido (voltou à sugestão automática).'
+                    : 'Plano da semana salvo (' + NUM.format(itensAtivos.length) + (itensAtivos.length === 1 ? ' pedido).' : ' pedidos).');
+            }
+            aposMutacao();
+            desenhar();
+        }, function (e) {
+            if (st.sb !== sb0 || st.sessao !== sessao0 || !st.ativo) return;
+            st.semSalvando = false;
+            st.msgSemana = 'Não foi possível salvar a semana: ' + String((e && e.message) || e);
+            st.semMsgErro = true;
+            aposMutacao();
+            desenhar();
+        });
+    }
+    function salvarSemana065(payload, limpar) {
+        if (!podeSalvarSemana() || st.semSalvando || !payload || !st.sb) return;
+        var sb0 = st.sb, sessao0 = st.sessao;
+        var ini = payload.inicio;
+        var versaoBase = Number(payload.versao_base) || 0;
+        var itensEnviar = limpar ? [] : (payload.itens || []);
+        st.semSalvando = true;
+        st.seqSug066++;
+        st.msgSemana = '';
+        st.semMsgErro = false;
+        st.semVersaoConflito = false;
+        desenhar();
+        sb0.rpc('rota_065_salvar_semana', {
+            p_inicio: ini,
+            p_versao_base: versaoBase,
+            p_itens: itensEnviar,
+            p_veiculo: null
+        }).then(function (r) {
+            if (st.sb !== sb0 || st.sessao !== sessao0 || !st.ativo) return;
+            if (r && r.error && rpcAusente(r.error)) {
+                st.sem065 = false;
+                return salvarSemanaFallback047(payload, limpar, sb0, sessao0);
+            }
+            st.semSalvando = false;
+            if (r && r.error) {
+                var cod = String(r.error.code || '');
+                st.msgSemana = cod === '42501'
+                    ? 'Não foi possível salvar a semana: sem permissão.'
+                    : 'Não foi possível salvar a semana: ' + String(r.error.message || r.error);
+                st.semMsgErro = true;
+            } else if (r && r.data && r.data.status === 'erro') {
+                if (r.data.motivo === 'versao_antiga') {
+                    st.semVersaoConflito = true;
+                }
+                st.msgSemana = msgErroMotivo065(r.data.motivo, r.data.cd_pedido);
+                st.semMsgErro = true;
+            } else {
+                st.sem065 = true;
+                var novaVersao = (r && r.data && r.data.versao != null) ? Number(r.data.versao) : (versaoBase + 1);
+                var hoje = hojeSP();
+                var ant = st.sem065Dados[ini] || { inicio: ini, hoje: hoje, versao: 0, itens: [], sem_saida: [], fechados: [] };
+                var fechadosSet = Object.create(null);
+                (ant.fechados || []).forEach(function (d) { fechadosSet[String(d).slice(0, 10)] = true; });
+                if (st.fx050 && st.fxFoto && st.fxFoto.data) fechadosSet[String(st.fxFoto.data).slice(0, 10)] = true;
+                var fixosLeitura = (ant.itens || []).filter(function (it) {
+                    return it && (it.dia <= hoje || fechadosSet[it.dia]);
+                });
+                var novosItens = fixosLeitura.concat(itensEnviar.map(function (it) {
+                    return {
+                        cd_pedido: Number(it.cd_pedido),
+                        dia: String(it.dia).slice(0, 10),
+                        veiculo_id: String(it.veiculo_id || 's10'),
+                        ordem: it.ordem != null ? Number(it.ordem) : null,
+                        removido: !!it.removido
+                    };
+                }));
+                st.sem065Dados[ini] = Object.assign({}, ant, {
+                    versao: novaVersao,
+                    itens: novosItens
+                });
+                sincronizarPlanoLocalDe065(ini, novosItens);
+                delete st.semQuadroRasc[ini];
+                // Contrato 066 Forja + UI066-R4: ao salvar a semana com sugestão aplicada, registra 'aceita', invalida cache da versão antiga e relê sugestões da nova versão
+                var sugAnt = st.sug066Dados[ini];
+                if (sugAnt && !sugAnt.invalida && Array.isArray(sugAnt.pedidos)) {
+                    var sugMap = Object.create(null);
+                    sugAnt.pedidos.forEach(function (sp) { if (sp && sp.cd_pedido && sp.dia_sugerido) sugMap[sp.cd_pedido] = sp.dia_sugerido; });
+                    itensEnviar.forEach(function (it) {
+                        if (it && !it.removido && sugMap[it.cd_pedido] === it.dia) {
+                            registrarFeedback066(it.cd_pedido, 'aceita', it.dia);
+                        }
+                    });
+                }
+                if (st.sug066) {
+                    st.sug066Dados[ini] = { status: 'carregando', semana: ini, versao: novaVersao, invalida: true, pedidos: [], dias: [], encaixes: [] };
+                } else {
+                    delete st.sug066Dados[ini];
+                }
+                recarregarSugestoes066(ini);
+                var nAtivos = itensEnviar.filter(function (it) { return it && !it.removido; }).length;
+                st.semMsgErro = false;
+                st.msgSemana = limpar
+                    ? 'Plano salvo da semana removido (voltou à sugestão automática).'
+                    : 'Plano da semana salvo (' + NUM.format(nAtivos) + (nAtivos === 1 ? ' pedido programado).' : ' pedidos programados).');
+            }
+            aposMutacao();
+            desenhar();
+        }, function (e) {
+            if (st.sb !== sb0 || st.sessao !== sessao0 || !st.ativo) return;
+            st.semSalvando = false;
+            st.msgSemana = 'Não foi possível salvar a semana: ' + String((e && e.message) || e);
+            st.semMsgErro = true;
+            aposMutacao();
+            desenhar();
+        });
+    }
+    function marcarSemSaida065(info) {
+        if (!podeSalvarSemana() || st.semSalvando || !info || !info.dia || !info.veiculo_id || !st.sb) return;
+        var sb0 = st.sb, sessao0 = st.sessao;
+        var ini = segundaDe(info.dia);
+        var rascAntes = st.semQuadroRasc[ini];
+        var versaoEnviar = rascAntes && rascAntes.versaoBase != null ? Number(rascAntes.versaoBase) : (Number(info.versao_base) || 0);
+        st.semSalvando = true;
+        st.seqSug066++;
+        st.msgSemana = '';
+        st.semMsgErro = false;
+        desenhar();
+        sb0.rpc('rota_065_marcar_sem_saida', {
+            p_dia: info.dia,
+            p_veiculo: info.veiculo_id,
+            p_sem_saida: !!info.sem_saida,
+            p_versao_base: versaoEnviar,
+            p_motivo: info.motivo || null
+        }).then(function (r) {
+            if (st.sb !== sb0 || st.sessao !== sessao0 || !st.ativo) return;
+            st.semSalvando = false;
+            if (r && r.error) {
+                var cod = String(r.error.code || '');
+                st.msgSemana = cod === '42501'
+                    ? 'Não foi possível alterar a saída do veículo: sem permissão.'
+                    : 'Não foi possível alterar a saída do veículo: ' + String(r.error.message || r.error);
+                st.semMsgErro = true;
+            } else if (r && r.data && r.data.status === 'erro') {
+                if (r.data.motivo === 'versao_antiga') st.semVersaoConflito = true;
+                st.msgSemana = msgErroMotivo065(r.data.motivo, r.data.cd_pedido);
+                st.semMsgErro = true;
+            } else {
+                var ant = st.sem065Dados[ini] || { inicio: ini, hoje: hojeSP(), versao: 0, itens: [], sem_saida: [], fechados: [] };
+                var novaVersao = (r && r.data && r.data.versao != null) ? Number(r.data.versao) : ((Number(ant.versao) || 0) + 1);
+                var listaSS = (ant.sem_saida || []).filter(function (s) {
+                    return !(s && String(s.dia).slice(0, 10) === info.dia && String(s.veiculo_id) === info.veiculo_id);
+                });
+                if (info.sem_saida) {
+                    listaSS.push({ dia: info.dia, veiculo_id: info.veiculo_id, motivo: info.motivo || '' });
+                }
+                var itensRest = (ant.itens || []).filter(function (it) {
+                    return !(info.sem_saida && it && String(it.dia).slice(0, 10) === info.dia && String(it.veiculo_id) === info.veiculo_id);
+                });
+                st.sem065Dados[ini] = Object.assign({}, ant, {
+                    versao: novaVersao,
+                    sem_saida: listaSS,
+                    itens: itensRest
+                });
+                sincronizarPlanoLocalDe065(ini, itensRest);
+                if (st.sug066) {
+                    st.sug066Dados[ini] = { status: 'carregando', semana: ini, versao: novaVersao, invalida: true, pedidos: [], dias: [], encaixes: [] };
+                } else {
+                    delete st.sug066Dados[ini];
+                }
+                recarregarSugestoes066(ini);
+                // UI065-R3: preserva o rascunho dos demais dias/veículos e devolve apenas os cartões do (dia, veículo) afetado à bandeja.
+                var rascAtual = st.semQuadroRasc[ini];
+                if (rascAtual && rascAtual.dias && rascAtual.bandeja) {
+                    var devolvidosRasc = [];
+                    var novosDiasRasc = rascAtual.dias.map(function (col) {
+                        if (col.dia !== info.dia) return col;
+                        var mapSS = Object.assign(Object.create(null), col.semSaidaVeiculos || {});
+                        if (info.sem_saida) mapSS[info.veiculo_id] = info.motivo || '';
+                        else delete mapSS[info.veiculo_id];
+                        if (!info.sem_saida) {
+                            return Object.assign({}, col, { semSaidaVeiculos: mapSS });
+                        }
+                        var ficam = [];
+                        (col.cartoes || []).forEach(function (c) {
+                            if (c && c.veiculo === info.veiculo_id) {
+                                devolvidosRasc.push(Object.assign({}, c, {
+                                    dia: null,
+                                    ordem: null,
+                                    diaAnterior: info.dia,
+                                    origemDia: 'removido',
+                                    motivoBandeja: 'sem_dia',
+                                    _bloqueadoProprio: false,
+                                    bloqueado: false
+                                }));
+                            } else {
+                                ficam.push(c);
+                            }
+                        });
+                        return Object.assign({}, col, { semSaidaVeiculos: mapSS, cartoes: ficam });
+                    });
+                    var novaBandejaRasc = devolvidosRasc.concat(rascAtual.bandeja || []);
+                    var rascNovo = Object.assign({}, rascAtual, {
+                        versaoBase: Number(rascAtual.versaoBase) === versaoEnviar ? novaVersao : rascAtual.versaoBase,
+                        sem_saida: listaSS,
+                        dias: novosDiasRasc,
+                        bandeja: novaBandejaRasc
+                    });
+                    var Q = obterQuadroMod();
+                    st.semQuadroRasc[ini] = Q ? Q.normalizarEstado(rascNovo) : rascNovo;
+                }
+                st.semMsgErro = false;
+                st.msgSemana = info.sem_saida
+                    ? 'Data marcada sem saída para ' + rotuloMarca(info.veiculo_id) + '.'
+                    : 'Saída de ' + rotuloMarca(info.veiculo_id) + ' reativada em ' + dataBr(info.dia) + '.';
+            }
+            aposMutacao();
+            desenhar();
+        }, function (e) {
+            if (st.sb !== sb0 || st.sessao !== sessao0 || !st.ativo) return;
+            st.semSalvando = false;
+            st.msgSemana = 'Não foi possível alterar a saída do veículo: ' + String((e && e.message) || e);
+            st.semMsgErro = true;
+            aposMutacao();
+            desenhar();
+        });
+    }
+    function montarQuadroSemanaNoAlvo(alvo, semIni) {
+        var Q = obterQuadroMod();
+        var elQuadro = alvo && alvo.querySelector('#rota-semana-quadro');
+        if (!Q || !elQuadro) return;
+        var dados = montarDadosQuadro065(semIni);
+        Q.montar(elQuadro, dados, {
+            onChange: function (novoSt, acao) {
+                st.semQuadroRasc[novoSt.inicio] = novoSt;
+                st.semFiltroVeic = novoSt.veiculoAtual || 'todos';
+                st.semPilhasExp = novoSt.pilhasExpandidas || {};
+                st.semBuscaBandeja = novoSt.buscaBandeja || '';
+                st.semFiltroBandeja = novoSt.filtroBandeja || 'todos';
+                st.semMapaAberto = novoSt.mapaAberto !== false;
+                st.sug066Ignoradas[novoSt.inicio] = Object.assign({}, novoSt.sugestoesIgnoradas || {});
+                if (!acao || acao.tipo !== 'sugerir_semana') {
+                    st.msgSemana = '';
+                    st.semMsgErro = false;
+                } else {
+                    st.msgSemana = novoSt.msg || '';
+                    st.semMsgErro = false;
+                }
+            },
+            onAbrirDia: function (ev) {
+                if (ev && ev.dia) abrirDetalheDia(ev.dia);
+            },
+            onFeedbackSugestao: function (info, novoSt) {
+                if (!info) return;
+                st.sug066Ignoradas[novoSt.inicio] = Object.assign({}, novoSt.sugestoesIgnoradas || {});
+                registrarFeedback066(info.cd_pedido, info.acao, info.dia);
+            },
+            onSugerirSemana: function (aplicados, novoSt) {
+                st.semQuadroRasc[novoSt.inicio] = novoSt;
+                (aplicados || []).forEach(function (a) {
+                    registrarFeedback066(a.cd_pedido, 'aceita', a.dia);
+                });
+            },
+            onMudarVeiculo: function (ev, novoSt) {
+                st.semFiltroVeic = (ev && ev.veiculo) || 'todos';
+                if (st.semQuadroRasc[novoSt.inicio]) st.semQuadroRasc[novoSt.inicio] = novoSt;
+            },
+            onExpandirPilha: function (pilhas) {
+                st.semPilhasExp = Object.assign({}, pilhas || {});
+            },
+            onMudarSemana: function (ev) {
+                if (ev && ev.inicio) carregarSemana065(ev.inicio, false);
+            },
+            onSalvar: function (payload, estadoAtual) {
+                st.semQuadroRasc[estadoAtual.inicio] = estadoAtual;
+                salvarSemana065(payload, false);
+            },
+            onLimpar: function (estadoAtual) {
+                salvarSemana065({ inicio: estadoAtual.inicio, versao_base: estadoAtual.versaoBase, itens: [] }, true);
+            },
+            onDesfazer: function (estadoAtual) {
+                delete st.semQuadroRasc[estadoAtual.inicio];
+                st.msgSemana = 'Alterações não salvas desta semana descartadas.';
+                st.semMsgErro = false;
+                desenhar();
+            },
+            onRecarregar: function (estadoAtual) {
+                delete st.semQuadroRasc[estadoAtual.inicio];
+                st.semVersaoConflito = false;
+                st.msgSemana = '';
+                st.semMsgErro = false;
+                carregarSemana065(estadoAtual.inicio, true);
+            },
+            onMarcarSemSaida: function (info) {
+                marcarSemSaida065(info);
+            }
+        });
     }
     function diaDeRasc(r) { return r && typeof r === 'object' ? r.dia : r; }
     // 047: o plano da semana é por veículo porta a porta (seletor na sub-aba). Sem a 047: só a S10.
@@ -2748,6 +3865,7 @@
             });
         }
         st.semSalvando = true;
+        st.seqSug066++;
         st.msgSemana = '';
         desenhar();
         var vSem = sem.veiculo || 's10';
@@ -2905,14 +4023,19 @@
             return;
         }
         if (!st.v2 && st.vista === 'semana') st.vista = 'hoje';
-        if (st.vista !== 'semana') {
+        if (st.vista !== 'semana' && st.vista !== 'dia') {
             if (!pl.proxima) st.vista = 'hoje';
             if (pl.hoje.semSaida && pl.proxima) st.vista = 'proxima';
         }
-        var atual = (st.vista === 'proxima' || pl.hoje.semSaida) && pl.proxima ? pl.proxima : pl.hoje;
-        // 050: o plano desenhado é a rota FECHADA de hoje? (troca a coluna Veículo por "Remover de hoje" e mostra "Pedidos de outros dias")
-        st.fxRender = st.vista === 'hoje' && atual === pl.hoje && !!pl.hoje.fechada;
+        var oDia = optsPlano();
+        var atual = st.vista === 'dia' && st.diaDetalhe
+            ? planejarDetalheDia(st.diaDetalhe, pl, oDia)
+            : ((st.vista === 'proxima' || pl.hoje.semSaida) && pl.proxima ? pl.proxima : pl.hoje);
+        // 050: o plano desenhado é a rota FECHADA de hoje (ou dia passado somente leitura)?
+        st.fxRender = (st.vista === 'hoje' && atual === pl.hoje && !!pl.hoje.fechada) ||
+            (st.vista === 'dia' && (!!atual.fechada || !!atual.somenteLeituraDia));
         var semIni = semanaAlvo();
+        var temQuadro065 = !!obterQuadroMod();
         var sem = st.v2 && st.vista === 'semana'
             ? planejarSemana(st.pedidos, st.clientes, semIni, { cfg: st.cfg, padroes: st.excecoes, porPedido: st.porPedido, regras: st.regras,
                 ignorados: st.ign045 ? st.ignorados : {}, plano: planoSemanaObj(semIni), veiculos: linhasFrota(), veiculo: semVeiculoAtual(), saidas: st.diasSaida, canhotos: st.canhotos, confirmacoes: st.confirmacoes, hoje: hojeSP() })
@@ -2921,16 +4044,24 @@
         var nFora = st.v2 && st.ign045 && atual.ignorados ? atual.ignorados.length : 0;
         var chipSemana = st.v2
             ? '<button type="button" class="adm-chip' + (st.vista === 'semana' ? ' is-ativo' : '') + '" data-rota-vista="semana" aria-pressed="' + (st.vista === 'semana') + '">Semana · seg ' +
-                esc(dataBr(semIni)) + ' a sex ' + esc(dataBr(somaDias(semIni, 4))) + '</button>'
+                esc(dataBr(semIni)) + ' a sáb ' + esc(dataBr(somaDias(semIni, 5))) + '</button>'
+            : '';
+        var chipDiaExtra = st.vista === 'dia' && st.diaDetalhe && st.diaDetalhe !== pl.hoje.dia
+            ? '<button type="button" class="adm-chip is-ativo" data-rota-vista="dia" aria-pressed="true">Dia · ' + esc(nomeDia(atual.dia)) + ' ' + esc(dataBr(atual.dia)) + '</button>'
+            : '';
+        var btnVoltarSemana = st.v2 && st.vista !== 'semana'
+            ? '<button type="button" class="adm-botao-fantasma" id="rota-voltar-semana" data-rota-voltar-semana="1"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Voltar para a semana</button>'
             : '';
         var seletor = '<div class="rota-acoes no-print"><div class="flex flex-wrap gap-1" role="group" aria-label="Visão da rota">' +
+            chipSemana +
             '<button type="button" class="adm-chip' + (st.vista === 'hoje' ? ' is-ativo' : '') + '" data-rota-vista="hoje" aria-pressed="' + (st.vista === 'hoje') + '"' + (pl.hoje.semSaida ? ' disabled title="Sem saída (' + motivoSem + ')"' : '') + '>Hoje · ' +
                 esc(nomeDia(pl.hoje.dia)) + ' ' + esc(dataBr(pl.hoje.dia)) + (pl.hoje.semSaida ? ' (sem saída: ' + motivoSem + ')' : '') + '</button>' +
             (pl.proxima
                 ? '<button type="button" class="adm-chip' + (st.vista === 'proxima' ? ' is-ativo' : '') + '" data-rota-vista="proxima" aria-pressed="' + (st.vista === 'proxima') + '">Próxima · ' +
                     esc(nomeDia(pl.proxima.dia)) + ' ' + esc(dataBr(pl.proxima.dia)) + '</button>'
                 : '<button type="button" class="adm-chip" disabled aria-disabled="true" title="' + esc(semDias) + '">Próxima · ' + esc(semDias) + '</button>') +
-            chipSemana + '</div>' +
+            chipDiaExtra + '</div>' +
+            btnVoltarSemana +
             (nFora ? '<button type="button" class="adm-botao-fantasma" id="rota-atalho-fora"><i class="fa-solid fa-ban" aria-hidden="true"></i> Fora da rota (' + NUM.format(nFora) + ')</button>' : '') +
             '<button type="button" class="adm-botao-fantasma" id="rota-frota"><i class="fa-solid fa-truck-fast" aria-hidden="true"></i> Frota</button>' +
             (st.papel === 'admin' ? '<button type="button" class="adm-botao-fantasma" id="rota-configurar"' + (st.cfgAusente ? ' disabled title="Falta aplicar a migração 040"' : '') + '><i class="fa-solid fa-sliders" aria-hidden="true"></i> Configurar</button>' : '') +
@@ -2956,9 +4087,9 @@
             ? calcularJuntar(atual, st.vista === 'proxima' && !pl.hoje.semSaida ? pl.hoje.entregues : {})
             : null;
         var corpo = st.vista === 'semana' && sem
-            ? '<p class="rota-imp-dia">Plano da semana · ' + esc(sem.nomeVeiculo || 'S10') + ' · ' + esc(dataBr(sem.inicio)) + ' a ' + esc(dataBr(sem.fim)) + '</p>' +
+            ? '<p class="rota-imp-dia">Plano da semana · ' + esc(temQuadro065 ? 'Frota' : (sem.nomeVeiculo || 'S10')) + ' · ' + esc(dataBr(semIni)) + ' a ' + esc(dataBr(somaDias(semIni, 5))) + '</p>' +
               (avisos.length ? '<div class="adm-card p-4 mb-5 rota-banner" role="status">' + avisos.map(function (a) { return '<p><i class="fa-solid fa-circle-info" aria-hidden="true"></i> ' + esc(a) + '</p>'; }).join('') + '</div>' : '') +
-              htmlSemana(sem)
+              (temQuadro065 ? '<div id="rota-semana-quadro" class="mb-4"></div>' + htmlSugestoesJuntar(calcularJuntar(sem)) : htmlSemana(sem))
             : '<p class="rota-imp-dia">Rota de ' + esc(nomeDia(atual.dia)) + ', ' + esc(dataBr(atual.dia)) + '</p>' +
               (avisos.length ? '<div class="adm-card p-4 mb-5 rota-banner" role="status">' + avisos.map(function (a) { return '<p><i class="fa-solid fa-circle-info" aria-hidden="true"></i> ' + esc(a) + '</p>'; }).join('') + '</div>' : '') +
               htmlFechamento(atual) + nota + htmlAguardando(atual) + htmlSugestoesJuntar(jnDia) +
@@ -2967,6 +4098,7 @@
             htmlForaDaRota(atual) + htmlConfigResumo(atual) +
             (podeConfigurar() ? htmlDialogo() : '') + htmlDialogoFrota() +
             (st.v2 && podeEditar() ? htmlDialogoEscopo() + htmlDialogoRegra() : '') + (podeTirar() ? htmlDialogoTirar() : '');
+        if (st.vista === 'semana' && temQuadro065) montarQuadroSemanaNoAlvo(alvo, semIni);
         ligarEventos(alvo, atual, sem);
     }
     // Uma coluna com os veículos porta a porta (e o "fica") e outra com os do CEASA; cada veículo ativo um cartão.
@@ -3003,7 +4135,18 @@
     }
     function ligarEventos(alvo, atual, sem) {
         if (raiz.TempRioEntregaAdmin) raiz.TempRioEntregaAdmin.ligar(alvo, contextoEntrega);
-        alvo.querySelectorAll('[data-rota-vista]').forEach(function (b) { b.addEventListener('click', function () { st.vista = b.getAttribute('data-rota-vista'); desenhar(); }); });
+        alvo.querySelectorAll('[data-rota-vista]').forEach(function (b) { b.addEventListener('click', function () {
+            var nv = b.getAttribute('data-rota-vista');
+            st.vista = nv;
+            if (nv === 'semana') st.diaDetalhe = null;
+            desenhar();
+        }); });
+        var btnVoltarSem = alvo.querySelector('[data-rota-voltar-semana]');
+        if (btnVoltarSem) btnVoltarSem.addEventListener('click', function () {
+            st.vista = 'semana';
+            st.diaDetalhe = null;
+            desenhar();
+        });
         ligarFechamento(alvo);   // 050
         alvo.querySelector('#rota-atualizar').addEventListener('click', recarregarTudo);
         var tentar = alvo.querySelector('#rota-tentar'); if (tentar) tentar.addEventListener('click', recarregarTudo);
@@ -3084,8 +4227,8 @@
             b.addEventListener('click', function () {
                 var cd = b.getAttribute('data-rota-juntar-ver');
                 var dia = b.getAttribute('data-rota-juntar-dia');
-                var el = (cd && (alvo.querySelector('[data-rota-marcar="' + cd + '"]') || alvo.querySelector('[data-rota-sem-dia="' + cd + '"]'))) ||
-                    (dia && alvo.querySelector('#rota-sem-tit-' + dia)) ||
+                var el = (cd && (alvo.querySelector('[data-rota-marcar="' + cd + '"]') || alvo.querySelector('[data-rota-sem-dia="' + cd + '"]') || alvo.querySelector('[data-rq-cartao="' + cd + '"] summary') || alvo.querySelector('[data-rq-cartao="' + cd + '"]'))) ||
+                    (dia && (alvo.querySelector('#rq-tit-' + dia) || alvo.querySelector('#rota-sem-tit-' + dia))) ||
                     alvo.querySelector('#rota-ag-tit') || alvo.querySelector('#rota-s10-tit');
                 if (el) {
                     if (!el.hasAttribute('tabindex') && /^(P|H\d|SECTION)$/.test(el.tagName)) el.setAttribute('tabindex', '-1');
@@ -3277,8 +4420,12 @@
             st.saida047 = false; st.saidas = {}; st.saidaErro = null; st.pubSalvando = {}; st.msgPub = {}; st.focoPub = null;
             st.planoVeic = {}; st.semVeiculo = 's10'; st.frotaSalvando = false; st.frotaEdit = null; st.msgFrota = ''; st.focoFrota = null; st.mapaVeic = 's10';
             st.usuariosFrota = undefined; st.pedidoUsuFrota = null;
-            st.fx050 = false; st.fxLinha = null; st.fxFoto = null; st.fxErro = null; st.fxSalvando = false; st.msgFx = ''; st.fxConfirmaReabrir = false; st.fxRender = false; st.focoFx = null; st.fxRev = 0;
+            st.fx050 = false; st.fxLinha = null; st.fxFoto = null; st.fxDias = {}; st.fxDiasErro = {}; st.fxErro = null; st.fxSalvando = false; st.msgFx = ''; st.fxConfirmaReabrir = false; st.fxRender = false; st.focoFx = null; st.fxRev = 0;
             st.progresso = {};
+            st.vista = 'semana'; st.diaDetalhe = null;
+            st.sem065 = false; st.sem065Dados = {}; st.semQuadroRasc = {}; st.semFiltroVeic = 'todos'; st.semVersaoConflito = false;
+            st.semMsgErro = false; st.semPilhasExp = {}; st.semBuscaBandeja = ''; st.semFiltroBandeja = 'todos'; st.semMapaAberto = true;
+            st.sug066 = false; st.sug066Dados = {}; st.sug066Ignoradas = {}; st.seqSug066 = 0; st.relendoSug066 = {}; st.sessao++;
         },
         planejador: Planejador
     };
