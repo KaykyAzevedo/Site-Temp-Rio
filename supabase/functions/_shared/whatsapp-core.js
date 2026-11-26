@@ -631,12 +631,17 @@
             todas(function () { return q().eq('etapa', 'conferido').order('cd_pedido', { ascending: true }); }, 20000),
             todas(function () { return q().in('etapa', ['saiu', 'atendido']).order('cd_pedido', { ascending: true }); }, 20000),
             sb.from('solidcon_pedidos_erp_sync').select('coletado_em').eq('status', 'ok').order('coletado_em', { ascending: false }).limit(1),
-            coletarCanhotos(sb), coletarConfigRota(sb)
+            coletarCanhotos(sb), coletarConfigRota(sb),
+            todas(function () { return sb.from('rota_pedido_ignorado').select('cd_pedido').eq('alcance', 'site').order('cd_pedido', { ascending: true }); }, 20000),
+            todas(function () { return sb.rpc('rota_068_entregas', { p_desde: core.diaSP(agora), p_ate: core.diaSP(agora) }).order('cd_pedido', { ascending: true }); }, 20000)
         ]).then(function (rs) {
+            if (!Array.isArray(rs[7]) || rs[7].length >= 20000 || rs[6].length >= 20000) throw new Error('Entregas068C/exclusoes incompletas: atualizar backend');
+            var foraDoSite = {};
+            rs[6].forEach(function (g) { foraDoSite[g.cd_pedido] = true; });
             var porCd = {}, pedidos = [], docs = {};
-            [rs[0], rs[1], rs[2]].forEach(function (l) { l.forEach(function (p) { if (!porCd[p.cd_pedido]) { porCd[p.cd_pedido] = true; pedidos.push(p); if (p.documento) docs[p.documento] = true; } }); });
+            [rs[0], rs[1], rs[2]].forEach(function (l) { l.forEach(function (p) { if (!foraDoSite[p.cd_pedido] && !porCd[p.cd_pedido]) { porCd[p.cd_pedido] = true; pedidos.push(p); if (p.documento) docs[p.documento] = true; } }); });
             var sy = rs[3] && !rs[3].error && rs[3].data && rs[3].data[0];
-            return Promise.all([nomesDe(sb, Object.keys(docs)), core.coletarSaidas(sb, pedidos), core.coletarConfirmacoes(sb, pedidos)]).then(function (leituras) { return { pedidos: pedidos, nomes: leituras[0], coletado: sy ? sy.coletado_em : null, canhotos: rs[4], cfg: rs[5], saidas: leituras[1], confirmacoes: leituras[2].porPedido }; });
+            return Promise.all([nomesDe(sb, Object.keys(docs)), core.coletarSaidas(sb, pedidos), core.coletarConfirmacoes(sb, pedidos.concat(rs[7]))]).then(function (leituras) { return { pedidos: pedidos, nomes: leituras[0], coletado: sy ? sy.coletado_em : null, canhotos: rs[4], cfg: rs[5], saidas: leituras[1], confirmacoes: leituras[2].porPedido, entregas: rs[7], foraDoSite: foraDoSite }; });
         });
     }
     function nomePedido(p, nomes, max) {
@@ -689,13 +694,16 @@
         var hoje = core.diaSP(agora), noDia = function (v) { return !!v && core.diaSP(v) === hoje; };
         var entrou = [], pronto = [], enviou = [];
         (d.pedidos || []).forEach(function (p) {
-            if (!p) return;
+            if (!p || (d.foraDoSite && d.foraDoSite[p.cd_pedido])) return;
             if (noDia(p.dt_pedido)) entrou.push(p);
             var ctx = { canhotos: d.canhotos, cfg: d.cfg, saidas: d.saidas, confirmacoes: d.confirmacoes, agora: agora }, etapa = core.etapaEntrega(p, ctx), saida = core.saidaEntrega(p, ctx);
             if (etapa === 'conferido' || etapa === 'pronto_despacho') pronto.push(p);
-            if (core.etapaEnviada(p) && noDia(saida) && Date.parse(saida) <= Date.parse(agora)) enviou.push(p);
+            // 068C: entrega canonica vem da primeira saida persistida, nao do faturamento ERP.
         });
         // {{1}} "segunda, 23/11 às 17:00"; coleta do ERP atrasada ou ausente vai junto (os números podem estar velhos).
+        (d.entregas || []).forEach(function (e) {
+            if (e.status === 'entregue' && e.data_entrega === hoje && !(d.foraDoSite && d.foraDoSite[e.cd_pedido]) && !(d.confirmacoes && d.confirmacoes[e.cd_pedido] && d.confirmacoes[e.cd_pedido].reprogramado)) enviou.push(e);
+        });
         var t = new Date(agora).getTime(), col = d.coletado ? new Date(d.coletado).getTime() : NaN;
         var aviso = !isFinite(col) ? ' (ATENÇÃO, sem coleta do ERP)' : (t - col > PED_COLETA_VELHA_MIN * 6e4 ? ' (ATENÇÃO, ERP de ' + horaMin(d.coletado) + ')' : '');
         var L = WA.LIMITES.pedidos_do_dia;
