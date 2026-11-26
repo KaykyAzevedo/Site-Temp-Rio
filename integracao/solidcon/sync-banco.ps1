@@ -3,7 +3,9 @@
 # Independente do sync-produtos.ps1 (API HTTP): outro mutex, outra trava, outro log.
 # Acordo com a SOLIDCON: so VIEWS liberadas (dbo.VW_*/vw*). Unica excecao (autorizada pelo dono
 # em 2026-11-13): o modulo 'pedidos' le SOMENTE as tabelas de $TabelasPedidos (SELECT, filial 4).
-# NF1B autorizada24/11: so nf.* le as3tabelas de $TabelasNF, joins por filial+nota, nunca XML/imagem.
+# NF1B autorizada24/11: so nf.* le as tabelas de $TabelasNF, joins por filial+nota, nunca XML/imagem.
+# 064 (25/11): + dbo.tbNotaFiscalEmitente (LEFT JOIN filial+nota; so CNPJ) e i.natOp: separa venda nossa,
+#   bonificacao nossa e NF de terceiros (compra). Exige cnpj_emitente no config com nf_saida/-TestarNF e a migracao064.
 # Cada modulo: consulta FIXA (texto no codigo, so views da lista $ViewsPermitidas)
 #   -> projecao explicita de colunas -> RPC Supabase propria -> log sem dados pessoais.
 # Falha de um modulo nao impede os outros. Modulos: 'saude' (SELECT 1, toda execucao) e
@@ -84,8 +86,8 @@ $ConsultasAprovadas = @{
 }
 $ConsultasAprovadas['pedidos.produtos'] = "SELECT p.cdPedido AS cd_pedido, i.cdProduto AS cd_produto, SUM(i.qtPedidoItem) AS qt, COUNT(*) AS itens, SUM(CASE WHEN i.qtPedidoItem IS NULL THEN 1 ELSE 0 END) AS nulos FROM dbo.tbPedido AS p JOIN dbo.tbPedidoItem AS i ON i.cdPedido = p.cdPedido AND i.cdPessoaFilial = p.cdPessoaFilial WHERE p.cdPessoaFilial = 4 AND p.dtPedido >= @desde GROUP BY p.cdPedido, i.cdProduto"
 $ConsultasAprovadas['pedidos.amostra_caixas'] = "SELECT TOP 20 p.cdPedido AS cd_pedido, p.dtPedido AS dt_pedido, i.cdProduto AS cd_produto, i.qtPedidoItem AS qt, i.vlPedidoItem AS vl FROM dbo.tbPedido AS p JOIN dbo.tbPedidoItem AS i ON i.cdPedido = p.cdPedido AND i.cdPessoaFilial = p.cdPessoaFilial WHERE p.cdPessoaFilial = 4 AND p.dtPedido >= @desde ORDER BY p.dtPedido DESC, p.cdPedido DESC"
-$TabelasNF = @('dbo.tbNota', 'dbo.tbNotaFiscal', 'dbo.tbNotaFiscalIdentificacao')
-$ConsultasAprovadas['nf.lista'] = "SELECT n.cdPessoaFilial AS filial, n.cdNota AS cd_nota, i.nNF AS numero, LTRIM(RTRIM(i.serie)) AS serie, i.dEmi AS dt, n.cdPessoaComercial AS cd_cliente, n.cdPedido AS cd_pedido, f.ICMSTotvProd AS produtos, f.ICMSTotvNF AS total, f.ICMSTotvST AS st, ISNULL(n.inNFeCupom,0) AS nf_cupom FROM dbo.tbNota AS n JOIN dbo.tbNotaFiscal AS f ON f.cdPessoaFilial = n.cdPessoaFilial AND f.cdNota = n.cdNota JOIN dbo.tbNotaFiscalIdentificacao AS i ON i.cdPessoaFilial = n.cdPessoaFilial AND i.cdNota = n.cdNota WHERE n.cdPessoaFilial = 4 AND i.[mod] = '55' AND i.tpNF = 1 AND ISNULL(n.inCancelada,0) = 0 AND ISNULL(n.inDenegada,0) = 0 AND ISNULL(n.inRejeitada,0) = 0 AND ISNULL(i.finNFe,1) = 1 AND i.dEmi >= @desde AND i.dEmi < @ate"
+$TabelasNF = @('dbo.tbNota', 'dbo.tbNotaFiscal', 'dbo.tbNotaFiscalIdentificacao', 'dbo.tbNotaFiscalEmitente')
+$ConsultasAprovadas['nf.lista'] = "SELECT n.cdPessoaFilial AS filial, n.cdNota AS cd_nota, i.nNF AS numero, LTRIM(RTRIM(i.serie)) AS serie, i.dEmi AS dt, n.cdPessoaComercial AS cd_cliente, n.cdPedido AS cd_pedido, f.ICMSTotvProd AS produtos, f.ICMSTotvNF AS total, f.ICMSTotvST AS st, ISNULL(n.inNFeCupom,0) AS nf_cupom, LTRIM(RTRIM(e.CNPJ)) AS emitente, LTRIM(RTRIM(i.natOp)) AS natureza FROM dbo.tbNota AS n JOIN dbo.tbNotaFiscal AS f ON f.cdPessoaFilial = n.cdPessoaFilial AND f.cdNota = n.cdNota JOIN dbo.tbNotaFiscalIdentificacao AS i ON i.cdPessoaFilial = n.cdPessoaFilial AND i.cdNota = n.cdNota LEFT JOIN dbo.tbNotaFiscalEmitente AS e ON e.cdPessoaFilial = n.cdPessoaFilial AND e.cdNota = n.cdNota WHERE n.cdPessoaFilial = 4 AND i.[mod] = '55' AND i.tpNF = 1 AND ISNULL(n.inCancelada,0) = 0 AND ISNULL(n.inDenegada,0) = 0 AND ISNULL(n.inRejeitada,0) = 0 AND ISNULL(i.finNFe,1) = 1 AND i.dEmi >= @desde AND i.dEmi < @ate"
 $ConsultasAprovadas['nf.clientes'] = "SELECT pa.CodigoParceiro AS codigo_parceiro, pa.CNPJ AS documento FROM dbo.VW_MGN_PARCEIRO AS pa WHERE pa.CodigoParceiro IN (SELECT n.cdPessoaComercial FROM dbo.tbNota AS n JOIN dbo.tbNotaFiscal AS f ON f.cdPessoaFilial = n.cdPessoaFilial AND f.cdNota = n.cdNota JOIN dbo.tbNotaFiscalIdentificacao AS i ON i.cdPessoaFilial = n.cdPessoaFilial AND i.cdNota = n.cdNota WHERE n.cdPessoaFilial = 4 AND i.[mod] = '55' AND i.tpNF = 1 AND ISNULL(n.inCancelada,0) = 0 AND ISNULL(n.inDenegada,0) = 0 AND ISNULL(n.inRejeitada,0) = 0 AND ISNULL(i.finNFe,1) = 1 AND i.dEmi >= @desde AND i.dEmi < @ate)"
 $RpcsPermitidas = @('solidcon_receber_vendas_nf', 'solidcon_receber_banco_saude', 'solidcon_receber_contas_receber', 'solidcon_receber_margem_vendas', 'solidcon_receber_custos', 'solidcon_receber_pedidos_erp')
 # Semantica de VW_RDUPHOLD_VENDA_ITENS CONFIRMADA pelo probe real da filial 4 (2026-11-12):
@@ -1498,9 +1500,25 @@ function Modulo-Pedidos($Modulo) {
 # ---------- NF-e venda normal modelo55, filial4; dados confirmados pelo dono ----------
 # nf_saida=true so depois da migracao060. Normal: toda a historia retida,60min;
 # cancelamentos/rejeicoes antigos sao refletidos sem depender de backfill manual.
-function Normalizar-NF($Linhas,$Clientes,[datetime]$Desde,[datetime]$Ate) {
+# 064: CNPJ do emitente (so digitos; 12-13 digitos completados como no cadastro) e natureza (natOp) limpa.
+function Cnpj-EmitenteNF($Valor) {
+    if($null -eq $Valor -or $Valor -is [DBNull]){return ''}
+    $d=([string]$Valor) -replace '[^0-9]',''
+    if($d.Length -gt 11 -and $d.Length -lt 14){$d=$d.PadLeft(14,'0')}
+    if(Cnpj-Valido $d){return $d};return ''
+}
+function Natureza-NF($Valor) {
+    if($null -eq $Valor -or $Valor -is [DBNull]){return $null}
+    $t=(([string]$Valor) -replace '[\x00-\x1F\x7F-\x9F]',' ').Trim()
+    if($t.Length -gt 60){$t=$t.Substring(0,60).TrimEnd()}
+    if($t.Length -eq 0){return $null};return $t
+}
+# Mesmo criterio do Supabase (ILIKE '%bonifica%'): bonificacao nossa nao soma como venda.
+function Bonificacao-NF($Natureza) { return ($null -ne $Natureza -and $Natureza.IndexOf('bonifica',[StringComparison]::OrdinalIgnoreCase) -ge 0) }
+function Normalizar-NF($Linhas,$Clientes,[datetime]$Desde,[datetime]$Ate,[string]$CnpjEmitente) {
+    if(-not (Cnpj-Valido $CnpjEmitente)){throw 'nf-cnpj-emitente'}
     $docs=@{};$vistos=@{};$itens=New-Object Collections.ArrayList
-    $cont=@{cnpj=0;sem_cnpj=0;nf_pdv=0}
+    $cont=@{cnpj=0;sem_cnpj=0;nf_pdv=0;venda=0;bonificacao=0;terceiros=0;terceiro_parceiro_difere=0}
     foreach($c in $Clientes){
         $cod=Inteiro-Banco $c.codigo_parceiro
         if($null -eq $cod){throw 'resposta-invalida'}
@@ -1520,15 +1538,27 @@ function Normalizar-NF($Linhas,$Clientes,[datetime]$Desde,[datetime]$Ate) {
         if(-not $serie -or -not $dt -or $l.nf_cupom -isnot [bool]){throw 'resposta-invalida'}
         $codCli=Inteiro-Banco $l.cd_cliente
         $doc=if($null -ne $codCli -and $docs.ContainsKey($codCli)){$docs[$codCli]}else{''}
-        if(-not (Cnpj-Valido $doc)){$cont.sem_cnpj++;continue}
+        # 064: sem emitente valido nao da para classificar; recusa a janela (anterior preservada).
+        $emitente=Cnpj-EmitenteNF $l.emitente
+        if(-not $emitente){throw 'nf-emitente-invalido'}
+        $natureza=Natureza-NF $l.natureza;$bonif=Bonificacao-NF $natureza;$proprio=($emitente -ceq $CnpjEmitente)
+        if($proprio){
+            if(-not (Cnpj-Valido $doc)){$cont.sem_cnpj++;continue}
+        }else{
+            # Terceiro: a contraparte e o proprio emitente (fornecedor). Parceiro diferente so e contado (conferencia).
+            if((Cnpj-Valido $doc) -and $doc -cne $emitente){$cont.terceiro_parceiro_difere++}
+            $doc=$emitente
+        }
         $pedido=Inteiro-Banco $l.cd_pedido
         if($null -ne $pedido -and $pedido -gt 9007199254740991){throw 'resposta-invalida'}
         $item=[ordered]@{
             cd_nota=[long]$cd;numero=[long]$numero;serie=$serie;dia=$l.dt.ToString('yyyy-MM-dd',$Invariant);dt=$dt
             documento=$doc;cd_pedido=$pedido;valor_centavos=(Centavos-Banco $l.produtos $true)
             total_nota_centavos=(Centavos-Banco $l.total $true);st_centavos=(Centavos-Banco $l.st $false);nf_cupom=[bool]$l.nf_cupom
+            emitente=$emitente;natureza=$natureza;bonificacao=$bonif;proprio=$proprio
         }
         [void]$itens.Add($item);$cont.cnpj++
+        if(-not $proprio){$cont.terceiros++}elseif($bonif){$cont.bonificacao++}else{$cont.venda++}
         if($l.nf_cupom){$cont.nf_pdv++}
     }
     return @{itens=$itens.ToArray();contagens=$cont}
@@ -1537,10 +1567,10 @@ $ModuloNF=@{
     nome='nf';codigo=6;intervaloMin=60;intervaloErroMin=15
     consultas=@{
         lista=@{
-            maxLinhas=10000;parametros=@('desde','ate');colunas=@('filial','cd_nota','numero','serie','dt','cd_cliente','cd_pedido','produtos','total','st','nf_cupom')
+            maxLinhas=10000;parametros=@('desde','ate');colunas=@('filial','cd_nota','numero','serie','dt','cd_cliente','cd_pedido','produtos','total','st','nf_cupom','emitente','natureza')
             sql=$ConsultasAprovadas['nf.lista']
             simulacao={param($v)
-                ,@(@{filial=4;cd_nota=550;numero=550;serie='1';dt=$v.desde.AddHours(18.5);cd_cliente=900;cd_pedido=538;produtos=[decimal]21643.20;total=[decimal]24211.21;st=[decimal]2334.58;nf_cupom=$false})
+                ,@(@{filial=4;cd_nota=550;numero=550;serie='1';dt=$v.desde.AddHours(18.5);cd_cliente=900;cd_pedido=538;produtos=[decimal]21643.20;total=[decimal]24211.21;st=[decimal]2334.58;nf_cupom=$false;emitente=$script:CnpjEmitenteNF;natureza='Venda de Merc.Propria'})
             }
         }
         clientes=@{
@@ -1562,11 +1592,16 @@ function Modulo-NF($Modulo){
             $sessao=Abrir-Sessao
             $linhas=Executar-Consulta $sessao $Modulo 'lista' @{desde=$j.desde;ate=$j.ate}
             $clientes=Executar-Consulta $sessao $Modulo 'clientes' @{desde=$j.desde;ate=$j.ate}
-            $normal=Normalizar-NF $linhas $clientes $j.desde $j.ate
+            $normal=Normalizar-NF $linhas $clientes $j.desde $j.ate $script:CnpjEmitenteNF
             $coleta=[DateTimeOffset]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'",$Invariant)
         }catch{
             $ok=$false
-            Log ('ERRO nf fase=consulta motivo={0}; janela anterior preservada. execucao={1}' -f (Descrever-Erro $_),$ExecucaoId)
+            $motivoConsulta=switch -CaseSensitive ($_.Exception.Message) {
+                'nf-emitente-invalido' { 'NF sem emitente ou com CNPJ do emitente invalido (064)' }
+                'nf-cnpj-emitente' { 'cnpj_emitente ausente ou invalido no config-banco.json (064)' }
+                default { Descrever-Erro $_ }
+            }
+            Log ('ERRO nf fase=consulta motivo={0}; janela anterior preservada. execucao={1}' -f $motivoConsulta,$ExecucaoId)
             continue
         }finally{Fechar-Sessao $sessao}
         $enviado='nao'
@@ -1578,7 +1613,7 @@ function Modulo-NF($Modulo){
                 }
                 if((Campo $resp 'status') -cne 'ok'){
                     $motivoNF=[string](Campo $resp 'motivo')
-                    if($motivoNF -cnotin @('intervalo_invalido','coleta_invalida','payload_invalido','limite_excedido','campos_invalidos','data_invalida','nota_invalida','numero_invalido','pedido_invalido','nota_duplicada','conflito_execucao','snapshot_antigo')){$motivoNF='resposta_invalida'}
+                    if($motivoNF -cnotin @('intervalo_invalido','coleta_invalida','payload_invalido','limite_excedido','campos_invalidos','data_invalida','nota_invalida','numero_invalido','pedido_invalido','nota_duplicada','conflito_execucao','snapshot_antigo','emitente_invalido','natureza_invalida','emitente_inconsistente','coletor_antigo')){$motivoNF='resposta_invalida'}
                     $ok=$false;Log ('ERRO nf fase=rpc motivo={0}; janela anterior preservada. execucao={1}' -f $motivoNF,$ExecucaoId);continue
                 }
                 $enviado='sim'
@@ -1587,9 +1622,10 @@ function Modulo-NF($Modulo){
             $ok=$false;Log ('ERRO nf fase=envio; janela anterior preservada. execucao={0}' -f $ExecucaoId);continue
         }
         # Mesmo em modo teste: nunca gravar arquivo de notas/documentos; so contagens.
-        Log ('OK nf modo={0}{1} inicio={2} fim={3} cnpj={4} sem_cnpj={5} vinculadas_pdv={6} enviado={7} execucao={8}' -f
+        Log ('OK nf modo={0}{1} inicio={2} fim={3} cnpj={4} sem_cnpj={5} vinculadas_pdv={6} enviado={7} execucao={8} venda={9} bonificacao={10} terceiros={11} terceiro_parceiro_difere={12}' -f
             $Cfg.modo,$(if($Simular){' SIMULADO'}else{''}),$j.desde.ToString('yyyy-MM-dd'),$j.ate.AddDays(-1).ToString('yyyy-MM-dd'),
-            $normal.contagens.cnpj,$normal.contagens.sem_cnpj,$normal.contagens.nf_pdv,$enviado,$ExecucaoId)
+            $normal.contagens.cnpj,$normal.contagens.sem_cnpj,$normal.contagens.nf_pdv,$enviado,$ExecucaoId,
+            $normal.contagens.venda,$normal.contagens.bonificacao,$normal.contagens.terceiros,$normal.contagens.terceiro_parceiro_difere)
     }
     if(-not $ok){throw 'modulo-com-erro'}
 }
@@ -1626,6 +1662,15 @@ try {
     if ($Testar -and ($BackfillMargemDesde -or $BackfillNFDesde -or $Forcar)) { throw '-Testar nao combina com -BackfillMargemDesde/-Forcar' }
     if ([string]::IsNullOrWhiteSpace([string](Campo $Cfg 'pastaSaida')) -or -not [IO.Path]::IsPathRooted($Cfg.pastaSaida)) {
         throw 'pastaSaida deve ser absoluta'
+    }
+    # 064: CNPJ proprio (emitente das nossas NF) obrigatorio para a coleta NF; sem ele nada de NF roda.
+    $script:CnpjEmitenteNF=''
+    if ($NfAtiva -or $TestarNF) {
+        $Mensagem = 'cnpj_emitente ausente ou invalido no config-banco.json (14 digitos; obrigatorio com nf_saida=true ou -TestarNF).'
+        $cnpjCfg = Campo $Cfg 'cnpj_emitente'
+        if ($cnpjCfg -isnot [string] -or $cnpjCfg -notmatch '^[0-9]{14}$' -or -not (Cnpj-Valido $cnpjCfg)) { throw 'cnpj_emitente invalido' }
+        $script:CnpjEmitenteNF = $cnpjCfg
+        $Mensagem = 'Falha de configuracao.'
     }
     $Fase = 'configuracao-banco'
     $Mensagem = 'Secao banco do config-banco.json invalida (servidor, base, usuario).'

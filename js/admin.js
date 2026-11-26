@@ -788,6 +788,7 @@
         pe.historico = { aberto: false, busca: '', pagina: 0 };
         cmp.seq++; cmp.carregado = false; cmp.carregando = false; cmp.por = null; cmp.brutas = null;
         cmp.nfNotas = []; cmp.nfInstalada = false; cmp.nfSemPdv = 0; cmp.nfPendentes = 0; cmp.nfVista = {}; cmp.clientesPedidos = {};
+        cmp.nfBonif = {}; cmp.nfLegado = 0; nfc.seq++; nfc.carregando = false; nfc.carregado = false; nfc.dados = null; nfc.erro = null; nfc.ausente = false;
         saudeParar();
         if (canalRealtime) { sb.removeChannel(canalRealtime); canalRealtime = null; }
         sb.auth.signOut().then(function () {
@@ -2628,6 +2629,13 @@
         if (qual === 'regioes' && precisa(geo)) carregarGeoClientes();
         if (qual === 'regioes' && papel === 'admin' && precisa(gmap)) carregarMapaClientes();
         if (qual === 'clientes' && papel === 'admin' && precisa(rec)) carregarReceber();
+        // 064: "Atualizar" também relê as compras de fornecedores (nfc). Visível: recarrega já (mantém a
+        // lista antiga até a resposta; seq descarta resposta velha/pós-logout). Oculta: invalida o cache,
+        // e a próxima abertura da visão Fornecedores busca de novo.
+        if (qual === 'clientes' && forcar) {
+            if (ucli.escopo === 'erp' && ucli.verForn === 'fornecedores' && document.getElementById('clientes-compras-fornecedores')) carregarComprasNF();
+            else { nfc.seq++; nfc.carregando = false; nfc.carregado = false; nfc.dados = null; nfc.erro = null; nfc.ausente = false; }
+        }
         // 041: fornecedores (lista Clientes, compras por cliente, Regiões, Vendas, Hoje). Sem a 041: ausente, sem efeito.
         if (['clientes', 'siteclientes', 'regioes', 'vendas', 'dashboard'].indexOf(qual) >= 0 && precisa(forn)) carregarFornecedores();
         if (qual === 'vitrine' && precisa(giro)) carregarGiro();
@@ -2846,7 +2854,9 @@
     var CMP_LIMITE = 20000, CMP_PED_LIMITE = 5000, CMP_NF_LIMITE = 20000, CMP_MIN_COMPRAS = 3, CMP_FATOR = 1.5, CMP_MIN_DIAS = 30, CMP_PERDIDO = 90, CMP_MESES_VALOR = 6;
     var CMP_AVISO_NF = 'PDV = cupons. NF provisória = pedidos faturados sem cupom correspondente. Pedidos disponíveis desde 26/10/2026, em janela de 30 dias; o histórico anterior de NF ainda não está incluído, inclusive no total de 6 meses.';
     var cmp = { carregado: false, carregando: false, ausente: false, erro: null, truncado: false, por: null, semDoc: 0,
-                hoje: '', corte: '', mostrarSumindo: 30, seq: 0, nfSemDados: 0, clientesPedidos: {}, nfInstalada: false, nfNotas: [], nfSemPdv: 0, nfPendentes: 0, nfVista: {} };
+                hoje: '', corte: '', mostrarSumindo: 30, seq: 0, nfSemDados: 0, clientesPedidos: {}, nfInstalada: false, nfNotas: [], nfSemPdv: 0, nfPendentes: 0, nfVista: {}, nfBonif: {}, nfLegado: 0 };
+    // 064: NF-e emitidas por fornecedores (compras), lidas sob demanda na visão "Fornecedores".
+    var nfc = { carregando: false, carregado: false, ausente: false, erro: null, dados: null, seq: 0, aberto: {} };
 
     function cmpIso(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
     function cmpUtc(iso) { var p = String(iso).split('-'); return Date.UTC(Number(p[0]), Number(p[1]) - 1, Number(p[2])); }
@@ -2990,7 +3000,7 @@
             if (!semNF && !erroNF && (!snapshotNF || !Array.isArray(snapshotNF.notas) || !Array.isArray(snapshotNF.dias) || typeof snapshotNF.truncado !== 'boolean')) erro = { message: 'Resposta do histórico NF incompleta; tente atualizar.' };
             if (rs[2].error && !semNF) erro = rs[2].error;
             cmp.carregando = false; cmp.ausente = false; cmp.erro = null; cmp.truncado = false;
-            cmp.nfNotas = []; cmp.nfInstalada = false; cmp.nfSemPdv = 0; cmp.nfPendentes = 0;
+            cmp.nfNotas = []; cmp.nfInstalada = false; cmp.nfSemPdv = 0; cmp.nfPendentes = 0; cmp.nfBonif = {}; cmp.nfLegado = 0;
             if (erro) {
                 if (r.error && solidTabelaAusente(r.error)) cmp.ausente = true; else cmp.erro = String(erro.message || erro);
                 cmp.carregado = false; cmp.por = null; cmp.brutas = null;
@@ -3002,6 +3012,10 @@
                     var unido = window.TempRioCompras.juntarFontes(r.data || [], rs[1].data || [], semNF ? null : snapshotNF.notas, semNF ? null : snapshotNF.dias, forn.docs);
                     cmp.brutas = unido.linhas; cmp.nfSemDados = unido.semValor + unido.semData; cmp.clientesPedidos = unido.clientes;
                     cmp.nfNotas = unido.notas; cmp.nfInstalada = unido.nfInstalada; cmp.nfSemPdv = unido.nfSemPdv;
+                    if (!semNF) {   // 064: ausentes antes da migracao = sem bonificacao/legado conhecidos
+                        cmp.nfBonif = window.TempRioCompras.resumoBonificacoes(Array.isArray(snapshotNF.bonificacoes) ? snapshotNF.bonificacoes : [], forn.docs);
+                        cmp.nfLegado = Number.isSafeInteger(snapshotNF.legado) ? snapshotNF.legado : 0;
+                    }
                     if (!semNF) {
                         var hojeNF = window.TempRioRotaCore.diaSP(new Date()), primeiroNF = window.TempRioRotaCore.somaDias(hojeNF, -400);
                         if (primeiroNF < '2026-05-29') primeiroNF = '2026-05-29';
@@ -3016,12 +3030,14 @@
         }).catch(function (e) {
             if (seq !== cmp.seq) return;
             cmp.carregando = false; cmp.erro = String(e && e.message || e); cmp.carregado = false; cmp.por = null; cmp.brutas = null;
-            cmp.nfNotas = []; cmp.nfInstalada = false; cmp.nfSemPdv = 0; cmp.nfPendentes = 0; cmpRedesenhar();
+            cmp.nfNotas = []; cmp.nfInstalada = false; cmp.nfSemPdv = 0; cmp.nfPendentes = 0; cmp.nfBonif = {}; cmp.nfLegado = 0; cmpRedesenhar();
         });
     }
     function cmpOrigem(o) { return o && o.origens ? ['PDV', 'NF'].filter(function (f) { return o.origens[f]; }).join(' + ') : 'ERP'; }
     function cmpFonteNota() {
         var nota = cmp.nfInstalada ? 'PDV = cupons. NF-e = notas de venda de saída desde 29/05/2026; soma dos produtos. O total da nota e ICMS-ST aparecem no detalhe. Pedidos provisórios só nos dias ainda não coletados. NF vinculada ao PDV é contada pelos cupons.' : CMP_AVISO_NF;
+        if (cmp.nfInstalada) nota += ' Bonificações nossas e notas emitidas por fornecedores (compras) não somam.';
+        if (cmp.nfInstalada && cmp.nfLegado) nota += ' Atenção: ' + NUM.format(cmp.nfLegado) + ' NF-e ainda sem emitente identificado (falta o reenvio do histórico, 064); podem incluir notas de fornecedores.';
         if (cmp.nfInstalada && cmp.nfPendentes) nota += ' Atenção: ' + NUM.format(cmp.nfPendentes) + ' dias do histórico de NF-e ainda não consultados. Pedidos provisórios cobrem apenas a janela de 30 dias do ERP.';
         if (cmp.nfSemPdv) nota += ' Atenção: ' + NUM.format(cmp.nfSemPdv) + ' NF(s) vinculada(s) ao PDV sem cupom equivalente no histórico carregado; confira os documentos no detalhe. Não são somadas novamente pela NF.';
         return nota + (cmp.nfSemDados ? ' ' + NUM.format(cmp.nfSemDados) + ' pedido(s) faturado(s) sem valor ou data válidos ficaram fora da soma.' : '');
@@ -3046,6 +3062,76 @@
             '<span role="status">' + filtradas.length + ' notas · página ' + (estado.pagina + 1) + ' de ' + paginas + '</span><button type="button" class="adm-botao-fantasma" data-cmp-nf-pag="1"' +
             (estado.pagina + 1 >= paginas ? ' disabled' : '') + '>Próxima</button></div></details>';
     }
+    // 064: bonificação no detalhe do cliente — à parte, nunca no total.
+    function cmpBonifHtml(doc) {
+        var b = cmp.nfBonif && cmp.nfBonif[doc];
+        if (!b) return '';
+        return '<details class="mt-4"><summary class="cursor-pointer">Bonificação: ' + esc(brl(b.centavos)) + ' em ' + NUM.format(b.qtd) + (b.qtd === 1 ? ' nota' : ' notas') + ' (não soma no total)</summary>' +
+            '<div class="overflow-x-auto"><table class="adm-tabela mt-3"><thead><tr><th scope="col">Emissão</th><th scope="col">Nota / série</th><th scope="col">Produtos</th><th scope="col">Natureza</th></tr></thead><tbody>' +
+            b.notas.slice(0, 100).map(function (n) { return '<tr><td>' + esc(cmpData(n.dia)) + '</td><td>' + esc(n.numero + ' / ' + n.serie) + '</td><td>' + esc(brl(n.valor_centavos)) + '</td><td>' + esc(n.natureza || '—') + '</td></tr>'; }).join('') +
+            '</tbody></table></div>' + (b.notas.length > 100 ? '<p class="text-xs mt-2">Mostrando as 100 mais recentes.</p>' : '') + '</details>';
+    }
+
+    // 064: seção "Notas de fornecedores / compras" (NF-e de terceiros, por emitente). Somente leitura.
+    function carregarComprasNF() {
+        var seq = ++nfc.seq;
+        nfc.carregando = true; nfc.erro = null; nfcDesenhar();
+        return sb.rpc('solidcon_ler_compras_nf').then(function (r) {
+            if (seq !== nfc.seq) return;
+            nfc.carregando = false;
+            if (r.error) {
+                nfc.ausente = /^(PGRST202|42883)$/.test(String(r.error.code)) && /solidcon_ler_compras_nf/.test(String(r.error.message || ''));
+                nfc.erro = nfc.ausente ? null : String(r.error.message || r.error); nfc.carregado = false; nfc.dados = null;
+            } else if (!r.data || !Array.isArray(r.data.fornecedores) || !Array.isArray(r.data.notas)) {
+                nfc.erro = 'Resposta de compras incompleta; tente atualizar.'; nfc.carregado = false; nfc.dados = null;
+            } else { nfc.dados = r.data; nfc.carregado = true; nfc.ausente = false; }
+            nfcDesenhar();
+        }).catch(function (e) {
+            if (seq !== nfc.seq) return;
+            nfc.carregando = false; nfc.erro = String(e && e.message || e); nfc.dados = null; nfcDesenhar();
+        });
+    }
+    function nfcHtml() {
+        var cab = '<div class="flex items-center gap-2 mb-2">' + SELO_ERP + '<p class="font-bold">Notas de fornecedores / compras</p></div>' +
+            '<p class="text-xs mb-4" style="color:var(--adm-tinta-3)">NF-e de saída emitidas por outras empresas (fornecedores) e importadas no ERP. Não são vendas: não entram em clientes, mapa nem rankings.</p>';
+        if (nfc.ausente) return cab + '<p class="text-sm" style="color:var(--adm-tinta-2)">Ainda não instalado (migração 064).</p>';
+        if (nfc.erro) return cab + '<p class="text-sm mb-3" style="color:var(--adm-tinta-2)">Não foi possível carregar as compras: ' + esc(nfc.erro) + '</p><button type="button" class="adm-botao-fantasma" data-nfc-tentar>Tentar de novo</button>';
+        if (!nfc.carregado) return cab + '<p class="text-sm" style="color:var(--adm-tinta-2)"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Carregando compras…</p>';
+        var d = nfc.dados, aviso = d.legado ? '<p class="text-xs mb-3" role="status" style="color:var(--adm-tinta-2)"><i class="fa-solid fa-circle-info mr-1"></i>' + NUM.format(d.legado) + ' NF-e ainda sem emitente identificado: a lista fica completa depois do reenvio do histórico.</p>' : '';
+        if (!d.fornecedores.length) return cab + aviso + '<p class="adm-vazio">Nenhuma nota de fornecedor no histórico.</p>';
+        var porEmit = {};
+        d.notas.forEach(function (n) { (porEmit[n.emitente] || (porEmit[n.emitente] = [])).push(n); });
+        return cab + aviso + (d.truncado ? '<p class="text-xs mb-3">Lista de notas limitada às 5.000 mais recentes; totais por fornecedor são completos.</p>' : '') +
+            '<div class="overflow-x-auto"><table class="adm-tabela"><thead><tr><th scope="col">Fornecedor (emitente)</th><th scope="col" class="num">Notas</th><th scope="col" class="num">Produtos</th><th scope="col" class="num">Total das notas</th><th scope="col">Período</th></tr></thead><tbody>' +
+            d.fornecedores.map(function (f) {
+                var notas = porEmit[f.emitente] || [], aberto = !!nfc.aberto[f.emitente];
+                return '<tr><td><button type="button" class="adm-botao-fantasma" data-nfc-emit="' + esc(f.emitente) + '" aria-expanded="' + aberto + '">' + esc(f.nome || '(sem cadastro)') + '</button><br><span class="text-xs" style="color:var(--adm-tinta-3)">' + esc(f.emitente) + '</span></td>' +
+                    '<td class="num">' + NUM.format(f.qtd) + '</td><td class="num">' + esc(brl(f.valor_centavos)) + '</td><td class="num">' + esc(brl(f.total_nota_centavos)) + '</td>' +
+                    '<td>' + esc(cmpData(f.primeira)) + (f.ultima !== f.primeira ? ' a ' + esc(cmpData(f.ultima)) : '') + '</td></tr>' +
+                    (aberto ? '<tr><td colspan="5"><table class="adm-tabela"><thead><tr><th scope="col">Emissão</th><th scope="col">Nota / série</th><th scope="col">Natureza</th><th scope="col" class="num">Produtos</th><th scope="col" class="num">Total</th></tr></thead><tbody>' +
+                        notas.map(function (n) { return '<tr><td>' + esc(cmpData(n.dia)) + '</td><td>' + esc(n.numero + ' / ' + n.serie) + '</td><td>' + esc(n.natureza || '—') + '</td><td class="num">' + esc(brl(n.valor_centavos)) + '</td><td class="num">' + esc(brl(n.total_nota_centavos)) + '</td></tr>'; }).join('') +
+                        '</tbody></table></td></tr>' : '');
+            }).join('') + '</tbody></table></div>';
+    }
+    function nfcDesenhar() {
+        var lista = $('#clientes-lista-erp');
+        if (!lista || !lista.parentNode) return;
+        var alvo = document.getElementById('clientes-compras-fornecedores');
+        var mostrar = ucli.escopo === 'erp' && ucli.verForn === 'fornecedores';
+        if (!mostrar) { if (alvo) alvo.remove(); return; }
+        if (!alvo) {
+            alvo = document.createElement('div'); alvo.id = 'clientes-compras-fornecedores'; alvo.className = 'adm-card p-5 mt-4';
+            lista.parentNode.insertBefore(alvo, lista.nextSibling);
+        }
+        if (!nfc.carregado && !nfc.carregando && !nfc.erro && !nfc.ausente) { carregarComprasNF(); return; }
+        alvo.innerHTML = nfcHtml();
+        var t = alvo.querySelector('[data-nfc-tentar]');
+        if (t) t.addEventListener('click', carregarComprasNF);
+        alvo.querySelectorAll('[data-nfc-emit]').forEach(function (b) {
+            b.addEventListener('click', function () { var k = b.getAttribute('data-nfc-emit'); nfc.aberto[k] = !nfc.aberto[k]; nfcDesenhar(); });
+        });
+    }
+
     function cmpNotasRedesenhar(raiz, doc) {
         if (!raiz) return;
         var pos = document.activeElement && document.activeElement.selectionStart;
@@ -8302,6 +8388,7 @@
         var e = ucli.escopo, site = e === 'site';
         var alvo = $(site ? '#clientes-lista' : '#clientes-lista-erp');
         if (!alvo) return;
+        if (!site) nfcDesenhar();   // 064: compras de fornecedor só na visão "Fornecedores"
         function em(f) { return function (ev) { ucliEscopo(e); f(ev); }; }   // handler desta lista age no escopo dela
         ucli.base = ucliLinhas();
         var temForn = e === 'erp' && forn.carregado && !forn.ausente;
@@ -8580,7 +8667,7 @@
                 ficha('Origem PDV', brl(o.totalPDV), NUM.format(o.origens.PDV) + ' cupom(ns)') +
                 ficha('Origem NF', brl(o.totalNF), NUM.format(o.origens.NF) + (cmp.nfInstalada ? ' NF-e / pedidos provisórios de lacunas' : ' pedido(s) faturado(s) sem cupom')) +
                 '</div>';
-            corpo += '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">' + esc(cmpFonteNota()) + '</p>' + cmpNotasHtml(r.doc);
+            corpo += '<p class="text-xs mt-3" style="color:var(--adm-tinta-3)">' + esc(cmpFonteNota()) + '</p>' + cmpNotasHtml(r.doc) + cmpBonifHtml(r.doc);
             h += ucliBloco('Histórico de compras (ERP)', SELO_ERP, corpo);
         }
 

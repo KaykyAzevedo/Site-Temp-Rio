@@ -4,6 +4,7 @@
   "pastaSaida": "C:\\TempRio\\solidcon\\saida",
   "configSupabase": "C:\\TempRio\\solidcon\\config.json",
   "aceitar_permissoes_extras": false,
+  "cnpj_emitente": "PREENCHER_CNPJ_DA_TEMPRIO_14_DIGITOS",
   "banco": {
     "servidor": "PREENCHER_ENDERECO_DO_SQL_SERVER",
     "base": "PREENCHER_NOME_DA_BASE",

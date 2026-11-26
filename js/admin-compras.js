@@ -72,7 +72,8 @@
             if (!x || !/^\d{4}-\d{2}-\d{2}$/.test(x.dia)) throw new Error('Cobertura NF inválida.');
             dias[x.dia] = true;
         });
-        notas.filter(cliente).forEach(function (n) {
+        // 064: o servidor ja manda so venda/legado; defesa extra caso chegue bonificacao ou compra de fornecedor.
+        notas.filter(function (n) { return cliente(n) && (n.classe == null || n.classe === 'venda' || n.classe === 'legado'); }).forEach(function (n) {
             var cd = Number(n.cd_nota), doc = cnpj(n.documento);
             if (!Number.isSafeInteger(cd) || cd < 1 || !doc || centavos(n.valor_centavos) == null ||
                 centavos(n.total_nota_centavos) == null || (n.st_centavos != null && centavos(n.st_centavos) == null)) throw new Error('Nota fiscal inválida.');
@@ -107,7 +108,22 @@
         res.notas = oficiais; res.nfPDV = pdv; res.nfInstalada = true;
         return res;
     }
-    var api = { juntar: juntar, juntarFontes: juntarFontes };
+    // 064: bonificacoes nossas por cliente (nao somam no total). Fornecedor marcado fica de fora, como nas vendas.
+    function resumoBonificacoes(lista, fornecedores) {
+        var por = Object.create(null), vistos = Object.create(null);
+        (lista || []).forEach(function (n) {
+            var doc = cnpj(n && n.documento), cd = Number(n && n.cd_nota), v = centavos(n && n.valor_centavos);
+            if (!doc || !Number.isSafeInteger(cd) || cd < 1 || v == null) throw new Error('Bonificação inválida.');
+            if (vistos[cd] || (fornecedores && Object.prototype.hasOwnProperty.call(fornecedores, doc))) return;
+            vistos[cd] = true;
+            var o = por[doc] || (por[doc] = { qtd: 0, centavos: 0, notas: [] });
+            if (!Number.isSafeInteger(o.centavos + v)) throw new Error('Total de bonificação fora do limite de precisão.');
+            o.qtd++; o.centavos += v; o.notas.push(Object.assign({}, n, { documento: doc }));
+        });
+        Object.keys(por).forEach(function (k) { por[k].notas.sort(function (a, b) { return String(b.dia).localeCompare(String(a.dia)) || b.cd_nota - a.cd_nota; }); });
+        return por;
+    }
+    var api = { juntar: juntar, juntarFontes: juntarFontes, resumoBonificacoes: resumoBonificacoes };
     if (typeof module !== 'undefined' && module.exports) module.exports = api;
     raiz.TempRioCompras = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
