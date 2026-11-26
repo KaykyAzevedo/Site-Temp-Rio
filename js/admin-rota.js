@@ -92,7 +92,7 @@
                fx050: false, fxLinha: null, fxFoto: null, fxDias: {}, fxDiasErro: {}, fxErro: null, fxSalvando: false, msgFx: '', fxConfirmaReabrir: false, fxRender: false, focoFx: null,
                canhotos: {}, confirmacoes: {}, entrega063: false, diasSaida: {},
                // 065 (quadro da semana): leitura/gravação por RPC rota_065_ler_semana / rota_065_salvar_semana / rota_065_marcar_sem_saida
-               estadosH: null, estadosDia: null, movimentoReq: {}, calendarioH: {}, movimentoErro: null, sem065: false, sem065Dados: {}, semQuadroRasc: {}, semFiltroVeic: 'todos', semVersaoConflito: false,
+               sem065: false, sem065Dados: {}, semQuadroRasc: {}, semFiltroVeic: 'todos', semVersaoConflito: false,
                semMsgErro: false, semPilhasExp: {}, semBuscaBandeja: '', semFiltroBandeja: 'todos', semMapaAberto: true,
                // 066 (assistente da semana): rota_066_sugestoes / rota_066_registrar (stub local até RPC existir)
                sug066: false, sug066Dados: {}, sug066Ignoradas: {}, seqSug066: 0, relendoSug066: {}, sessao: 0 };
@@ -143,7 +143,6 @@
         // UI1: com gravação pendente, a leitura poderia trazer o estado de ANTES dela. Espera terminar (aposMutacao).
         if (pendentes()) { st.recargaPendente = true; return; }
         var seq = ++st.seq, sb = st.sb, mut0 = st.mut;
-        st.calendarioH={};
         st.carregando = true; st.erro = null; desenhar();
         Promise.all([
             paginar(function () { return sb.from('solidcon_pedidos_erp').select('*').in('etapa', ROTA.ETAPAS_PENDENTES).order('cd_pedido', { ascending: true }); }, 5000),
@@ -325,9 +324,6 @@
     }
     // Vigia (60 s, e ao voltar para a aba): fechamento automático ou mudança em outra tela recarrega a aba sozinha.
     function fxVigiar() {
-        if(st.ativo && st.sb && st.estadosDia && st.estadosDia!==hojeSP() && !pendentes()) {
-            st.estadosH=null;st.estadosDia=null;st.semQuadroRasc={};st.carregado=false;carregar();return;
-        }
         if (!st.ativo || !st.carregado || st.carregando || !st.v2 || !st.fx050 || !st.sb || pendentes()) return;
         if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
         var sb0 = st.sb, rev0 = st.fxRev;
@@ -564,12 +560,17 @@
             if (st.ativo) recarregarTudo();
         });
     }
-    function estadoPedidoH(cd) {
-        return st.estadosDia === hojeSP() && st.estadosH ? st.estadosH[Number(cd)] : null;
-    }
     function pedidoSomenteLeituraSaida(cd) {
-        var e = estadoPedidoH(cd);
-        return !e || typeof e.entregue !== 'boolean' || e.entregue;
+        var h = hojeSP();
+        // A bloqueia somente a troca de veículo; não altera elegibilidade065.
+        var p = (st.pedidos || []).filter(function (x) { return Number(x.cd_pedido) === Number(cd); })[0];
+        if (p) {
+            var etapa = core.etapaEntrega(p, { cfg: st.cfg, saidas: st.diasSaida, canhotos: st.canhotos, confirmacoes: st.confirmacoes, fechada: st.fxFoto, agora: new Date() });
+            if (etapa === 'enviado' || etapa === 'recebido') return true;
+        }
+        if (st.fxRender) return true;
+        if (st.vista === 'dia' && st.diaDetalhe && st.diaDetalhe <= h) return true;
+        return !!diaSaidaFechadaAteHoje(cd, h);
     }
     function seletorPedidoV2(x, nome, mostrarId) {
         var tagId = mostrarId ? '<span class="rota-ped-tag">#' + esc(x.p.cd_pedido) + '</span>' : '';
@@ -2558,13 +2559,6 @@
             sem_saida: Array.isArray(d.sem_saida) ? d.sem_saida : [],
             fechados: Array.isArray(d.fechados) ? d.fechados : []
         };
-        st.sem065Dados[iniLido].pedidos_estado = d.pedidos_estado || null;
-        st.estadosH = d.pedidos_estado || null;
-        st.estadosDia = d.hoje ? String(d.hoje).slice(0,10) : null;
-        if (!st.estadosH) {
-            st.msgSemana = 'Estado dos pedidos indisponível. Atualize o backend antes de mover.';
-            st.semMsgErro = true;
-        }
         sincronizarPlanoLocalDe065(iniLido, itens);
         // UI065-R1: se existir rascunho local da semana com versaoBase diferente da recém-lida,
         // mantém versaoBase original do rascunho imutável e sinaliza conflito de versão.
@@ -2943,10 +2937,9 @@
         (st.pedidos || []).forEach(function (p) {
             if (!p || p.cd_pedido == null) return;
             if (st.ign045 && st.ignorados[p.cd_pedido]) return;
-            var estadoH = estadoPedidoH(p.cd_pedido);
-            if (estadoH ? estadoH.entregue : !core.pendenteEntrega(p, st.canhotos, hoje, cfgFrota, opts)) return;
+            if (!core.pendenteEntrega(p, st.canhotos, hoje, cfgFrota, opts)) return;
             pendentesPorCd[p.cd_pedido] = p;
-            if (estadoH ? !estadoH.entregue : !diaSaidaFechadaAteHoje(p.cd_pedido, hoje)) {
+            if (!diaSaidaFechadaAteHoje(p.cd_pedido, hoje)) {
                 elegiveisFuturoPorCd[p.cd_pedido] = p;
             }
         });
@@ -2969,7 +2962,7 @@
                     cartoes: (col.cartoes || []).filter(function (c) {
                         if (!c) return false;
                         return ehLeituraPassado ? !!pendentesPorCd[c.cd_pedido] : !!elegiveisFuturoPorCd[c.cd_pedido];
-                    }).map(function(c){var e=estadoPedidoH(c.cd_pedido);return Object.assign({},c,{entregue:e && e.entregue,bloqueado:pedidoSomenteLeituraSaida(c.cd_pedido)});})
+                    })
                 });
             });
             var bandejaRasc = (rasc.bandeja || []).filter(function (c) {
@@ -2982,7 +2975,6 @@
                 inicio: ini,
                 fim: fim,
                 hoje: hoje,
-                movimentoAtomico: true,
                 versaoBase: versaoBaseRasc,
                 podeEditar: podeSalvarSemana() && !conflitoVersao,
                 salvando: !!st.semSalvando,
@@ -3054,9 +3046,7 @@
                 : null;
             return Object.assign({
                 cd_pedido: Number(p.cd_pedido),
-                entregue: estadoPedidoH(p.cd_pedido) && estadoPedidoH(p.cd_pedido).entregue,
                 veiculoSomenteLeitura: pedidoSomenteLeituraSaida(p.cd_pedido),
-                bloqueado: pedidoSomenteLeituraSaida(p.cd_pedido),
                 documento: p.documento || '',
                 cliente: nomeCliente(c, { p: p }),
                 bairro: (c && c.bairro) || p.entrega_bairro || '',
@@ -3080,7 +3070,7 @@
         var bandejaArr = [];
         // UI065-R2: todo pedido já saído em rota fechada <= hoje entra em usados para nunca ir à bandeja nem a dias futuros (> hoje).
         (st.pedidos || []).forEach(function (p) {
-            if (p && p.cd_pedido != null && !estadoPedidoH(p.cd_pedido) && diaSaidaFechadaAteHoje(p.cd_pedido, hoje)) {
+            if (p && p.cd_pedido != null && diaSaidaFechadaAteHoje(p.cd_pedido, hoje)) {
                 usados[Number(p.cd_pedido)] = true;
             }
         });
@@ -3092,16 +3082,13 @@
             }).forEach(function (fxIt) {
                 if (!fxIt || fxIt.cd_pedido == null || fxIt.removido_em) return;
                 var cdFx = Number(fxIt.cd_pedido);
-                // UIH-R2: a foto é prova histórica; uma tentativa ativa usa a colocação atual do plano/bandeja.
-                var estadoFx = estadoPedidoH(cdFx);
-                if (estadoFx && estadoFx.reprogramado === true) return;
                 usados[cdFx] = true;
                 if (diasMapa[dataFx] && pendentesPorCd[cdFx]) {
                     diasMapa[dataFx].cartoes.push(fazerCartao(pendentesPorCd[cdFx], fxIt.veiculo_id || 's10', {
                         dia: dataFx,
                         ordem: fxIt.ordem != null ? Number(fxIt.ordem) : null,
                         origemDia: 'salvo',
-                        bloqueado: pedidoSomenteLeituraSaida(cdFx)
+                        bloqueado: true
                     }));
                 }
             });
@@ -3142,12 +3129,6 @@
         });
 
         if (!temSalvo) {
-            // Retirada/reprogramação explícita não vira sugestão automática de outra colocação.
-            var reprogramadosSemSugestao = Object.create(null);
-            Object.keys(elegiveisFuturoPorCd).forEach(function(cd) {
-                var e = estadoPedidoH(cd);
-                if (e && e.reprogramado === true) reprogramadosSemSugestao[cd] = true;
-            });
             portaAtivos().forEach(function (vp) {
                 var ferExtras = Object.keys((st.cfg && st.cfg.feriadosExtras) || {});
                 diasArr.forEach(function (col) {
@@ -3164,7 +3145,7 @@
                     porPedido: st.porPedido,
                     regras: st.regras,
                     ignorados: st.ign045 ? st.ignorados : {},
-                    excluir: Object.assign({}, usados, reprogramadosSemSugestao),
+                    excluir: Object.assign({}, usados),
                     plano: {},
                     veiculos: frotaLista,
                     veiculo: vp.id,
@@ -3232,7 +3213,6 @@
             inicio: ini,
             fim: fim,
             hoje: hoje,
-            movimentoAtomico: true,
             versaoBase: versaoBase,
             podeEditar: podeSalvarSemana() && !st.semVersaoConflito,
             salvando: !!st.semSalvando,
@@ -3581,67 +3561,12 @@
             if (!st.semMsgErro) { if (!anterior || !anterior.temRascunho) delete st.semQuadroRasc[ini]; recarregarTudo(); } else desenhar();
         });
     }
-    function lerCalendarioH(mesIso) {
-        var chave=String(mesIso).slice(0,7),sb0=st.sb,sessao0=st.sessao;
-        if(st.calendarioH[chave])return st.calendarioH[chave];
-        var de=chave+'-01',ate=mesIso,proximo=new Date(de+'T12:00:00Z');proximo.setUTCMonth(proximo.getUTCMonth()+1);
-        ate=proximo.toISOString().slice(0,10);
-        var semanas=[];for(var ini=segundaDe(de);ini<ate;ini=somaDias(ini,7))semanas.push(ini);
-        var p=Promise.all(semanas.map(function(inicio){return sb0.rpc('rota_065_ler_semana',{p_inicio:inicio});})).then(function(rs){
-            if(st.sb!==sb0 || st.sessao!==sessao0 || !st.ativo)throw new Error('Sessão alterada.');
-            var out={fechados:[],sem_saida:[],feriados:[]};
-            rs.forEach(function(r){
-                if(!r || r.error || !r.data || r.data.status!=='ok' || !Array.isArray(r.data.fechados) || !Array.isArray(r.data.sem_saida))throw new Error(r && r.error && r.error.message || 'Disponibilidade do mês incompleta.');
-                out.fechados=out.fechados.concat(r.data.fechados);out.sem_saida=out.sem_saida.concat(r.data.sem_saida);
-            });
-            if(st.cfg.feriadosSemSaida){
-                var fer=core.feriadosDoAno(Number(chave.slice(0,4)));Object.keys(fer || {}).forEach(function(d){if(d.slice(0,7)===chave)out.feriados.push(d);});
-                Object.keys(st.cfg.feriadosExtras || {}).forEach(function(d){if(d.slice(0,7)===chave)out.feriados.push(d);});
-            }
-            return out;
-        }).catch(function(e){if(st.sb===sb0 && st.sessao===sessao0)delete st.calendarioH[chave];throw e;});
-        st.calendarioH[chave]=p;return p;
-    }
-    function persistirMovimentoPedido(acao, estadoAtual) {
-        var M = raiz.TempRioMovimento, cd = Number(acao && acao.cd_pedido);
-        if (!M || !cd || !st.sb || !podeSalvarSemana() || st.semSalvando) return Promise.resolve();
-        if(pedidoSomenteLeituraSaida(cd)){st.msgSemana='Pedido no Histórico ou estado desatualizado. Recarregue a semana.';st.semMsgErro=true;desenhar();return Promise.resolve();}
-        if (estadoAtual && estadoAtual.temRascunho) {
-            st.msgSemana = 'Salve ou descarte o rascunho antes de mover o pedido.'; st.semMsgErro=true; desenhar(); return Promise.resolve();
-        }
-        var chave = cd + '|' + (acao.dia || 'bandeja') + '|' + (acao.veiculo || '');
-        try { if (!st.movimentoReq[chave]) st.movimentoReq[chave]=M.uuid(); }
-        catch(e){st.msgSemana=e.message;st.semMsgErro=true;desenhar();return Promise.resolve();}
-        var sb0=st.sb,sessao0=st.sessao,ini=estadoAtual && estadoAtual.inicio || semanaAlvo();
-        function vigente(){return st.sb===sb0 && st.sessao===sessao0 && st.ativo;}
-        st.semSalvando=true;st.msgSemana='Salvando alteração…';st.semMsgErro=false;desenhar();
-        return M.mover(sb0,Object.assign({},acao,{requisicao:st.movimentoReq[chave]})).then(function(r){
-            if(!vigente())return;
-            var afetadas=[ini];[r.origem,r.destino].forEach(function(x){if(x && x.inicio && afetadas.indexOf(x.inicio)<0)afetadas.push(x.inicio);});
-            return Promise.all(afetadas.map(function(sem){return sb0.rpc('rota_065_ler_semana',{p_inicio:sem}).then(function(leitura){
-                if(!leitura || leitura.error || !leitura.data || leitura.data.status!=='ok')throw new Error(leitura && leitura.error && leitura.error.message || 'Alteração recebida; releitura da semana falhou.');
-                return {sem:sem,leitura:leitura};
-            });})).then(function(leituras){
-                if(!vigente())return;
-                leituras.forEach(function(x){aplicarLeituraSemana065(x.sem,x.leitura);delete st.semQuadroRasc[x.sem];});
-                delete st.movimentoReq[chave];
-                st.msgSemana=acao.dia ? 'Pedido programado para '+dataBr(acao.dia)+'.' : 'Pedido devolvido à bandeja.';st.semMsgErro=false;
-                if(typeof raiz.dispatchEvent==='function' && typeof CustomEvent==='function')raiz.dispatchEvent(new CustomEvent('temprio-movimento068'));
-            });
-        }).catch(function(e){if(vigente()){st.msgSemana='Não foi possível concluir: '+e.message+' Tente novamente.';st.semMsgErro=true;}}).then(function(){
-            if(!vigente())return;
-            st.semSalvando=false;aposMutacao();
-            if(!st.semMsgErro)recarregarTudo();else desenhar();
-        });
-    }
     function montarQuadroSemanaNoAlvo(alvo, semIni) {
         var Q = obterQuadroMod();
         var elQuadro = alvo && alvo.querySelector('#rota-semana-quadro');
         if (!Q || !elQuadro) return;
         var dados = montarDadosQuadro065(semIni);
         Q.montar(elQuadro, dados, {
-            onMoverPedido: persistirMovimentoPedido,
-            onLerCalendario: lerCalendarioH,
             onTrocarVeiculo: function (acao, novoSt) {
                 persistirTrocaVeiculoQuadro(acao, novoSt);
             },
@@ -4167,7 +4092,7 @@
     // "Atualizar" (botão da aba, "Tentar de novo" e o ATUALIZAR do painel). Com gravação pendente, espera (UI1).
     function recarregarTudo() {
         if (pendentes()) { st.recargaPendente = true; st.msgVeiculo = MSG_ESPERA; desenhar(); return; }
-        st.calendarioH={};st.carregado = false; carregar();
+        st.carregado = false; carregar();
     }
     function desenharMapa(pl) {
         liberarMapa();
@@ -4668,7 +4593,6 @@
             st.fx050 = false; st.fxLinha = null; st.fxFoto = null; st.fxDias = {}; st.fxDiasErro = {}; st.fxErro = null; st.fxSalvando = false; st.msgFx = ''; st.fxConfirmaReabrir = false; st.fxRender = false; st.focoFx = null; st.fxRev = 0;
             st.progresso = {};
             st.vista = 'semana'; st.diaDetalhe = null;
-            st.estadosH=null;st.estadosDia=null;st.movimentoReq={};st.calendarioH={};
             st.sem065 = false; st.sem065Dados = {}; st.semQuadroRasc = {}; st.semFiltroVeic = 'todos'; st.semVersaoConflito = false;
             st.semMsgErro = false; st.semPilhasExp = {}; st.semBuscaBandeja = ''; st.semFiltroBandeja = 'todos'; st.semMapaAberto = true;
             st.sug066 = false; st.sug066Dados = {}; st.sug066Ignoradas = {}; st.seqSug066 = 0; st.relendoSug066 = {}; st.sessao++;

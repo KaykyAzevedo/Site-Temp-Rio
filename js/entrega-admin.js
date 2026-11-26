@@ -4,22 +4,16 @@
     var R = raiz.TempRioRotaCore || (typeof module !== 'undefined' ? require('../supabase/functions/_shared/rota-core.js') : null), dialogo;
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
     function data(s) { return new Date(s).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }); }
-    // Capacidade de escrita é distinta de leitura063 instalada: C revoga as mutações legadas.
-    function acoesHabilitadas() {
-        var partes = raiz.TempRio068Partes;
-        return !partes || (partes.Acoes063 !== false && partes.C !== true);
-    }
     function html(p, o) {
         o = o || {};
         var c = R.confirmacaoEntrega(o.confirmacoes, p.cd_pedido), rotulo = R.recebidoRotulo(p, o), acao = '';
-        if (acoesHabilitadas() && o.instalada && c && o.papel === 'admin') acao = 'desfazer';
-        else if (acoesHabilitadas() && o.instalada && o.podeMarcar && ['enviado', 'pronto_despacho'].indexOf(R.etapaEntrega(p, o)) >= 0) acao = 'confirmar';
+        if (o.instalada && c && o.papel === 'admin') acao = 'desfazer';
+        else if (o.instalada && o.podeMarcar && ['enviado', 'pronto_despacho'].indexOf(R.etapaEntrega(p, o)) >= 0) acao = 'confirmar';
         return (rotulo ? '<span class="rota-sub">' + esc(rotulo) + '</span>' : '') + (acao ?
             '<button type="button" class="adm-botao-fantasma no-print" aria-label="' + esc((acao === 'confirmar' ? 'Marcar pedido #' : 'Desfazer marcação do pedido #') + p.cd_pedido + (acao === 'confirmar' ? ' como recebido' : '')) + '" data-entrega063-cd="' + esc(p.cd_pedido) + '" data-entrega063-acao="' + acao + '">' +
             (acao === 'confirmar' ? 'Recebido' : 'Desfazer marcação') + '</button>' : '');
     }
     function executar(sb, acao, cd, id, motivo, requisicao) {
-        if (!acoesHabilitadas()) return Promise.reject(new Error('Recebimento manual indisponível neste painel.'));
         return sb.rpc(acao === 'desfazer' ? 'rota_063_desfazer_entrega' : 'rota_063_confirmar_entrega', acao === 'desfazer' ?
             { p_id: id } : { p_cd: cd, p_motivo: motivo || null, p_requisicao: requisicao }).then(function (r) {
             if (r.error) throw new Error(r.error.message || r.error.code);
@@ -29,7 +23,6 @@
     }
     function fechar() { if (dialogo) { dialogo.close(); dialogo.remove(); dialogo = null; } }
     function abrir(cd, acao, getOpts, opener) {
-        if (!acoesHabilitadas()) return;
         var o = getOpts(), c = R.confirmacaoEntrega(o.confirmacoes, cd);
         if (!o.instalada || (acao === 'desfazer' ? o.papel !== 'admin' || !c : !o.podeMarcar)) return;
         fechar();
@@ -47,7 +40,6 @@
         dlg.addEventListener('close', function () { if (opener && opener.isConnected) opener.focus(); });
         dlg.querySelector('form').onsubmit = function (ev) {
             ev.preventDefault();if (ocupado) return;
-            if (!acoesHabilitadas()) { fechar();return; }
             var atual = getOpts();
             if (atual.sessao !== o.sessao || atual.sb !== o.sb || (acao === 'desfazer' ? atual.papel !== 'admin' : !atual.podeMarcar)) { fechar();return; }
             ocupado = true;dlg.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
@@ -69,11 +61,6 @@
             }, function () { if (dlg.isConnected) dlg.querySelector('[data-entrega063-auditoria]').textContent = 'Não foi possível ler a auditoria.'; });
     }
     function ligar(el, getOpts) {
-        if (!acoesHabilitadas()) {
-            fechar();
-            el.querySelectorAll('[data-entrega063-cd]').forEach(function(b) { b.remove(); });
-            return;
-        }
         el.querySelectorAll('[data-entrega063-cd]').forEach(function (b) {
             b.onclick = function (e) { e.stopPropagation();abrir(Number(b.getAttribute('data-entrega063-cd')), b.getAttribute('data-entrega063-acao'), getOpts, b); };
             b.onkeydown = function (e) { e.stopPropagation(); };

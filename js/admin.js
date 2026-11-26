@@ -783,7 +783,7 @@
         if (window.TempRioWhats) window.TempRioWhats.sair(); // WhatsApp: esquece telefones/textos da conta
         if (window.TempRioUsuarios) window.TempRioUsuarios.sair(); // Usuários: esquece a lista (e qualquer senha na tela)
         pe.seq++; pe.carregado = false; pe.carregando = false;
-        pe.itens = []; pe.estadosH=null;pe.estadosDia=null; pe.canhotos = {}; pe.confirmacoes = {}; pe.entrega063 = false; pe.saidas = {}; pe.cfg = null;
+        pe.itens = []; pe.canhotos = {}; pe.confirmacoes = {}; pe.entrega063 = false; pe.saidas = {}; pe.cfg = null;
         if (window.TempRioEntregaAdmin) window.TempRioEntregaAdmin.fechar();
         pe.historico = { aberto: false, busca: '', pagina: 0 };
         cmp.seq++; cmp.carregado = false; cmp.carregando = false; cmp.por = null; cmp.brutas = null;
@@ -6957,7 +6957,6 @@
                confirmacoes: {}, entrega063: false, canhotos: {}, can052: false, podeMarcar: false, cfg: null, saidas: {},
                // 068-A: marcação de veículo por cliente/pedido visível e editável em Pedidos para admin / pode_marcar_rota
                veiculos: [], padroes: {}, porPedido: {}, gravandoVeic: {}, msgVeic: '',
-               estadosH: null, estadosDia: null,
                historico: { aberto: false, busca: '', pagina: 0 } };
     // Canhoto ativo (052) comprova recebimento; saiu/atendido sem canhoto são só faturamento.
     var peUltimaEntrega = '';
@@ -6969,7 +6968,6 @@
     function peRecebidoHtml(x) { return window.TempRioEntregaAdmin ? window.TempRioEntregaAdmin.html(x, peContextoEntrega()) : esc(window.TempRioRotaCore.recebidoRotulo(x, peContexto())); }
     if (typeof window.addEventListener === 'function') {
         window.addEventListener('temprio-entrega063', function () { if (sb && typeof papel !== 'undefined' && papel) carregarPedidosErp(); });
-        window.addEventListener('temprio-movimento068', function () { if (sb && typeof papel !== 'undefined' && papel) carregarPedidosErp(); });
         window.addEventListener('temprio-veiculo068', function (ev) {
             var det = ev && ev.detail;
             if (!det || det.origem === 'pedidos' || !pe.carregado) return;
@@ -7009,9 +7007,13 @@
         return id === 'caminhao' ? '#b45309' : '#2563eb';
     }
     function pePedidoJaSaiu(x) {
-        var hoje=window.TempRioRotaCore.diaSP(new Date());
-        var e=x && pe.estadosDia===hoje && pe.estadosH && pe.estadosH[x.cd_pedido];
-        return !e || typeof e.entregue!=='boolean' || e.entregue;
+        if (!x) return true;
+        var R = window.TempRioRotaCore;
+        var et = R.etapaEntrega(x, peContexto());
+        if (et === 'enviado' || et === 'recebido') return true;
+        var hoje = R.diaSP(new Date());
+        var dSaida = pe.saidas && pe.saidas[x.cd_pedido] ? String(pe.saidas[x.cd_pedido]).slice(0, 10) : null;
+        return !!(dSaida && hoje && dSaida <= hoje);
     }
     function peVeiculoEfetivo(x) {
         if (!x) return { veiculo: '', origem: null };
@@ -7028,7 +7030,7 @@
         var atual = info.veiculo;
         if (pePedidoJaSaiu(x)) {
             if (!atual) return '';
-            return '<div class="adm-pe-veic-leitura" data-pe-veiculo-leitura="' + esc(cd) + '" title="Histórico ou estado indisponível — veículo somente leitura">' +
+            return '<div class="adm-pe-veic-leitura" data-pe-veiculo-leitura="' + esc(cd) + '" title="Rota já saiu — veículo somente leitura">' +
                 '<span class="rota-veic-cor" style="--veic-cor:' + esc(peCorVeiculo(atual)) + '" aria-hidden="true"></span>' +
                 '<span>' + esc(peRotuloVeiculo(atual)) + '</span></div>';
         }
@@ -7085,8 +7087,8 @@
             return sb.rpc('rota_068_trocar_veiculo', { p_cd_pedido: cd, p_veiculo: novoVeiculo, p_escopo: 'pedido' });
         }).then(function (r) {
             if (r && !r.error) { r = r.data && r.data.status === 'ok' ? { data: r.data.resultado } : { error: { message: r.data && r.data.motivo || 'Resposta inválida. Atualize para conferir.' } }; }
-            if (pe.seq !== seq0) return;
             delete pe.gravandoVeic[cd];
+            if (pe.seq !== seq0) return;
             pe.msgVeic = r && r.error ? 'Não foi possível salvar o veículo: ' + (r.error.message || r.error.code) : '';
             if (r && !r.error && ['padrao', 'pedido'].indexOf(r.data) >= 0) {
                 var tipoRes = (r && (r.data === 'padrao' || r.data === 'pedido')) ? r.data : (!doc || pe.padroes[doc] ? 'pedido' : 'padrao');
@@ -7104,8 +7106,8 @@
                 }
             }
         }, function () {
-            if (pe.seq !== seq0) return;
             delete pe.gravandoVeic[cd];
+            if (pe.seq !== seq0) return;
             pe.msgVeic = 'Não foi possível salvar o veículo. Tente novamente.';
             peRedesenhar();
             var modal = document.getElementById('modal-detalhe-corpo');
@@ -7147,17 +7149,9 @@
 
     function peEfetivo() { return peOrigem || (dados.pedidos.length ? 'site' : 'erp'); }
 
-    function carregarPedidosErp(tentativaDia) {
-        tentativaDia=typeof tentativaDia==='number' ? tentativaDia : 0;
-        var diaLeitura=window.TempRioRotaCore.diaSP(new Date());
+    function carregarPedidosErp() {
         var seq = ++pe.seq;
         pe.carregando = true;
-        function repetirAposVirada(){
-            pe.estadosH=null;pe.estadosDia=null;pe.carregado=false;pe.carregando=false;
-            pe.msgVeic='O dia mudou. Atualizando o estado dos pedidos…';
-            if(tentativaDia>=1){pe.erro='O dia mudou durante a atualização. Tente novamente.';peRedesenhar();return Promise.resolve();}
-            return carregarPedidosErp(tentativaDia+1);
-        }
         function lerOpcional(fn) {
             try { return Promise.resolve(fn()).catch(function () { return { data: [] }; }); }
             catch (e) { return Promise.resolve({ data: [] }); }
@@ -7175,13 +7169,9 @@
         ]).then(function (rs) {
             if (seq !== pe.seq) return null;
             if (rs[0].error) return rs;
-            return Promise.all([window.TempRioRotaCore.coletarSaidas(sb, rs[0].data || []), window.TempRioRotaCore.coletarConfirmacoes(sb, rs[0].data || []),
-                window.TempRioMovimento ? window.TempRioMovimento.lerEstados(sb,(rs[0].data || []).map(function(x){return x.cd_pedido;})).then(function(m){return {mapa:m};},function(e){return {erro:e.message};}) : Promise.resolve({erro:'Estado dos pedidos indisponível.'})
-            ]).then(function (r) { rs.saidas = r[0]; rs.confirmacoes = r[1]; rs.estadosH=r[2]; return rs; });
+            return Promise.all([window.TempRioRotaCore.coletarSaidas(sb, rs[0].data || []), window.TempRioRotaCore.coletarConfirmacoes(sb, rs[0].data || [])]).then(function (r) { rs.saidas = r[0]; rs.confirmacoes = r[1]; return rs; });
         }).then(function (rs) {
             if (!rs || seq !== pe.seq) return;
-            // UIH-R1: todas as fontes/blocos pertencem ao dia de início, nunca ao dia da resposta.
-            if(window.TempRioRotaCore.diaSP(new Date())!==diaLeitura)return repetirAposVirada();
             pe.carregando = false;
             pe.canhotos = {}; pe.can052 = !!(rs[2] && !rs[2].error);
             if (pe.can052) (rs[2].data || []).forEach(function (c) { (pe.canhotos[c.cd_pedido] || (pe.canhotos[c.cd_pedido] = [])).push(c); });
@@ -7208,15 +7198,12 @@
                 pe.ausente = false; pe.erro = null; pe.carregado = true; pe.itens = rs[0].data || [];
                 pe.cfg = window.TempRioRotaCore.cfgDe(rs[4].data && rs[4].data[0]);
                 pe.saidas = rs.saidas || {}; pe.confirmacoes = rs.confirmacoes.porPedido; pe.entrega063 = rs.confirmacoes.instalada;
-                pe.estadosH=rs.estadosH && rs.estadosH.mapa || null;pe.estadosDia=diaLeitura;
-                pe.msgVeic=rs.estadosH && rs.estadosH.erro ? 'Não foi possível verificar quais pedidos estão no Histórico: '+rs.estadosH.erro : '';
                 var sy = rs[1] && !rs[1].error && rs[1].data && rs[1].data[0];
                 pe.coletado = sy && sy.coletado_em ? sy.coletado_em : null;
             }
             peRedesenhar();
         }).catch(function (e) {
             if (seq !== pe.seq) return;
-            if(window.TempRioRotaCore.diaSP(new Date())!==diaLeitura)return repetirAposVirada();
             pe.carregando = false; pe.carregado = false; pe.erro = String(e && e.message || e); pe.itens = []; peRedesenhar();
         });
     }
@@ -7608,7 +7595,6 @@
             var minuto = Math.floor(Date.now() / 60000);
             if (minuto === ultimoMinuto) return;
             ultimoMinuto = minuto;
-            if(pe.estadosDia && pe.estadosDia!==window.TempRioRotaCore.diaSP(new Date())){pe.estadosH=null;carregarPedidosErp();return;}
             if (peAssinaturaEntrega() !== peUltimaEntrega) peRedesenharQuadro();
         }, 1000);
         var sec = document.getElementById('painel-pedidoserp');

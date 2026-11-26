@@ -300,20 +300,19 @@ test('065 regressoes Sentinela UI065-R1..R6: versao base imutavel, rota fechada 
         return { cd_pedido: cd, dia, veiculo_id, ordem, removido: false };
     }
     function ler(a, versao, itens, semIni = ini) {
-        a.aplicarLeituraSemana065(semIni, { data: { status: 'ok', inicio: semIni, hoje: '2026-11-25', versao, itens, sem_saida: [], fechados: [], pedidos_estado:Object.fromEntries(a.st.pedidos.map(p=>[p.cd_pedido,{entregue:false,reprogramado:false}])) } });
+        a.aplicarLeituraSemana065(semIni, { data: { status: 'ok', inicio: semIni, hoje: '2026-11-25', versao, itens, sem_saida: [], fechados: [] } });
     }
     function todos(q) {
         return Array.from(q.dias).flatMap(d => Array.from(d.cartoes).map(c => ({ cd: c.cd_pedido, dia: d.dia })))
             .concat(Array.from(q.bandeja).map(c => ({ cd: c.cd_pedido, dia: null })));
     }
 
-    // R1/R3 mantêm os testes de rascunhos (sugestões). Movimentos H são pontuais, testados em068-movimento-calendario.
     // --- UI065-R1: versaoBase do rascunho imutavel + conflito sinalizado ao ler versao diferente (inclusive ida e volta de semana) ---
     {
         const a = criarApp();
         a.st.pedidos = [pedido(2001), pedido(2002)];
         ler(a, 1, [item(2001, qui)]);
-        const r = Q.aplicarAcao(Q.normalizarEstado({...a.montarDadosQuadro065(ini),movimentoAtomico:false}), { tipo: 'mover', cd_pedido: 2001, paraDia: sex });
+        const r = Q.aplicarAcao(Q.normalizarEstado(a.montarDadosQuadro065(ini)), { tipo: 'mover', cd_pedido: 2001, paraDia: sex });
         assert.equal(r.ok, true);
         a.st.semQuadroRasc[ini] = r.estado;
 
@@ -332,23 +331,37 @@ test('065 regressoes Sentinela UI065-R1..R6: versao base imutavel, rota fechada 
         assert.equal(payload.versao_base, 1, 'R1: payload nunca adota versao_base=2 sobre snapshot antigo');
     }
 
-    // --- H substitui UI065-R2 por decisão explícita do dono: 059/data/ERP não bloqueiam, só flag Histórico. ---
+    // --- UI065-R2: pedido em rota fechada de dia anterior (1535, 1531, 1536) nunca entra na bandeja nem em programacao futura ---
     {
-        const a=criarApp();
-        a.st.pedidos=[pedido(1535,{etapa:'atendido',dt_saida:'2026-11-23T10:00:00-03:00'}),pedido(1531),pedido(1536)];
-        a.st.diasSaida={1535:'2026-11-23',1531:'2026-11-24',1536:'2026-11-25'};
-        ler(a,1,[item(1535,seg)]);
-        let q=Q.normalizarEstado(a.montarDadosQuadro065(ini));
-        const p=q.dias.flatMap(d=>d.cartoes).find(c=>c.cd_pedido===1535);
-        assert.ok(p,'H: conserva origem passada mesmo com059');assert.equal(p.entregue,false);assert.equal(p.bloqueado,false);
-        let r=Q.aplicarAcao(q,{tipo:'mover',cd_pedido:1535,paraDia:qui,veiculo:'s10'});
-        assert.equal(r.ok,true);assert.equal(r.pontual.dia,qui,'H: mudança pede RPC pontual, não salva065 origem');
-        assert.equal(q.dias.flatMap(d=>d.cartoes).find(c=>c.cd_pedido===1535).dia,seg,'H: nada de mudança otimista antes da RPC');
-        assert.ok(q.bandeja.some(c=>c.cd_pedido===1531),'H: problema/recebidoHoje não somem só por059');
-        a.aplicarLeituraSemana065(ini,{data:{status:'ok',inicio:ini,hoje:'2026-11-25',versao:2,itens:[item(1535,seg)],sem_saida:[],fechados:[],pedidos_estado:{1535:{entregue:true},1531:{entregue:false},1536:{entregue:false}}}});
-        q=Q.normalizarEstado(a.montarDadosQuadro065(ini));
-        assert.ok(!todos(q).some(c=>c.cd===1535),'H: Histórico confirmado não entra em pendentes');
-        assert.equal(Q.aplicarAcao(q,{tipo:'mover',cd_pedido:1535,paraDia:qui,veiculo:'s10'}).ok,false,'H: recusa Histórico');
+        const a = criarApp();
+        a.st.pedidos = [
+            pedido(1535, { etapa: 'atendido', dt_pedido: '2026-11-23T09:00:00-03:00', dt_saida: '2026-11-23T10:00:00-03:00' }),
+            pedido(1531, { etapa: 'saiu', dt_pedido: '2026-11-24T09:00:00-03:00', dt_saida: '2026-11-24T10:00:00-03:00' }),
+            pedido(1536, { etapa: 'aberto', dt_pedido: '2026-11-25T07:00:00-03:00' }),
+            pedido(2005, { etapa: 'aberto', dt_pedido: '2026-11-25T09:30:00-03:00' })
+        ];
+        // Primeiro cria rascunho antes de st.diasSaida saber que #1535 saiu em 23/11
+        ler(a, 1, []);
+        let q0 = Q.normalizarEstado(a.montarDadosQuadro065(ini));
+        const rProg = Q.aplicarAcao(q0, { tipo: 'programar', cd_pedido: 1535, paraDia: qui, veiculo: 's10' });
+        assert.equal(rProg.ok, true);
+        a.st.semQuadroRasc[ini] = rProg.estado;
+
+        // Agora st.diasSaida informa as rotas fechadas ativas de 23/11, 24/11 e 25/11
+        a.st.diasSaida = { 1535: '2026-11-23', 1531: '2026-11-24', 1536: '2026-11-25' };
+        // Mesmo no rascunho ja aberto, #1535, #1531 e #1536 somem da bandeja e dos dias futuros (> hoje)
+        const qRasc = Q.normalizarEstado(a.montarDadosQuadro065(ini));
+        assert.ok(!qRasc.bandeja.some(c => [1535, 1531, 1536].includes(c.cd_pedido)), 'R2: ausentes da bandeja no rascunho');
+        assert.ok(!qRasc.dias.filter(d => d.dia > '2026-11-25').some(d => d.cartoes.some(c => [1535, 1531, 1536].includes(c.cd_pedido))), 'R2: ausentes de dias futuros no rascunho');
+        assert.deepEqual(Q.montarPayloadSalvar(qRasc).itens, [], 'R2: payload nao envia pedido de rota fechada anterior');
+
+        // E sem rascunho (quadro limpo), tambem nao entram na bandeja nem podem ser programados; se salvos em dia passado (seg 23/11), ficam so leitura
+        delete a.st.semQuadroRasc[ini];
+        ler(a, 1, [item(1535, seg, 's10', 1)]);
+        const quadro = Q.normalizarEstado(a.montarDadosQuadro065(ini));
+        assert.ok(!quadro.bandeja.some(c => [1535, 1531, 1536].includes(c.cd_pedido)), 'R2: ausentes da bandeja');
+        assert.equal(Q.aplicarAcao(quadro, { tipo: 'programar', cd_pedido: 1535, paraDia: qui, veiculo: 's10' }).ok, false, 'R2: recusa programar #1535');
+        assert.equal(Q.aplicarAcao(quadro, { tipo: 'mover', cd_pedido: 1535, deDia: seg, paraDia: qui, veiculo: 's10' }).ok, false, 'R2: dia passado permanece somente leitura');
     }
 
     // --- UI065-R3: marcar "nao sai nesta data" preserva rascunho dos demais dias/veiculos e devolve apenas afetados ---
@@ -356,7 +369,7 @@ test('065 regressoes Sentinela UI065-R1..R6: versao base imutavel, rota fechada 
         const a = criarApp();
         a.st.pedidos = [pedido(2001), pedido(2004)];
         ler(a, 1, [item(2001, qui, 's10', 1), item(2004, sab, 'caminhao', null)]);
-        let q = Q.normalizarEstado({...a.montarDadosQuadro065(ini),movimentoAtomico:false});
+        let q = Q.normalizarEstado(a.montarDadosQuadro065(ini));
         // Move #2001 de quinta para sexta no rascunho
         a.st.semQuadroRasc[ini] = Q.aplicarAcao(q, { tipo: 'mover', cd_pedido: 2001, paraDia: sex, veiculo: 's10' }).estado;
 
@@ -377,7 +390,7 @@ test('065 regressoes Sentinela UI065-R1..R6: versao base imutavel, rota fechada 
         const colSabReativado = qReativado.dias.find(d => d.dia === sab);
         assert.equal(colSabReativado.editavel, true, 'R3-A: coluna de sabado volta a ficar editavel apos reativar saida');
         assert.deepEqual(Object.keys(colSabReativado.semSaidaVeiculos), [], 'R3-A: semSaidaVeiculos limpo na coluna reativada');
-        const reprog2004 = Q.aplicarAcao({...qReativado,movimentoAtomico:false}, { tipo: 'programar', cd_pedido: 2004, paraDia: sab, veiculo: 'caminhao' });
+        const reprog2004 = Q.aplicarAcao(qReativado, { tipo: 'programar', cd_pedido: 2004, paraDia: sab, veiculo: 'caminhao' });
         assert.equal(reprog2004.ok, true, 'R3-A: permite reprogramar #2004 no sabado/caminhao imediatamente apos reativar');
         const mapaFinalR3 = todos(reprog2004.estado);
         assert.equal(mapaFinalR3.find(c => c.cd === 2001).dia, sex, 'R3-A: #2001 segue na sexta');

@@ -1,5 +1,4 @@
 'use strict';
-const rpcTabela = require('./rpc-paginada-fixture.js');
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const R=require('../functions/_shared/rota-core.js'),W=require('../functions/_shared/whatsapp-core.js'),UI=require('../../js/entrega-admin.js');
 const p={cd_pedido:1530,etapa:'atendido',dt_saida:'2026-11-23T17:00:00-03:00',dt_pedido:'2026-11-22T07:00:00-03:00',documento:'12000000001530',caixas_24:1,caixas_48:0,caixas_outras:0};
@@ -66,9 +65,9 @@ test('063 acao usa RPC separada e id de desfazer, nunca escreve canhoto',async()
 });
 test('063 coletores WA integram marca na rota/alertas/resumo',async()=>{
  const T={solidcon_pedidos_erp:[p],rota_config:[{hora_saida:'08:00'}],rota_pedido_veiculo:[{cd_pedido:1530,veiculo:'s10'}],rota_cliente_regras:[],rota_cliente_veiculo:[],rota_veiculos:[{id:'s10',nome:'S10',modo:'porta',ativo:true,dias_sem_saida:[0]}]};
- const sb={rpc(n){if(n==='rota_068_entregas')return rpcTabela([{...p,status:'entregue',data_entrega:'2026-11-25'}]);return Promise.resolve({data:n==='rota_063_ler_entregas'?[c]:n==='rota_050_ler'?null:[]});},from(t){let rows=T[t]||[];const q={select(){return q;},order(){return q;},range(){return q;},limit(){return q;},is(){return q;},eq(){return q;},in(){return q;},gte(){return q;},lt(){return q;},then(ok,bad){return Promise.resolve({data:rows}).then(ok,bad);}};return q;}};
+ const sb={rpc(n){return Promise.resolve({data:n==='rota_063_ler_entregas'?[c]:n==='rota_050_ler'?null:[]});},from(t){let rows=T[t]||[];const q={select(){return q;},order(){return q;},range(){return q;},limit(){return q;},is(){return q;},eq(){return q;},in(){return q;},gte(){return q;},lt(){return q;},then(ok,bad){return Promise.resolve({data:rows}).then(ok,bad);}};return q;}};
  const a=new Date(ctx.agora),d=await W.coletarRota(sb,a);assert.equal(d.confirmacoes[1530].id,10);
  assert.ok(W.montarRota(d,'s10',a,{}).vazio);
- const resumo=await W.coletarPedidosDia(sb,a);assert.equal(W.montarPedidosDia(resumo,a,{}).resumo.enviou,1,'068C/R1 legado063 ativo conta no dia da confirmacao');
+ const resumo=await W.coletarPedidosDia(sb,a);assert.equal(W.montarPedidosDia(resumo,a,{}).resumo.enviou,0);
  const alerta=await W.coletarAlertas(sb,a);assert.equal(alerta.parados.length,0);
 });
