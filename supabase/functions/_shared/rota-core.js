@@ -232,9 +232,9 @@
     }
     function confirmacaoEntrega(confirmacoes, cd) {
         var c = confirmacoes && confirmacoes[cd];
-        return c && !c.desfeito_em && isFinite(Date.parse(c.confirmado_em)) ? c : null;
+        return c && !c.reprogramado && !c.desfeito_em && isFinite(Date.parse(c.confirmado_em)) ? c : null;
     }
-    function recebidoEntrega(p, canhotos, cfg, confirmacoes) { return !!p && (temCanhoto(canhotos, p.cd_pedido) || !!confirmacaoEntrega(confirmacoes, p.cd_pedido) || legadoRecebido(p, cfg)); }
+    function recebidoEntrega(p, canhotos, cfg, confirmacoes) { if (p && confirmacoes && confirmacoes[p.cd_pedido] && confirmacoes[p.cd_pedido].reprogramado) return false; return !!p && (temCanhoto(canhotos, p.cd_pedido) || !!confirmacaoEntrega(confirmacoes, p.cd_pedido) || legadoRecebido(p, cfg)); }
     function instanteSaida(dia, cfg) {
         var min = cfg.horaSaida;
         return dia + 'T' + String(Math.floor(min / 60)).padStart(2, '0') + ':' + String(min % 60).padStart(2, '0') + ':00-03:00';
@@ -264,6 +264,7 @@
     }
     function recebidoEm(p, ctx) {
         ctx = ctx || {};
+        if (p && ctx.confirmacoes && ctx.confirmacoes[p.cd_pedido] && ctx.confirmacoes[p.cd_pedido].reprogramado) return null;
         var lista = ctx.canhotos && ctx.canhotos[p.cd_pedido], ultimo = null;
         if (Array.isArray(lista)) lista.forEach(function (c) {
             if (c && !c.substituido_em && isFinite(Date.parse(c.enviado_em)) && (!ultimo || Date.parse(c.enviado_em) > Date.parse(ultimo))) ultimo = c.enviado_em;
@@ -298,11 +299,13 @@
         return corrente.then(function () { return mapa; });
     }
     function enviadoAntigo(p, canhotos, hoje, cfg, ctx) {
+        if (p && ctx && ((ctx.reprogramados && ctx.reprogramados[p.cd_pedido]) || (ctx.confirmacoes && ctx.confirmacoes[p.cd_pedido] && ctx.confirmacoes[p.cd_pedido].reprogramado))) return false;
         var em = saidaEntrega(p, Object.assign({}, ctx, { cfg: cfg }));
         return etapaEnviada(p) && !recebidoEntrega(p, canhotos, cfg, ctx && ctx.confirmacoes) && !!em &&
             Date.parse(hoje + 'T12:00:00Z') - Date.parse(diaSP(em) + 'T12:00:00Z') > ROTA.ENVIADO_MAX_DIAS * 864e5;
     }
     function pendenteEntrega(p, canhotos, hoje, cfg, ctx) {
+        if (p && ctx && ((ctx.reprogramados && ctx.reprogramados[p.cd_pedido]) || (ctx.confirmacoes && ctx.confirmacoes[p.cd_pedido] && ctx.confirmacoes[p.cd_pedido].reprogramado))) return true;
         return !!p && ROTA.ETAPAS_PENDENTES.indexOf(p.etapa) >= 0 && !recebidoEntrega(p, canhotos, cfg, ctx && ctx.confirmacoes) &&
             (!etapaEnviada(p) || (!!faturadoEm(p) && !enviadoAntigo(p, canhotos, hoje, cfg, ctx)));
     }
@@ -319,7 +322,7 @@
                     }
                     if (r.data != null && !Array.isArray(r.data)) throw new Error('Resposta de entregas063 invalida');
                     (r.data || []).forEach(function (c) {
-                        if (!c || bloco.indexOf(c.cd_pedido) < 0 || c.desfeito_em || !isFinite(Date.parse(c.confirmado_em)) || !Number.isSafeInteger(c.id) || c.id < 1) throw new Error('Status de entrega063 invalido');
+                        if (!c || (c.reprogramado !== undefined && typeof c.reprogramado !== 'boolean') || bloco.indexOf(c.cd_pedido) < 0 || c.desfeito_em || !isFinite(Date.parse(c.confirmado_em)) || !Number.isSafeInteger(c.id) || c.id < 1) throw new Error('Status de entrega063 invalido');
                         mapa[c.cd_pedido] = c;
                     });
                 });

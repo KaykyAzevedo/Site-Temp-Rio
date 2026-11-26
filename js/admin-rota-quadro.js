@@ -24,6 +24,7 @@
     'use strict';
 
     var ehNode = typeof module !== 'undefined' && module.exports && typeof require === 'function';
+    var calendario = ehNode ? require('./admin-calendario.js') : raiz.TempRioCalendario;
     var core = ehNode ? require('../supabase/functions/_shared/rota-core.js') : raiz.TempRioRotaCore;
     var VOLUME_CX24 = (core && core.ROTA && core.ROTA.VOLUME_CX24) || 9;
     var ORIGEM_PADRAO = (core && core.ROTA && core.ROTA.ORIGEM) || [-23.0030, -43.3264];
@@ -231,7 +232,9 @@
             }
         }
         var bloqueadoProprio = !!(raw && (raw._bloqueadoProprio !== undefined ? raw._bloqueadoProprio : raw.bloqueado));
-        var bloqueado = bloqueadoProprio || (diaColuna != null && !editavelColuna);
+        var entregue = raw && typeof raw.entregue === 'boolean' ? raw.entregue : undefined;
+        // Contrato H: a origem só depende da flag canônica; a coluna governa o destino.
+        var bloqueado = entregue !== undefined ? entregue : bloqueadoProprio || (diaColuna != null && !editavelColuna);
         var cliente = String((raw && (raw.cliente || raw.nome)) || (raw && raw.c && raw.c.nome) || (raw && raw.p && raw.p.cliente_nome) || ('Pedido #' + cd));
         var bairro = String((raw && raw.bairro) || (raw && raw.c && raw.c.bairro) || '').trim();
         var cidade = String((raw && raw.cidade) || (raw && raw.c && raw.c.cidade) || '').trim();
@@ -268,7 +271,8 @@
             corVeiculo: v ? v.cor : (raw && raw.corVeiculo) || '#64748b',
             modoVeiculo: modoVeiculo,
             faltaMarcar: !vid || !!(raw && raw.faltaMarcar),
-            veiculoSomenteLeitura: !!(raw && raw.veiculoSomenteLeitura),
+            entregue: entregue,
+            veiculoSomenteLeitura: entregue !== undefined ? entregue : !!(raw && raw.veiculoSomenteLeitura),
             dia: diaColuna || (raw && raw.dia ? String(raw.dia).slice(0, 10) : null),
             diaAnterior: raw && raw.diaAnterior ? String(raw.diaAnterior).slice(0, 10) : null,
             ordem: raw && raw.ordem != null ? Number(raw.ordem) : null,
@@ -309,7 +313,7 @@
             var cVeic = (c && (c.veiculo || c.veiculo_id)) || '';
             var vObj = cVeic ? frota.porId[cVeic] : null;
             var saiVeicCard = !vObj || veiculoSaiNoDia(vObj, iso, feriado, semSaidaVeiculos);
-            var editavelCard = podeMexerDia && saiVeicCard && !(hoje && iso <= hoje) && !fechada && !feriado;
+            var editavelCard = podeMexerDia && saiVeicCard && !(hoje && (d.movimentoAtomico ? iso < hoje : iso <= hoje)) && !fechada && !feriado;
             var norm = normalizarCartao(c, frota, iso, editavelCard, hoje);
             if (norm.modoVeiculo === 'cd_ceasa') {
                 norm.ordem = null;
@@ -850,7 +854,7 @@
         });
 
         var dias = diasBrutos.map(function (col) {
-            return recalcularDia(col, frota, veiculoAtual, hoje, podeEditar && !d.salvando, fechadosSet, semSaidaPorDia, temSemSaidaCanonico);
+            return recalcularDia(Object.assign({},col,{movimentoAtomico:!!d.movimentoAtomico}), frota, veiculoAtual, hoje, podeEditar && !d.salvando, fechadosSet, semSaidaPorDia, temSemSaidaCanonico);
         });
 
         var bandejaTodos = (d.bandeja || []).map(function (c) {
@@ -902,6 +906,8 @@
             inicio: inicio,
             fim: fim,
             hoje: hoje,
+            movimentoAtomico: !!d.movimentoAtomico,
+            calendarioH: d.calendarioH || {},
             origem: Array.isArray(d.origem) && d.origem.length >= 2 ? d.origem : ORIGEM_PADRAO,
             semanaAtualIni: segundaDe(hoje),
             proximaSemanaIni: somaDias(segundaDe(hoje), 7),
@@ -960,7 +966,7 @@
         st.dias.forEach(function (col) {
             var ordPorVeic = Object.create(null);
             (col.cartoes || []).forEach(function (c) {
-                if (!c || !c.cd_pedido || vistos[c.cd_pedido]) return;
+                if (!c || !c.cd_pedido || c.entregue===true || vistos[c.cd_pedido]) return;
                 var vid = c.veiculo || (st.veiculoAtual !== 'todos' ? st.veiculoAtual : 's10');
                 var v = st.veiculosPorId[vid];
                 if (!diaAceitaSalvar(col, v, st)) return;
@@ -982,7 +988,7 @@
         });
 
         (st.bandeja || []).forEach(function (c) {
-            if (!c || !c.cd_pedido || vistos[c.cd_pedido]) return;
+            if (!c || !c.cd_pedido || c.entregue===true || vistos[c.cd_pedido]) return;
             if (c.origemDia === 'removido' || c.motivoBandeja === 'removido') {
                 var vid = c.veiculo || (st.veiculoAtual !== 'todos' ? st.veiculoAtual : 's10');
                 var v = st.veiculosPorId[vid];
@@ -1066,13 +1072,23 @@
             }
         }
         if (!cartao) return { ok: false, motivo: 'Pedido não encontrado no quadro.', estado: st };
-        if (cartao.bloqueado || (diaOrigemObj && !diaOrigemObj.editavel)) {
-            return { ok: false, motivo: 'Pedido em dia fechado/passado ou já entregue não pode ser movido.', estado: st };
+        if (cartao.bloqueado || (cartao.entregue === undefined && diaOrigemObj && !diaOrigemObj.editavel)) {
+            return { ok: false, motivo: 'Pedido no Histórico não pode ser movido.', estado: st };
         }
         if (tipo === 'trocar_veiculo' && cartao.veiculoSomenteLeitura) {
             return { ok: false, motivo: 'O veículo deste pedido está somente leitura após a saída.', estado: st };
         }
 
+        if (st.movimentoAtomico && ['programar','mover','remover'].indexOf(tipo) >= 0 && !(tipo==='mover' && diaOrigemObj && String(acao.paraDia || acao.dia || '')===diaOrigemObj.dia && acao.ordem!=null)) {
+            if (typeof cartao.entregue !== 'boolean') return {ok:false,motivo:'Estado do pedido indisponível. Atualize para conferir.',estado:st};
+            var destino = tipo === 'remover' ? null : String(acao.paraDia || acao.dia || '').slice(0,10);
+            var vidDestino = String(acao.veiculo || cartao.veiculo || '');
+            if (destino) {
+                var erroDestino = motivoDestino(destino, vidDestino, st);
+                if (erroDestino) return {ok:false,motivo:erroDestino,estado:st};
+            }
+            return {ok:true,estado:st,acao:acao,pontual:{cd_pedido:cd,dia:destino,veiculo:vidDestino || null}};
+        }
         if (tipo === 'remover') {
             if (daBandeja || !diaOrigemObj) {
                 return { ok: false, motivo: 'O pedido já está na bandeja.', estado: st };
@@ -1343,6 +1359,23 @@
         return chips.length ? '<div class="rq-dia-sugestoes">' + chips.join('') + '</div>' : '';
     }
 
+    function motivoDestino(iso, vid, st) {
+        if (!calendario || !calendario.somar(iso,0)) return 'Data inválida.';
+        if (st.hoje && iso <= st.hoje) return 'Escolha uma data futura.';
+        if (diaSemana(iso) === 0) return 'Domingo sem saída.';
+        var disponibilidade=st.calendarioH && st.calendarioH[iso.slice(0,7)];
+        var col = st.dias.filter(function(d){return d.dia === iso;})[0];
+        if(st.movimentoAtomico && !col && !disponibilidade)return 'Consulte a disponibilidade deste mês.';
+        if(disponibilidade && disponibilidade.fechados.indexOf(iso)>=0)return 'Dia fechado.';
+        if (col && !col.editavel) return 'Este dia não aceita programação.';
+        var v = st.veiculosPorId[vid];
+        var feriado = !!(col && col.feriado) || !!(disponibilidade && disponibilidade.feriados.indexOf(iso)>=0);
+        var semSaida = col ? col.semSaidaVeiculos : {};
+        if(disponibilidade)disponibilidade.sem_saida.forEach(function(x){if(x.dia===iso)semSaida=Object.assign({},semSaida,{[x.veiculo_id]:x.motivo || true});});
+        if (!v || !veiculoSaiNoDia(v,iso,feriado,semSaida)) return 'Veículo sem saída neste dia.';
+        return '';
+    }
+
     function htmlMenuProgramar(c, st, totalDiaVeic) {
         if (!st.podeEditar || st.salvando || c.bloqueado) return '';
         var rotuloBtn = c.dia ? 'Mover / tirar…' : 'Programar para…';
@@ -1368,13 +1401,17 @@
                 '<span class="rq-menu-sub">' + esc(motivo) + '</span></button>';
         }).join('');
 
+        if (st.movimentoAtomico && calendario) {
+            opcoesDias = calendario.html({chave:String(c.cd_pedido),valor:null,hoje:st.hoje,min:somaDias(st.hoje,1),
+                indisponivel:function(iso){return motivoDestino(iso,c.veiculo,st);}});
+        }
         var btnRemover = c.dia
             ? '<button type="button" class="rq-menu-item is-remover" data-rq-remover="' + esc(c.cd_pedido) + '" data-rq-de-dia="' + esc(c.dia) + '">' +
               '<span><i class="fa-solid fa-arrow-turn-down" aria-hidden="true"></i> Tirar do dia (bandeja)</span></button>'
             : '';
 
         var botoesOrdem = '';
-        if (c.dia && c.modoVeiculo !== 'cd_ceasa' && c.ordem != null) {
+        if (c.dia && c.modoVeiculo !== 'cd_ceasa' && c.ordem != null && (!st.movimentoAtomico || st.dias.some(function(d){return d.dia===c.dia && d.editavel;}))) {
             botoesOrdem = '<div class="rq-ordem-botoes" role="group" aria-label="Ordem do pedido #' + esc(c.cd_pedido) + '">' +
                 '<button type="button" class="rq-btn-ordem" data-rq-ordem="-1" data-rq-cd="' + esc(c.cd_pedido) + '" title="Subir na ordem do dia" aria-label="Subir pedido #' + esc(c.cd_pedido) + ' na ordem"' + (c.ordem <= 1 ? ' disabled' : '') + '><span aria-hidden="true">↑</span></button>' +
                 '<button type="button" class="rq-btn-ordem" data-rq-ordem="1" data-rq-cd="' + esc(c.cd_pedido) + '" title="Descer na ordem do dia" aria-label="Descer pedido #' + esc(c.cd_pedido) + ' na ordem"' + (totalDiaVeic && c.ordem >= totalDiaVeic ? ' disabled' : '') + '><span aria-hidden="true">↓</span></button>' +
@@ -1480,7 +1517,8 @@
         if (st.diaDestacadoMapa === col.dia) classes.push('is-mapa-destaque');
 
         var seloModo = '';
-        if (col.leituraMotivo === 'passado') seloModo = '<span class="rq-dia-selo-modo">Passado · leitura</span>';
+        if (st.movimentoAtomico && col.dia <= st.hoje) seloModo = '<span class="rq-dia-selo-modo">'+(col.dia === st.hoje ? 'Hoje' : 'Passado')+'</span>';
+        else if (col.leituraMotivo === 'passado') seloModo = '<span class="rq-dia-selo-modo">Passado · leitura</span>';
         else if (col.leituraMotivo === 'hoje' || col.leituraMotivo === 'fechada') seloModo = '<span class="rq-dia-selo-modo is-hoje">' + (col.dia === st.hoje ? 'Hoje · leitura' : 'Fechado · leitura') + '</span>';
         else if (col.leituraMotivo === 'feriado') seloModo = '<span class="rq-dia-selo-modo">Feriado</span>';
         else if (col.leituraMotivo === 'sem_saida') seloModo = '<span class="rq-dia-selo-modo">Sem saída</span>';
@@ -1966,6 +2004,9 @@
                 render(foco);
                 return r;
             }
+            if (r.pontual && typeof cbs.onMoverPedido === 'function') {
+                cbs.onMoverPedido(r.pontual,st); return r;
+            }
             st = r.estado;
             render(foco);
             if (acao.tipo === 'programar' && typeof cbs.onProgramar === 'function') cbs.onProgramar(acao, st);
@@ -1988,6 +2029,18 @@
             if (typeof cbs.onChange === 'function') cbs.onChange(st, acao);
             return r;
         }
+
+        if (calendario) calendario.ligar(alvo,function(chave){
+            var cartao=null;
+            st.dias.forEach(function(d){d.cartoes.forEach(function(c){if(c.cd_pedido===Number(chave))cartao=c;});});
+            st.bandeja.forEach(function(c){if(c.cd_pedido===Number(chave))cartao=c;});
+            return {hoje:st.hoje,min:somaDias(st.hoje,1),carregarMes:function(iso){
+                if(typeof cbs.onLerCalendario!=='function')return Promise.reject(new Error('Disponibilidade indisponível. Atualize a semana.'));
+                return cbs.onLerCalendario(iso).then(function(dados){st.calendarioH[iso.slice(0,7)]=dados;});
+            },desabilitado:!st.podeEditar || st.salvando || !cartao || cartao.bloqueado,
+                indisponivel:function(iso){return cartao ? motivoDestino(iso,cartao.veiculo,st) : 'Pedido indisponível';},
+                selecionar:function(iso){if(cartao)executar({tipo:cartao.dia?'mover':'programar',cd_pedido:cartao.cd_pedido,paraDia:iso,dia:iso,veiculo:cartao.veiculo});}};
+        });
 
         alvo.addEventListener('toggle', function (ev) {
             var menu = ev.target && ev.target.closest && ev.target.closest('details.rq-menu');
@@ -2393,6 +2446,7 @@
         normalizarEstado: normalizarEstado,
         montarPayloadSalvar: montarPayloadSalvar,
         aplicarAcao: aplicarAcao,
+        motivoDestino: motivoDestino,
         aplicarSugestoesSemana: aplicarSugestoesSemana,
         gerarStubSugestoes066: gerarStubSugestoes066,
         normalizarSugestoes066: normalizarSugestoes066,

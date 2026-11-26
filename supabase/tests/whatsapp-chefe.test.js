@@ -1,6 +1,7 @@
 // WA-PED: pedidos_do_dia (rotina pedidos_dia) e rota_paradas + rota_sugerida (rotina rota_chefe). Dados FICTÍCIOS.
 // Rodar (da raiz do repo): node --test supabase/tests/whatsapp-chefe.test.js
 'use strict';
+const rpcTabela = require('./rpc-paginada-fixture.js');
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const W = require('../functions/_shared/whatsapp-core.js');
@@ -49,7 +50,7 @@ test('pedidos_do_dia: Entrou dt_pedido, pronto conferido, Enviou pela primeira s
         ped('atendido', { dt_saida: '2026-11-23T07:00:00-03:00', dt_atendido: '2026-11-24T09:00:00-03:00' }),   // entregue amanhã (fora, data da coluna)
         ped('aberto', { dt_pedido: '2026-11-23T10:00:00-03:00', cliente_tipo: 'cpf', documento: null, cliente_nome: null, valor_centavos: 3000 })   // PF: entrou, nome neutro
     ];
-    const m = confere(W.montarPedidosDia({ saidas: Object.fromEntries(ps.filter(R.etapaEnviada).map(p=>[p.cd_pedido,R.diaSP(R.faturadoEm(p))])), pedidos: ps, nomes: { [ps[0].documento]: { nome: 'PETRO FRUTAS' } }, coletado: '2026-11-23T19:58:00Z' }, AG_PED, { template: 'pedidos_do_dia', painelUrl: URL_P }));
+    const m = confere(W.montarPedidosDia({ entregas: [ps[5],ps[6],ps[8]].map(p=>({...p,status:'entregue',data_entrega:'2026-11-23'})), saidas: Object.fromEntries(ps.filter(R.etapaEnviada).map(p=>[p.cd_pedido,R.diaSP(R.faturadoEm(p))])), pedidos: ps, nomes: { [ps[0].documento]: { nome: 'PETRO FRUTAS' } }, coletado: '2026-11-23T19:58:00Z' }, AG_PED, { template: 'pedidos_do_dia', painelUrl: URL_P }));
     const p = m.partes[0];
     assert.equal(p.template, 'pedidos_do_dia');
     assert.deepEqual(m.resumo, { entrou: 4, pronto: 2, enviou: 3 });
@@ -78,7 +79,7 @@ test('pedidos_do_dia: pior caso — 5000 pedidos, nomes gigantes com quebra/tab,
     const ps = [];
     for (let i = 0; i < 5000; i++) ps.push(ped(['aberto', 'conferido', 'saiu', 'atendido'][i % 4], { dt_pedido: '2026-11-23T10:00:00-03:00', dt_conferencia: '2026-11-23T11:00:00-03:00',
         dt_saida: i % 4 === 2 ? '2026-11-23T07:00:00-03:00' : '2026-11-23T12:00:00-03:00', dt_atendido: '2026-11-23T13:00:00-03:00', documento: String(40000000000000 + i), cliente_nome: longo + i, valor_centavos: 999999999999999, caixas_24: 99999, caixas_48: 99999, caixas_outras: 99999 }));
-    const m = confere(W.montarPedidosDia({ saidas: Object.fromEntries(ps.filter(R.etapaEnviada).map(p=>[p.cd_pedido,R.diaSP(R.faturadoEm(p))])), pedidos: ps, nomes: {}, coletado: null }, AG_PED, { painelUrl: 'https://' + 'sub.'.repeat(40) + 'exemplo.test' }));
+    const m = confere(W.montarPedidosDia({ entregas: ps.filter(R.etapaEnviada).map(p=>({...p,status:'entregue',data_entrega:'2026-11-23'})), saidas: Object.fromEntries(ps.filter(R.etapaEnviada).map(p=>[p.cd_pedido,R.diaSP(R.faturadoEm(p))])), pedidos: ps, nomes: {}, coletado: null }, AG_PED, { painelUrl: 'https://' + 'sub.'.repeat(40) + 'exemplo.test' }));
     for (const k of [2, 4, 6]) assert.match(m.partes[0].params[k], / · \+\d+$/, 'o "+N" nunca é cortado');
 });
 
@@ -207,10 +208,10 @@ test('gerar: pedidos_dia e rota_chefe chamam a coleta certa (cliente supabase fa
                     range() { return q; }, then(ok, ko) { lidas.push(tabela); return Promise.resolve({ data: tabela === 'rota_veiculos' ? FROTA : [], error: null }).then(ok, ko); } };
         return q;
     }
-    const sb = { from: consulta, rpc() { return Promise.resolve({ data: [], error: null }); } };
+    const sb = { from: consulta, rpc(n) { if(n==='rota_068_entregas'){lidas.push(n);return rpcTabela([]);}return Promise.resolve({ data: [], error: null }); } };
     const a = await W.gerar(sb, 'pedidos_dia', AG_PED, { template: 'pedidos_do_dia' });
     assert.equal(a.partes[0].modelo, 'pedidos_do_dia');
-    assert.ok(lidas.includes('solidcon_pedidos_erp') && lidas.includes('solidcon_pedidos_erp_sync'));
+    assert.ok(lidas.includes('solidcon_pedidos_erp') && lidas.includes('solidcon_pedidos_erp_sync') && lidas.includes('rota_068_entregas'));
     lidas.length = 0;
     const b = await W.gerar(sb, 'rota_chefe', AG, { template: 'rota_sugerida' });
     assert.equal(b.partes.length, 1); assert.equal(b.partes[0].modelo, 'rota_sugerida');

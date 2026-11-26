@@ -1,0 +1,271 @@
+-- Corpos065/A aprovados com deltasH; gerados offline, nunca publicados automaticamente.
+create or replace function public.rota_065_salvar_semana(p_inicio date, p_versao_base bigint, p_itens jsonb, p_veiculo text default null)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_versao bigint;
+  v_cd bigint;
+  v_n integer; v_068_antes jsonb; v_068_cd bigint;
+  v_campos constant text[] := array['cd_pedido', 'dia', 'veiculo_id', 'ordem', 'removido'];
+begin
+  if not coalesce(public.pode_marcar_rota(), false) then
+    raise exception 'sem permissao para salvar o plano' using errcode = '42501';
+  end if;
+  perform pg_catalog.pg_advisory_xact_lock(5100,5201);perform pg_catalog.pg_advisory_xact_lock(5100,5001);
+  perform pg_catalog.pg_advisory_xact_lock(5100, 4601);
+  -- Forma: lista de objetos com exatamente as 5 chaves e os tipos do contrato.
+  if p_inicio is null or extract(isodow from p_inicio) <> 1 or p_versao_base is null or p_versao_base < 0
+     or p_itens is null or pg_catalog.jsonb_typeof(p_itens) <> 'array' or pg_catalog.jsonb_array_length(p_itens) > 3000
+     or exists (select 1 from pg_catalog.jsonb_array_elements(p_itens) e
+                 where pg_catalog.jsonb_typeof(e) <> 'object' or not (e ?& v_campos)
+                    or exists (select 1 from pg_catalog.jsonb_object_keys(e) k where not (k = any (v_campos)))
+                    or pg_catalog.jsonb_typeof(e -> 'cd_pedido') <> 'number' or (e ->> 'cd_pedido') !~ '^[1-9][0-9]{0,11}$'
+                    or pg_catalog.jsonb_typeof(e -> 'dia') <> 'string' or (e ->> 'dia') !~ '^\d{4}-\d{2}-\d{2}$'
+                    or pg_catalog.jsonb_typeof(e -> 'veiculo_id') <> 'string'
+                    or pg_catalog.jsonb_typeof(e -> 'removido') <> 'boolean'
+                    or (pg_catalog.jsonb_typeof(e -> 'ordem') <> 'null'
+                        and (pg_catalog.jsonb_typeof(e -> 'ordem') <> 'number' or (e ->> 'ordem') !~ '^[1-9][0-9]{0,5}$'))) then
+    return pg_catalog.jsonb_build_object('status', 'erro', 'motivo', 'parametro_invalido');
+  end if;
+  begin
+    if exists (select 1 from pg_catalog.jsonb_array_elements(p_itens) e where (e ->> 'dia')::date not between p_inicio and p_inicio + 5)
+       or (p_veiculo is not null and exists (select 1 from pg_catalog.jsonb_array_elements(p_itens) e where e ->> 'veiculo_id' is distinct from p_veiculo)) then
+      return pg_catalog.jsonb_build_object('status', 'erro', 'motivo', 'parametro_invalido');
+    end if;
+  exception when others then
+    return pg_catalog.jsonb_build_object('status', 'erro', 'motivo', 'parametro_invalido');
+  end;
+  select (e ->> 'cd_pedido')::bigint into v_cd from pg_catalog.jsonb_array_elements(p_itens) e
+   group by (e ->> 'cd_pedido')::bigint having count(*) > 1 order by 1 limit 1;
+  if found then
+    return pg_catalog.jsonb_build_object('status', 'erro', 'motivo', 'pedido_duplicado', 'cd_pedido', v_cd);
+  end if;
+  if (p_veiculo is not null and not exists (select 1 from public.rota_veiculos v where v.id = p_veiculo and v.ativo))
+     or exists (select 1 from pg_catalog.jsonb_array_elements(p_itens) e
+                 where not exists (select 1 from public.rota_veiculos v where v.id = e ->> 'veiculo_id' and v.ativo)) then
+    return pg_catalog.jsonb_build_object('status', 'erro', 'motivo', 'veiculo_invalido');
+  end if;
+  select (e->>'cd_pedido')::bigint into v_cd from pg_catalog.jsonb_array_elements(p_itens) e where public.rota_068_pedido_entregue((e->>'cd_pedido')::bigint) limit 1;
+  if found then return pg_catalog.jsonb_build_object('status','erro','motivo','pedido_historico','cd_pedido',v_cd);end if;
+  select (e ->> 'cd_pedido')::bigint into v_cd from pg_catalog.jsonb_array_elements(p_itens) e
+   where not public.rota_065_dia_editavel((e ->> 'dia')::date) order by 1 limit 1;
+  if found then
+    return pg_catalog.jsonb_build_object('status', 'erro', 'motivo', 'dia_bloqueado', 'cd_pedido', v_cd);
+  end if;
+  -- B065-R3: a ORIGEM tambem conta. Pedido ja salvo em linha travada (hoje, fechado, passado desta semana, veiculo
+  -- inativo/sem saida) nao e movido pelo ON CONFLICT: recusa tudo, com o mesmo motivo e origem:true.
+  select p.cd_pedido into v_cd from pg_catalog.jsonb_array_elements(p_itens) e
+    join public.rota_plano_semana p on p.cd_pedido = (e ->> 'cd_pedido')::bigint
+   where public.rota_068_pedido_entregue(p.cd_pedido) order by 1 limit 1;
+  if found then
+    return pg_catalog.jsonb_build_object('status', 'erro', 'motivo', 'pedido_historico', 'cd_pedido', v_cd, 'origem', true);
+  end if;
+  select (e ->> 'cd_pedido')::bigint into v_cd from pg_catalog.jsonb_array_elements(p_itens) e
+   where not public.rota_065_sai(e ->> 'veiculo_id', (e ->> 'dia')::date) order by 1 limit 1;
+  if found then
+    return pg_catalog.jsonb_build_object('status', 'erro', 'motivo', 'dia_sem_saida', 'cd_pedido', v_cd);
+  end if;
+  select (e ->> 'cd_pedido')::bigint into v_cd from pg_catalog.jsonb_array_elements(p_itens) e
+   where not exists (select 1 from public.solidcon_pedidos_erp p where p.cd_pedido = (e ->> 'cd_pedido')::bigint) order by 1 limit 1;
+  if found then
+    return pg_catalog.jsonb_build_object('status', 'erro', 'motivo', 'pedido_inexistente', 'cd_pedido', v_cd);
+  end if;
+  -- Ordem: removido e CD/CEASA = null; porta = 1..N sem buracos por (dia, veiculo).
+  select (e ->> 'cd_pedido')::bigint into v_cd from pg_catalog.jsonb_array_elements(p_itens) e
+    join public.rota_veiculos v on v.id = e ->> 'veiculo_id'
+   where ((e ->> 'removido')::boolean or v.modo = 'cd_ceasa') and e -> 'ordem' <> 'null'::jsonb
+      or not (e ->> 'removido')::boolean and v.modo = 'porta' and e -> 'ordem' = 'null'::jsonb
+   order by 1 limit 1;
+  if found then
+    return pg_catalog.jsonb_build_object('status', 'erro', 'motivo', 'ordem_invalida', 'cd_pedido', v_cd);
+  end if;
+  if exists (select 1 from (
+        select count(*) n, count(distinct (e ->> 'ordem')::integer) d, max((e ->> 'ordem')::integer) mx
+          from pg_catalog.jsonb_array_elements(p_itens) e join public.rota_veiculos v on v.id = e ->> 'veiculo_id'
+         where v.modo = 'porta' and not (e ->> 'removido')::boolean
+         group by e ->> 'dia', e ->> 'veiculo_id') g where g.n <> g.d or g.mx <> g.n) then
+    return pg_catalog.jsonb_build_object('status', 'erro', 'motivo', 'ordem_invalida');
+  end if;
+  -- Concorrencia: so grava sobre a versao que o quadro leu (o lock acima serializa com 046/047/065).
+  v_versao := coalesce((select s.versao from public.rota_065_semana s where s.inicio = p_inicio), 0);
+  if v_versao <> p_versao_base then
+    return pg_catalog.jsonb_build_object('status', 'erro', 'motivo', 'versao_antiga', 'versao', v_versao);
+  end if;
+  -- B065-R3: so linha editavel COMPLETA (dia + veiculo ativo que sai); as outras ficam como estao.
+  select coalesce(jsonb_object_agg(p.cd_pedido,jsonb_build_object('dia',p.dia,'veiculo_id',p.veiculo_id,'removido',p.removido)),'{}'::jsonb) into v_068_antes from public.rota_plano_semana p where (p.dia between p_inicio and p_inicio+5 and (p_veiculo is null or p.veiculo_id=p_veiculo)) or p.cd_pedido in(select (e->>'cd_pedido')::bigint from jsonb_array_elements(p_itens) e);
+  delete from public.rota_plano_semana p
+   where p.dia between p_inicio and p_inicio + 5 and public.rota_065_linha_editavel(p.dia, p.veiculo_id) and not public.rota_068_pedido_entregue(p.cd_pedido)
+     and (p_veiculo is null or p.veiculo_id = p_veiculo);
+  insert into public.rota_plano_semana as r (cd_pedido, dia, veiculo_id, ordem, removido)
+  select (e ->> 'cd_pedido')::bigint, (e ->> 'dia')::date, e ->> 'veiculo_id', (e ->> 'ordem')::integer, (e ->> 'removido')::boolean
+    from pg_catalog.jsonb_array_elements(p_itens) e
+  on conflict (cd_pedido) do update set dia = excluded.dia, veiculo_id = excluded.veiculo_id, ordem = excluded.ordem, removido = excluded.removido;
+  get diagnostics v_n = row_count;
+  for v_068_cd in select distinct cd from (select key::bigint cd from jsonb_each(v_068_antes) union all select (e->>'cd_pedido')::bigint from jsonb_array_elements(p_itens) e) z loop
+   if coalesce(v_068_antes->v_068_cd::text,'null'::jsonb) is distinct from coalesce((select jsonb_build_object('dia',p.dia,'veiculo_id',p.veiculo_id,'removido',p.removido) from public.rota_plano_semana p where p.cd_pedido=v_068_cd),'null'::jsonb) and not public.rota_068_pedido_entregue(v_068_cd) then
+    perform public.rota_068_reprogramar_explicito(v_068_cd,(select case when not p.removido then p.dia end from public.rota_plano_semana p where p.cd_pedido=v_068_cd),(select p.veiculo_id from public.rota_plano_semana p where p.cd_pedido=v_068_cd));
+   end if;
+  end loop;
+  perform public.rota_065_subir(p_inicio);   -- sobe mesmo salvando igual/vazio: quem leu antes relê
+  return pg_catalog.jsonb_build_object('status', 'ok', 'itens', v_n,
+    'versao', (select s.versao from public.rota_065_semana s where s.inicio = p_inicio));
+end;
+$$;
+create or replace function public.rota_047_salvar_semana(p_inicio date, p_veiculo text, p_itens jsonb)
+returns integer
+language plpgsql
+volatile
+security invoker
+set search_path = pg_catalog, pg_temp
+as $$
+declare
+  v_n integer;
+  v_falta bigint;
+  v_dias smallint[];
+begin
+  if not public.pode_marcar_rota() then
+    raise exception 'sem permissao para salvar o plano' using errcode = '42501';
+  end if;
+  -- Trava comum das gravacoes do plano (a mesma da 046), ANTES de ler/apagar a semana.
+  perform pg_catalog.pg_advisory_xact_lock(5100,5201);perform pg_catalog.pg_advisory_xact_lock(5100,5001);
+  perform pg_catalog.pg_advisory_xact_lock(5100, 4601);
+  select v.dias_sem_saida into v_dias from public.rota_veiculos v where v.id = p_veiculo and v.ativo and v.modo = 'porta';
+  if not found or p_inicio is null or extract(isodow from p_inicio) <> 1 or p_itens is null
+     or jsonb_typeof(p_itens) <> 'array' or jsonb_array_length(p_itens) > 3000 then
+    raise exception 'parametro invalido' using errcode = '22023';
+  end if;
+  begin
+    select count(*) filter (where i.cd_pedido is null or i.dia is null or i.dia < p_inicio or i.dia > p_inicio + 5
+                                  or extract(dow from i.dia)::smallint = any (v_dias)),
+           count(*) - count(distinct i.cd_pedido)
+      into v_n, v_falta
+      from jsonb_to_recordset(p_itens) as i(cd_pedido bigint, dia date);
+  exception when others then
+    raise exception 'parametro invalido' using errcode = '22023';
+  end;
+  if v_n > 0 or v_falta > 0 then
+    raise exception 'parametro invalido' using errcode = '22023';
+  end if;
+  select i.cd_pedido into v_falta from jsonb_to_recordset(p_itens) as i(cd_pedido bigint, dia date)
+   where not exists (select 1 from public.solidcon_pedidos_erp e where e.cd_pedido = i.cd_pedido)
+   order by i.cd_pedido limit 1;
+  if found then
+    raise exception 'pedido % nao encontrado', v_falta using errcode = 'P0002';
+  end if;
+  delete from public.rota_plano_semana p
+   where p.veiculo_id = p_veiculo and p.dia between p_inicio and p_inicio + 5
+     and public.rota_065_linha_editavel(p.dia, p.veiculo_id) and not public.rota_068_pedido_entregue(p.cd_pedido);
+  insert into public.rota_plano_semana as r (cd_pedido, dia, veiculo_id, ordem, removido)
+    select k.cd_pedido, k.dia, p_veiculo, (row_number() over (partition by k.dia order by k.pos))::integer, false
+      from (select i.cd_pedido, i.dia, i.pos
+              from rows from (jsonb_to_recordset(p_itens) as (cd_pedido bigint, dia date)) with ordinality as i(cd_pedido, dia, pos)
+             where public.rota_065_linha_editavel(i.dia, p_veiculo)
+               and not exists (select 1 from public.rota_plano_semana o
+                                where o.cd_pedido = i.cd_pedido and public.rota_068_pedido_entregue(o.cd_pedido))) k
+    on conflict (cd_pedido) do update set dia = excluded.dia, veiculo_id = excluded.veiculo_id, ordem = excluded.ordem, removido = false;
+  select count(*) into v_n from public.rota_plano_semana where veiculo_id = p_veiculo and dia between p_inicio and p_inicio + 5;
+  return v_n;
+end;
+$$;
+create or replace function public.rota_065_ler_semana(p_inicio date)
+returns jsonb
+language plpgsql
+stable
+security definer   -- usa rota_050_hoje (privada); acesso conferido abaixo
+set search_path = ''
+as $$
+begin
+  if not coalesce(public.eh_equipe(), false) then
+    raise exception 'equipe necessaria' using errcode = '42501';
+  end if;
+  if p_inicio is null or extract(isodow from p_inicio) <> 1 then
+    return pg_catalog.jsonb_build_object('status', 'erro', 'motivo', 'parametro_invalido');
+  end if;
+  return pg_catalog.jsonb_build_object(
+    'status', 'ok', 'inicio', p_inicio, 'hoje', public.rota_050_hoje(),
+    'pedidos_estado',coalesce((select jsonb_object_agg(e.cd_pedido,jsonb_build_object('entregue',public.rota_068_pedido_entregue(e.cd_pedido),'reprogramado',exists(select 1 from public.rota_068h_reprogramacao r where r.cd_pedido=e.cd_pedido and r.ativa),'data_recebimento',public.rota_068_recebido_dia(e.cd_pedido))) from (select cd_pedido from public.solidcon_pedidos_erp union select cd_pedido from public.rota_plano_semana union select cd_pedido from public.pedido_entrega_rota union select cd_pedido from public.pedido_entrega_confirmacao) e),'{}'::jsonb),
+    'versao', coalesce((select s.versao from public.rota_065_semana s where s.inicio = p_inicio), 0),
+    'itens', coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('cd_pedido', p.cd_pedido, 'dia', p.dia, 'veiculo_id', p.veiculo_id,
+                 'ordem', p.ordem, 'removido', p.removido) order by p.dia, p.veiculo_id, p.removido, p.ordem nulls last, p.cd_pedido)
+              from public.rota_plano_semana p where p.dia between p_inicio and p_inicio + 5), '[]'::jsonb),
+    'sem_saida', coalesce((select pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('dia', s.dia, 'veiculo_id', s.veiculo_id, 'motivo', s.motivo)
+                 order by s.dia, s.veiculo_id)
+              from public.rota_065_sem_saida s where s.dia between p_inicio and p_inicio + 5), '[]'::jsonb),
+    'fechados', coalesce((select pg_catalog.jsonb_agg(f.data order by f.data)
+              from public.rota_dia_fechada f where f.data between p_inicio and p_inicio + 5 and f.estado = 'fechada'), '[]'::jsonb));
+end;
+$$;
+create or replace function public.rota_068_trocar_veiculo(p_cd_pedido bigint,p_veiculo text,p_escopo text default 'pedido')
+returns jsonb language plpgsql volatile security definer set search_path='' as $$
+declare
+ v_doc text;v_padrao text;v_destino text;v_resultado text;v_plano public.rota_plano_semana%rowtype;
+ v_tem_plano boolean;v_inicio date;v_versao bigint;v_modo text;v_ordem integer;
+begin
+ if auth.uid() is null or not coalesce(public.pode_marcar_rota(),false) then
+  raise exception 'sem permissao para trocar veiculo' using errcode='42501';
+ end if;
+ if p_cd_pedido is null or p_cd_pedido not between 1 and 999999999999 or coalesce(p_escopo,'') not in('pedido','sempre') then
+  return pg_catalog.jsonb_build_object('status','erro','motivo','parametro_invalido');
+ end if;
+ perform pg_catalog.pg_advisory_xact_lock(5100,5201);
+ perform pg_catalog.pg_advisory_xact_lock(5100,5001);
+ perform pg_catalog.pg_advisory_xact_lock(5100,4601);
+ if p_veiculo is not null and not exists(select 1 from public.rota_veiculos v where v.id=p_veiculo and v.ativo) then
+  return pg_catalog.jsonb_build_object('status','erro','motivo','veiculo_invalido');
+ end if;
+ select e.documento into v_doc from public.solidcon_pedidos_erp e where e.cd_pedido=p_cd_pedido for share;
+ if not found then return pg_catalog.jsonb_build_object('status','erro','motivo','pedido_nao_encontrado');end if;
+ if public.rota_068_veiculo_saiu(p_cd_pedido) then
+  return pg_catalog.jsonb_build_object('status','erro','motivo','pedido_historico');
+ end if;
+ if v_doc is not null then select c.veiculo into v_padrao from public.rota_cliente_veiculo c where c.documento=v_doc;end if;
+ -- null limpa marcacao; o plano adota o padrao que restara apos a regra044 (fallback operacional054).
+ v_destino:=coalesce(p_veiculo,case when p_escopo='pedido' then v_padrao end,public.rota_054_padrao_separando());
+ select p.* into v_plano from public.rota_plano_semana p where p.cd_pedido=p_cd_pedido for update;
+ v_tem_plano:=found;
+ if v_tem_plano then
+  if not public.rota_065_sai(v_destino,v_plano.dia) then return jsonb_build_object('status','erro','motivo','dia_sem_saida');end if;
+  select v.modo into v_modo from public.rota_veiculos v where v.id=v_destino;
+  if v_destino is distinct from v_plano.veiculo_id then
+   if not v_plano.removido and v_modo='porta' then
+    select coalesce(max(p.ordem),0)+1 into v_ordem from public.rota_plano_semana p
+     where p.dia=v_plano.dia and p.veiculo_id=v_destino and not p.removido;
+   end if;
+   update public.rota_plano_semana set veiculo_id=v_destino,ordem=v_ordem where cd_pedido=p_cd_pedido;
+   -- Fecha o buraco da origem e normaliza destino, sem tocar outros dias ou removidos.
+   with ordens as (
+    select p.cd_pedido,(pg_catalog.row_number() over(partition by p.veiculo_id order by p.ordem nulls last,p.cd_pedido))::integer n
+     from public.rota_plano_semana p join public.rota_veiculos v on v.id=p.veiculo_id
+     where p.dia=v_plano.dia and p.veiculo_id in(v_plano.veiculo_id,v_destino) and not p.removido and v.modo='porta'
+   ) update public.rota_plano_semana p set ordem=o.n from ordens o where p.cd_pedido=o.cd_pedido and p.ordem is distinct from o.n;
+  end if;
+  v_inicio:=v_plano.dia-(extract(isodow from v_plano.dia)::integer-1);
+  v_versao:=coalesce((select s.versao from public.rota_065_semana s where s.inicio=v_inicio),0);
+ end if;
+
+ -- Mesma regra044/047 (inclusive primeiro cliente sem padrao); apenas depois de TODAS as recusas.
+ if p_veiculo is null then
+  delete from public.rota_pedido_veiculo where cd_pedido=p_cd_pedido;
+  if p_escopo='sempre' and v_doc is not null then delete from public.rota_cliente_veiculo where documento=v_doc;end if;
+  v_resultado:='removido';
+ elsif v_doc is not null and (p_escopo='sempre' or v_padrao is null) then
+  insert into public.rota_cliente_veiculo as c(documento,veiculo) values(v_doc,p_veiculo)
+   on conflict(documento) do update set veiculo=excluded.veiculo;
+  delete from public.rota_pedido_veiculo where cd_pedido=p_cd_pedido;
+  v_resultado:='padrao';
+ elsif v_padrao is not distinct from p_veiculo then
+  delete from public.rota_pedido_veiculo where cd_pedido=p_cd_pedido;
+  v_resultado:='padrao';
+ else
+  insert into public.rota_pedido_veiculo as p(cd_pedido,veiculo) values(p_cd_pedido,p_veiculo)
+   on conflict(cd_pedido) do update set veiculo=excluded.veiculo;
+  v_resultado:='pedido';
+ end if;
+ perform public.rota_068_reprogramar_explicito(p_cd_pedido,case when v_tem_plano then v_plano.dia end,v_destino);
+ return pg_catalog.jsonb_build_object('status','ok','resultado',v_resultado,'entregue',false,'reprogramado',true,
+  'plano',case when v_tem_plano then pg_catalog.jsonb_build_object('dia',v_plano.dia,'veiculo_id',v_destino,'inicio',v_inicio,'versao',v_versao) else null end);
+end$$;
+
