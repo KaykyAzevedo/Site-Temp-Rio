@@ -156,7 +156,7 @@
             paginar(function () { return sb.from('rota_cliente_regras').select('documento,janela_inicio,janela_fim,dias_sem_receber,prioridade,observacao').order('documento', { ascending: true }); }, 20000),
             sb.rpc('pode_marcar_rota'),
             // 045 (opcional): pedidos tirados da rota até reativar. Ausente = ninguém ignorado e sem o botão.
-            paginar(function () { return sb.from('rota_pedido_ignorado').select('cd_pedido,motivo,atualizado_em').order('cd_pedido', { ascending: true }); }, 20000),
+            paginar(function () { return sb.from('rota_pedido_ignorado').select('cd_pedido,motivo,atualizado_em,alcance').order('cd_pedido', { ascending: true }); }, 20000),
             // 046 (opcional): plano de referência da semana da S10. Ausente = sub-aba mostra sugestão sem salvar.
             paginar(function () { return sb.from('rota_plano_semana').select('*').order('cd_pedido', { ascending: true }); }, 20000),
             // 047 (opcional): frota, rotas publicadas (hoje em diante) e motoristas (só admin). Ausente = caminhão e S10.
@@ -171,10 +171,11 @@
         ]).then(function (rs) {
             if (seq !== st.seq) return;
             if (rs[0].error) throw rs[0].error;
+            if (rs[8].error || (rs[8].data || []).length >= 20000) throw rs[8].error || new Error('Limite de leitura de exclusões atingido; atualização interrompida.');
             if (rs[3].error && !tabelaAusente(rs[3].error, 'rota_config')) throw rs[3].error;
             if (rs[15].error && !tabelaAusente(rs[15].error, 'pedido_canhoto')) throw rs[15].error;
             if ((rs[15].data || []).length >= 50000) throw new Error('Limite de leitura de canhotos atingido; nao e seguro calcular a rota.');
-            var pedidos = rs[0].data || [];
+            var pedidos = (rs[0].data || []).filter(function (p) { return !(rs[8].data || []).some(function (g) { return Number(g.cd_pedido) === Number(p.cd_pedido) && g.alcance === 'site'; }); });
             var docs = {}; pedidos.forEach(function (p) { if (p.documento) docs[p.documento] = true; });
             var lista = Object.keys(docs);
             // Endereço (regra do CEASA e lista): só dos clientes com pedido pendente, em blocos.
@@ -533,12 +534,47 @@
     // Seletor CEASA / S10 por pedido + botão Tirar na mesma linha (sem repetir pílula "S10 · padrão do cliente" acima do select).
     function contextoEntrega() { return Object.assign({}, optsPlano(), { sb: st.sb, papel: st.papel, podeMarcar: st.podeMarcar, instalada: st.entrega063, sessao: st.seq }); }
     function entregaRecebido(p) { return raiz.TempRioEntregaAdmin ? raiz.TempRioEntregaAdmin.html(p, contextoEntrega()) : ''; }
-    if (typeof raiz.addEventListener === 'function') raiz.addEventListener('temprio-entrega063', function () {
-        if (!st.sb) return;st.mut++;st.carregado = false;if (st.ativo) recarregarTudo();
-    });
+    if (typeof raiz.addEventListener === 'function') {
+        raiz.addEventListener('temprio-entrega063', function () {
+            if (!st.sb) return;st.mut++;st.carregado = false;if (st.ativo) recarregarTudo();
+        });
+        raiz.addEventListener('temprio-veiculo068', function (ev) {
+            var det = ev && ev.detail;
+            if (!det || det.origem === 'rota' || !st.carregado) return;
+            var cdEv = Number(det.cd_pedido);
+            if (!cdEv) return;
+            var docEv = String(det.documento || '');
+            var veicEv = det.veiculo ? String(det.veiculo) : '';
+            var resEv = det.resTipo || (veicEv ? 'pedido' : 'removido');
+            if (resEv === 'removido') {
+                delete st.porPedido[cdEv];
+                if (det.escopo === 'sempre' && docEv) delete st.excecoes[docEv];
+            } else if (resEv === 'padrao') {
+                if (docEv) st.excecoes[docEv] = veicEv;
+                delete st.porPedido[cdEv];
+            } else if (veicEv) {
+                st.porPedido[cdEv] = veicEv;
+            }
+            sincronizarVeiculoNoQuadro(cdEv, docEv, veicEv || null, det.escopo || 'pedido', resEv);
+            aposMutacao();
+            if (st.ativo) recarregarTudo();
+        });
+    }
+    function pedidoSomenteLeituraSaida(cd) {
+        var h = hojeSP();
+        // A bloqueia somente a troca de veículo; não altera elegibilidade065.
+        var p = (st.pedidos || []).filter(function (x) { return Number(x.cd_pedido) === Number(cd); })[0];
+        if (p) {
+            var etapa = core.etapaEntrega(p, { cfg: st.cfg, saidas: st.diasSaida, canhotos: st.canhotos, confirmacoes: st.confirmacoes, fechada: st.fxFoto, agora: new Date() });
+            if (etapa === 'enviado' || etapa === 'recebido') return true;
+        }
+        if (st.fxRender) return true;
+        if (st.vista === 'dia' && st.diaDetalhe && st.diaDetalhe <= h) return true;
+        return !!diaSaidaFechadaAteHoje(cd, h);
+    }
     function seletorPedidoV2(x, nome, mostrarId) {
         var tagId = mostrarId ? '<span class="rota-ped-tag">#' + esc(x.p.cd_pedido) + '</span>' : '';
-        if (!podeEditar()) return '<div class="rota-marc-item">' + tagId + seloMarcacaoLeitura(x) + entregaRecebido(x.p) + '</div>';
+        if (!podeEditar() || pedidoSomenteLeituraSaida(x.p.cd_pedido)) return '<div class="rota-marc-item">' + tagId + seloMarcacaoLeitura(x) + entregaRecebido(x.p) + '</div>';
         var cd = x.p.cd_pedido, ch = chaveTrava(x.p), travado = !!st.gravandoVeiculo[ch];
         var atual = x.veiculo || '';
         var rotulo = 'Veículo do pedido ' + cd + ' de ' + nome;
@@ -2023,11 +2059,104 @@
         dlg.querySelector(op.soSempre ? '#rota-esc-cancelar' : '#rota-esc-pedido').focus();
     }
 
+    function emitirEventoVeiculo068(cdPedido, doc, veiculo, escopo, resTipo) {
+        if (typeof raiz.dispatchEvent !== 'function' || typeof CustomEvent !== 'function') return;
+        try {
+            raiz.dispatchEvent(new CustomEvent('temprio-veiculo068', {
+                detail: {
+                    origem: 'rota',
+                    cd_pedido: Number(cdPedido),
+                    documento: doc || '',
+                    veiculo: veiculo || '',
+                    escopo: escopo || 'pedido',
+                    resTipo: resTipo || 'pedido'
+                }
+            }));
+        } catch (e) { /* ambiente sem CustomEvent */ }
+    }
+
+    // 068-A: sincroniza a troca de veículo (feita no Dia, Hoje, Próxima ou Pedidos) com o plano/rascunho da Semana (065)
+    // apenas para dias que ainda não saíram (dia > hoje e não fechados).
+    function sincronizarVeiculoNoQuadro(cdPedido, doc, veiculo, escopo, resTipo) {
+        var hoje = hojeSP();
+        var Q = obterQuadroMod();
+        var cdsAfetados = Object.create(null);
+        var cdNum = Number(cdPedido);
+        if (resTipo === 'padrao' || (resTipo === 'removido' && escopo === 'sempre')) {
+            if (doc) {
+                (st.pedidos || []).forEach(function (p) {
+                    if (p && p.documento === doc && !st.porPedido[p.cd_pedido] && !diaSaidaFechadaAteHoje(p.cd_pedido, hoje)) {
+                        cdsAfetados[Number(p.cd_pedido)] = true;
+                    }
+                });
+            }
+            if (!diaSaidaFechadaAteHoje(cdNum, hoje)) cdsAfetados[cdNum] = true;
+        } else if (!diaSaidaFechadaAteHoje(cdNum, hoje)) {
+            cdsAfetados[cdNum] = true;
+        }
+
+        function veicEfetivoDe(cd) {
+            if (st.porPedido[cd]) return st.porPedido[cd];
+            var p = (st.pedidos || []).filter(function (x) { return Number(x.cd_pedido) === Number(cd); })[0];
+            var d = (p && p.documento) || (Number(cd) === cdNum ? doc : '');
+            return (d && st.excecoes[d]) || '';
+        }
+
+        Object.keys(cdsAfetados).forEach(function (k) {
+            var cId = Number(k);
+            var vEf = veicEfetivoDe(cId);
+            if (st.plano[cId] && st.plano[cId] > hoje && vEf) {
+                st.planoVeic[cId] = vEf;
+            }
+        });
+
+        Object.keys(st.sem065Dados || {}).forEach(function (ini) {
+            var d065 = st.sem065Dados[ini];
+            if (!d065 || !Array.isArray(d065.itens)) return;
+            var fechadosSet = Object.create(null);
+            (d065.fechados || []).forEach(function (f) { fechadosSet[String(f).slice(0, 10)] = true; });
+            var frotaAtiva = core.frotaDe(linhasFrota());
+            var semSaidaMap = Object.create(null);
+            (d065.sem_saida || []).forEach(function (s) {
+                if (s && s.dia && s.veiculo_id) semSaidaMap[String(s.dia).slice(0, 10) + '|' + s.veiculo_id] = true;
+            });
+            d065.itens.forEach(function (it) {
+                if (!it || !cdsAfetados[Number(it.cd_pedido)]) return;
+                var iso = String(it.dia || '').slice(0, 10);
+                if (iso && iso <= hoje) return;
+                if (iso && fechadosSet[iso]) return;
+                var vEf = veicEfetivoDe(it.cd_pedido);
+                if (!vEf) return;
+                var vObj = frotaAtiva.porId[vEf];
+                var naoSai = !vObj || (iso && (vObj.diasSemSaida.indexOf(diaSemana(iso)) >= 0 || semSaidaMap[iso + '|' + vEf]));
+                it.veiculo_id = vEf;
+                if (naoSai && !it.removido) {
+                    it.removido = true;
+                    it.ordem = null;
+                }
+            });
+        });
+
+        Object.keys(st.semQuadroRasc || {}).forEach(function (ini) {
+            var rasc = st.semQuadroRasc[ini];
+            if (!rasc) return;
+            Object.keys(cdsAfetados).forEach(function (k) {
+                var cId = Number(k);
+                var vEf = veicEfetivoDe(cId);
+                if (Q && vEf) {
+                    var r = Q.aplicarAcao(rasc, { tipo: 'trocar_veiculo', cd_pedido: cId, veiculo: vEf });
+                    if (r && r.ok) rasc = r.estado;
+                }
+            });
+            st.semQuadroRasc[ini] = rasc;
+        });
+    }
+
     // Gravação v2 via RPC rota_044_marcar(p_cd_pedido, p_veiculo, p_escopo).
     // Trava todos os seletores do mesmo cliente enquanto grava, recalcula a rota ao vivo no sucesso e reverte no erro.
     function executarMarcacaoV2(cdPedido, doc, veiculo, escopo) {
-        var ch = doc || ('p:' + cdPedido);
-        if (!podeEditar() || st.gravandoVeiculo[ch]) return;
+        var ch = doc || ('p:' + cdPedido), sb0 = st.sb, sessao0 = st.sessao;
+        if (!podeEditar() || pedidoSomenteLeituraSaida(cdPedido) || st.gravandoVeiculo[ch]) return;
         var seq = (st.seqVeiculo[ch] || 0) + 1;
         st.seqVeiculo[ch] = seq; st.gravandoVeiculo[ch] = true;
         if (st.alvo) {
@@ -2036,7 +2165,7 @@
             });
         }
         function fim(erro, resTipo) {
-            if (st.seqVeiculo[ch] !== seq) return;
+            if (st.sb !== sb0 || st.sessao !== sessao0 || st.seqVeiculo[ch] !== seq) return;
             delete st.gravandoVeiculo[ch];
             if (erro) {
                 st.msgVeiculo = 'Não foi possível gravar a marcação: ' + erro;
@@ -2053,18 +2182,21 @@
                 } else {                                     // 'pedido': só este pedido
                     st.porPedido[cdPedido] = veiculo;
                 }
+                sincronizarVeiculoNoQuadro(cdPedido, doc, veiculo, escopo, resTipo);
+                emitirEventoVeiculo068(cdPedido, doc, veiculo, escopo, resTipo);
             }
             st.focoPedido = String(cdPedido);
             aposMutacao();
-            desenhar();
+            if (!erro && ['padrao','pedido','removido'].indexOf(resTipo) >= 0) recarregarTudo(); else desenhar();
         }
-        st.sb.rpc('rota_044_marcar', { p_cd_pedido: Number(cdPedido), p_veiculo: veiculo, p_escopo: escopo })
-            .then(function (r) { fim(r.error ? (r.error.message || String(r.error)) : null, r.data); },
+        st.sb.rpc('rota_068_trocar_veiculo', { p_cd_pedido: Number(cdPedido), p_veiculo: veiculo, p_escopo: escopo })
+            .then(function (r) { fim(r.error ? (r.error.message || String(r.error)) : (!r.data || r.data.status !== 'ok' ? (r.data && r.data.motivo || 'Resposta inválida') : null), r.data && r.data.resultado); },
                   function (e) { fim(String((e && e.message) || e), null); });
     }
     function aoMudarMarcacaoV2(sel) {
         if (!podeEditar()) return;
         var cd = Number(sel.getAttribute('data-rota-marcar'));
+        if (pedidoSomenteLeituraSaida(cd)) return;
         var p = st.pedidos.filter(function (x) { return Number(x.cd_pedido) === cd; })[0];
         if (!p) return;
         var doc = p.documento || '';
@@ -2914,6 +3046,7 @@
                 : null;
             return Object.assign({
                 cd_pedido: Number(p.cd_pedido),
+                veiculoSomenteLeitura: pedidoSomenteLeituraSaida(p.cd_pedido),
                 documento: p.documento || '',
                 cliente: nomeCliente(c, { p: p }),
                 bairro: (c && c.bairro) || p.entrega_bairro || '',
@@ -3394,12 +3527,49 @@
             desenhar();
         });
     }
+    // 068-A: persiste a troca de veículo feita diretamente no cartão do Quadro da Semana (rota_044_marcar / rota_pedido_veiculo)
+    function persistirTrocaVeiculoQuadro(acao, novoSt) {
+        var cd = Number(acao && acao.cd_pedido), novo = acao && acao.veiculo;
+        if (!cd || !novo || !st.sb || !podeEditar() || st.semSalvando || pedidoSomenteLeituraSaida(cd)) return;
+        var pedido = st.pedidos.filter(function (x) { return Number(x.cd_pedido) === cd; })[0];
+        var doc = pedido && pedido.documento || '', ini = novoSt.inicio;
+        var anterior = st.semQuadroRasc[ini] ? JSON.parse(JSON.stringify(st.semQuadroRasc[ini])) : null;
+        var sb0 = st.sb, sessao0 = st.sessao;
+        st.semSalvando = true;
+        Promise.resolve().then(function () {
+            desenhar();
+            return sb0.rpc('rota_068_trocar_veiculo', { p_cd_pedido: cd, p_veiculo: novo, p_escopo: 'pedido' });
+        }).then(function (r) {
+            if (r.error) throw new Error(r.error.message || r.error.code);
+            if (!r.data || r.data.status !== 'ok') throw new Error(r.data && r.data.motivo || 'Não foi possível salvar o veículo.');
+            r = { data: r.data.resultado };
+            if (['padrao', 'pedido'].indexOf(r.data) < 0) throw new Error('Resposta inválida; atualize para conferir.');
+            if (st.sb !== sb0 || st.sessao !== sessao0) return;
+            if (r.data === 'padrao') { if (doc) st.excecoes[doc] = novo; delete st.porPedido[cd]; }
+            else st.porPedido[cd] = novo;
+            sincronizarVeiculoNoQuadro(cd, doc, novo, 'pedido', r.data);
+            emitirEventoVeiculo068(cd, doc, novo, 'pedido', r.data);
+            st.msgSemana = 'Veículo salvo.'; st.semMsgErro = false;
+        }).catch(function (e) {
+            if (st.sb !== sb0 || st.sessao !== sessao0) return;
+            if (anterior) st.semQuadroRasc[ini] = anterior; else delete st.semQuadroRasc[ini];
+            st.msgSemana = 'Não foi possível salvar o veículo: ' + e.message;
+            st.semMsgErro = true;
+        }).then(function () {
+            if (st.sb !== sb0 || st.sessao !== sessao0) return;
+            st.semSalvando = false; aposMutacao();
+            if (!st.semMsgErro) { if (!anterior || !anterior.temRascunho) delete st.semQuadroRasc[ini]; recarregarTudo(); } else desenhar();
+        });
+    }
     function montarQuadroSemanaNoAlvo(alvo, semIni) {
         var Q = obterQuadroMod();
         var elQuadro = alvo && alvo.querySelector('#rota-semana-quadro');
         if (!Q || !elQuadro) return;
         var dados = montarDadosQuadro065(semIni);
         Q.montar(elQuadro, dados, {
+            onTrocarVeiculo: function (acao, novoSt) {
+                persistirTrocaVeiculoQuadro(acao, novoSt);
+            },
             onChange: function (novoSt, acao) {
                 st.semQuadroRasc[novoSt.inicio] = novoSt;
                 st.semFiltroVeic = novoSt.veiculoAtual || 'todos';

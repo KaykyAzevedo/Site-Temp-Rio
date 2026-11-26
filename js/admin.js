@@ -6936,25 +6936,205 @@
     var PE_ENTREGA_COLS = 'entrega_logradouro,entrega_numero,entrega_complemento,entrega_bairro,entrega_cidade,entrega_uf,entrega_cep';
     function peLerPedidos() {
         function ler(cols) { return vendPaginar(function () { return sb.from('solidcon_pedidos_erp').select(cols).order('etapa', { ascending: true }).order('dt_pedido', { ascending: true }); }, 5000); }
-        return ler(PE_COLS + ',' + PE_ENTREGA_COLS).then(function (r) {
+        var pedidos = ler(PE_COLS + ',' + PE_ENTREGA_COLS).then(function (r) {
             return r.error && /^(42703|PGRST204)$/.test(String(r.error.code || '')) ? ler(PE_COLS) : r;
+        });
+        if (!window.TempRio068Partes || !window.TempRio068Partes.F2) return pedidos;
+        return Promise.all([pedidos, vendPaginar(function () {
+            return sb.from('rota_pedido_ignorado').select('cd_pedido').eq('alcance', 'site').order('cd_pedido', { ascending: true });
+        }, 20000)]).then(function (rs) {
+            if (rs[0].error) return rs[0];
+            if (rs[1].error) return rs[1];
+            if ((rs[1].data || []).length >= 20000) return { error: { message: 'Limite de leitura de pedidos fora do site atingido; atualização interrompida.' } };
+            var fora = {}; (rs[1].data || []).forEach(function (p) { fora[p.cd_pedido] = true; });
+            return Object.assign({}, rs[0], { data: (rs[0].data || []).filter(function (p) { return !fora[p.cd_pedido]; }) });
         });
     }
     var PE_VELHO_MIN = 30;
     var PE_MODO_CHAVE = 'adm.peModo';
     var pe = { carregado: false, carregando: false, erro: null, ausente: false, itens: [], coletado: null, seq: 0,
                // 052 (opcional): canhotos ativos { cd_pedido: [{caminho, enviado_em, origem}] }, tabela lida?, pode anexar?
-               confirmacoes: {}, entrega063: false, canhotos: {}, can052: false, podeMarcar: false, cfg: null, saidas: {}, historico: { aberto: false, busca: '', pagina: 0 } };
+               confirmacoes: {}, entrega063: false, canhotos: {}, can052: false, podeMarcar: false, cfg: null, saidas: {},
+               // 068-A: marcação de veículo por cliente/pedido visível e editável em Pedidos para admin / pode_marcar_rota
+               veiculos: [], padroes: {}, porPedido: {}, gravandoVeic: {}, msgVeic: '',
+               historico: { aberto: false, busca: '', pagina: 0 } };
     // Canhoto ativo (052) comprova recebimento; saiu/atendido sem canhoto são só faturamento.
     var peUltimaEntrega = '';
     function peContexto() { return { canhotos: pe.canhotos, cfg: pe.cfg, saidas: pe.saidas, confirmacoes: pe.confirmacoes, agora: new Date() }; }
     function peIndice(x) { return peIndiceColuna(window.TempRioRotaCore.etapaEntrega(x, peContexto())); }
     function peRecebidoRecente(x) { return window.TempRioRotaCore.recebidoRecente(x, peContexto()); }
     function peAssinaturaEntrega() { return pe.itens.map(function (x) { return peIndice(x) + ':' + (peRecebidoRecente(x) ? 1 : 0); }).join(','); }
-    function peContextoEntrega() { return Object.assign({}, peContexto(), { sb: sb, papel: papel, podeMarcar: pe.podeMarcar, instalada: pe.entrega063, sessao: pe.seq }); }
+    function peContextoEntrega() { return Object.assign({}, peContexto(), { sb: sb, papel: typeof papel !== 'undefined' ? papel : null, podeMarcar: pe.podeMarcar, instalada: pe.entrega063, sessao: pe.seq }); }
     function peRecebidoHtml(x) { return window.TempRioEntregaAdmin ? window.TempRioEntregaAdmin.html(x, peContextoEntrega()) : esc(window.TempRioRotaCore.recebidoRotulo(x, peContexto())); }
-    if (typeof window.addEventListener === 'function') window.addEventListener('temprio-entrega063', function () { if (sb && papel) carregarPedidosErp(); });
+    if (typeof window.addEventListener === 'function') {
+        window.addEventListener('temprio-entrega063', function () { if (sb && typeof papel !== 'undefined' && papel) carregarPedidosErp(); });
+        window.addEventListener('temprio-veiculo068', function (ev) {
+            var det = ev && ev.detail;
+            if (!det || det.origem === 'pedidos' || !pe.carregado) return;
+            var cdEv = Number(det.cd_pedido);
+            if (!cdEv) return;
+            var docEv = String(det.documento || '');
+            var veicEv = det.veiculo ? String(det.veiculo) : '';
+            var resEv = det.resTipo || (veicEv ? 'pedido' : 'removido');
+            if (resEv === 'removido') {
+                delete pe.porPedido[cdEv];
+                if (det.escopo === 'sempre' && docEv) delete pe.padroes[docEv];
+            } else if (resEv === 'padrao') {
+                if (docEv) pe.padroes[docEv] = veicEv;
+                delete pe.porPedido[cdEv];
+            } else if (veicEv) {
+                pe.porPedido[cdEv] = veicEv;
+            }
+            peRedesenhar();
+        });
+    }
     function peTemCanhoto(x) { return !!x && window.TempRioRotaCore.temCanhoto(pe.canhotos, x.cd_pedido); }
+    function pePodeMarcarVeiculo() { return !!(pe.podeMarcar || (typeof papel !== 'undefined' && papel === 'admin')); }
+    function peFrotaAtiva() {
+        var R = window.TempRioRotaCore;
+        var base = Array.isArray(pe.veiculos) && pe.veiculos.length ? pe.veiculos : (R && R.ROTA && R.ROTA.VEICULOS_PADRAO ? R.ROTA.VEICULOS_PADRAO.filter(function (v) { return v.id === 'caminhao' || v.id === 's10'; }) : []);
+        return (R && typeof R.frotaDe === 'function') ? R.frotaDe(base).ativos : base.filter(function (v) { return v && v.ativo !== false; });
+    }
+    function peRotuloVeiculo(id) {
+        if (id === 'caminhao') return 'CEASA';
+        var ativos = peFrotaAtiva();
+        for (var i = 0; i < ativos.length; i++) if (ativos[i].id === id) return ativos[i].nome || id;
+        return String(id || '');
+    }
+    function peCorVeiculo(id) {
+        var ativos = peFrotaAtiva();
+        for (var i = 0; i < ativos.length; i++) if (ativos[i].id === id && ativos[i].cor) return ativos[i].cor;
+        return id === 'caminhao' ? '#b45309' : '#2563eb';
+    }
+    function pePedidoJaSaiu(x) {
+        if (!x) return true;
+        var R = window.TempRioRotaCore;
+        var et = R.etapaEntrega(x, peContexto());
+        if (et === 'enviado' || et === 'recebido') return true;
+        var hoje = R.diaSP(new Date());
+        var dSaida = pe.saidas && pe.saidas[x.cd_pedido] ? String(pe.saidas[x.cd_pedido]).slice(0, 10) : null;
+        return !!(dSaida && hoje && dSaida <= hoje);
+    }
+    function peVeiculoEfetivo(x) {
+        if (!x) return { veiculo: '', origem: null };
+        var cd = x.cd_pedido;
+        var doc = x.documento ? String(x.documento) : '';
+        if (pe.porPedido && pe.porPedido[cd]) return { veiculo: String(pe.porPedido[cd]), origem: 'pedido' };
+        if (doc && pe.padroes && pe.padroes[doc]) return { veiculo: String(pe.padroes[doc]), origem: 'padrao' };
+        return { veiculo: '', origem: null };
+    }
+    function peVeiculoHtml(x) {
+        if (!pePodeMarcarVeiculo() || !x) return '';
+        var cd = String(x.cd_pedido);
+        var info = peVeiculoEfetivo(x);
+        var atual = info.veiculo;
+        if (pePedidoJaSaiu(x)) {
+            if (!atual) return '';
+            return '<div class="adm-pe-veic-leitura" data-pe-veiculo-leitura="' + esc(cd) + '" title="Rota já saiu — veículo somente leitura">' +
+                '<span class="rota-veic-cor" style="--veic-cor:' + esc(peCorVeiculo(atual)) + '" aria-hidden="true"></span>' +
+                '<span>' + esc(peRotuloVeiculo(atual)) + '</span></div>';
+        }
+        var ativos = peFrotaAtiva();
+        var travado = !!(pe.gravandoVeic && pe.gravandoVeic[cd]);
+        var rotulo = 'Veículo do pedido ' + cd;
+        var corAtual = atual ? peCorVeiculo(atual) : '#64748b';
+        var ops = (!atual ? '<option value="" selected>Marcar veículo…</option>' : '') +
+            ativos.map(function (v) {
+                var r = v.id === 'caminhao' ? 'CEASA' : (v.nome || v.id);
+                return '<option value="' + esc(v.id) + '"' + (atual === v.id ? ' selected' : '') + '>' + esc(r) + '</option>';
+            }).join('');
+        return '<div class="adm-pe-veic-wrap no-print" data-pe-veic-box="' + esc(cd) + '">' +
+            '<span class="rota-veic-cor" style="--veic-cor:' + esc(corAtual) + '" aria-hidden="true"></span>' +
+            '<label class="sr-only" for="pe-veic-' + esc(cd) + '">' + esc(rotulo) + '</label>' +
+            '<select id="pe-veic-' + esc(cd) + '" class="adm-input adm-pe-veic-sel" data-pe-veiculo="' + esc(cd) + '" aria-label="' + esc(rotulo) + '"' + (travado ? ' disabled aria-busy="true"' : '') + '>' +
+            ops + '</select></div>';
+    }
+    function peSalvarVeiculoPedido(cdPedido, novoVeiculo) {
+        var cd = Number(cdPedido);
+        if (!cd || !novoVeiculo || !pePodeMarcarVeiculo() || !sb) return Promise.resolve();
+        var item = (pe.itens || []).filter(function (x) { return Number(x.cd_pedido) === cd; })[0];
+        if (item && pePedidoJaSaiu(item)) return Promise.resolve();
+        if (pe.gravandoVeic[cd]) return Promise.resolve();
+        var doc = (item && item.documento) ? String(item.documento) : '';
+        var seq0 = pe.seq;
+        pe.gravandoVeic[cd] = true;
+        document.querySelectorAll('[data-pe-veiculo="' + cd + '"]').forEach(function (el) {
+            el.disabled = true; el.setAttribute('aria-busy', 'true');
+        });
+        function aplicarLocal(resTipo) {
+            if (resTipo === 'padrao' && doc) {
+                pe.padroes[doc] = novoVeiculo;
+                delete pe.porPedido[cd];
+            } else {
+                pe.porPedido[cd] = novoVeiculo;
+            }
+            if (typeof window.dispatchEvent === 'function' && typeof CustomEvent === 'function') {
+                try {
+                    window.dispatchEvent(new CustomEvent('temprio-veiculo068', {
+                        detail: {
+                            origem: 'pedidos',
+                            cd_pedido: cd,
+                            documento: doc,
+                            veiculo: novoVeiculo,
+                            escopo: 'pedido',
+                            resTipo: resTipo || 'pedido'
+                        }
+                    }));
+                } catch (e) { /* ignore */ }
+            }
+        }
+        return Promise.resolve().then(function () {
+            return sb.rpc('rota_068_trocar_veiculo', { p_cd_pedido: cd, p_veiculo: novoVeiculo, p_escopo: 'pedido' });
+        }).then(function (r) {
+            if (r && !r.error) { r = r.data && r.data.status === 'ok' ? { data: r.data.resultado } : { error: { message: r.data && r.data.motivo || 'Resposta inválida. Atualize para conferir.' } }; }
+            delete pe.gravandoVeic[cd];
+            if (pe.seq !== seq0) return;
+            pe.msgVeic = r && r.error ? 'Não foi possível salvar o veículo: ' + (r.error.message || r.error.code) : '';
+            if (r && !r.error && ['padrao', 'pedido'].indexOf(r.data) >= 0) {
+                var tipoRes = (r && (r.data === 'padrao' || r.data === 'pedido')) ? r.data : (!doc || pe.padroes[doc] ? 'pedido' : 'padrao');
+                aplicarLocal(tipoRes);
+            }
+            peRedesenhar();
+            var modalCorpo = document.getElementById('modal-detalhe-corpo');
+            var canEl = modalCorpo && modalCorpo.querySelector('[data-pe-canhoto="' + cd + '"]');
+            if (canEl && item) {
+                var cardModal = modalCorpo.querySelector('.is-modal-cartao');
+                if (cardModal) {
+                    cardModal.outerHTML = peCartaoDetalhado(item, true);
+                    peLigarVeiculos(modalCorpo);
+                    if (window.TempRioEntregaAdmin) window.TempRioEntregaAdmin.ligar(modalCorpo, peContextoEntrega);
+                }
+            }
+        }, function () {
+            delete pe.gravandoVeic[cd];
+            if (pe.seq !== seq0) return;
+            pe.msgVeic = 'Não foi possível salvar o veículo. Tente novamente.';
+            peRedesenhar();
+            var modal = document.getElementById('modal-detalhe-corpo');
+            if (modal && modal.querySelector('[data-pe-veiculo="' + cd + '"]') && item) {
+                var card = modal.querySelector('.is-modal-cartao');
+                if (card) card.outerHTML = peCartaoDetalhado(item, true);
+                peLigarVeiculos(modal);
+            }
+        });
+    }
+    function peLigarVeiculos(raiz) {
+        if (!raiz || !raiz.querySelectorAll) return;
+        raiz.querySelectorAll('[data-pe-veic-box]').forEach(function (box) {
+            box.addEventListener('click', function (ev) { ev.stopPropagation(); });
+            box.addEventListener('keydown', function (ev) { ev.stopPropagation(); });
+        });
+        raiz.querySelectorAll('[data-pe-veiculo]').forEach(function (sel) {
+            sel.addEventListener('click', function (ev) { ev.stopPropagation(); });
+            sel.addEventListener('keydown', function (ev) { ev.stopPropagation(); });
+            sel.addEventListener('change', function (ev) {
+                ev.stopPropagation();
+                var cd = sel.getAttribute('data-pe-veiculo');
+                var val = sel.value || '';
+                if (cd && val) peSalvarVeiculoPedido(cd, val);
+            });
+        });
+    }
     var peOrigem = null, peSegmento = 'aberto';   // peOrigem: null = automático (ERP quando não há pedidos do site)
     var peModo = (function () {
         try { return localStorage.getItem(PE_MODO_CHAVE) === 'detalhado' ? 'detalhado' : 'compacto'; }
@@ -6972,13 +7152,20 @@
     function carregarPedidosErp() {
         var seq = ++pe.seq;
         pe.carregando = true;
+        function lerOpcional(fn) {
+            try { return Promise.resolve(fn()).catch(function () { return { data: [] }; }); }
+            catch (e) { return Promise.resolve({ data: [] }); }
+        }
         return Promise.all([
             peLerPedidos(),
             sb.from('solidcon_pedidos_erp_sync').select('coletado_em').eq('status', 'ok').order('coletado_em', { ascending: false }).limit(1),
             // 052 (opcional): canhotos ativos e se quem está logado pode anexar (pode_marcar_rota). Ausentes = sem canhoto.
             vendPaginar(function () { return sb.from('pedido_canhoto').select('cd_pedido,caminho,enviado_em,origem').is('substituido_em', null).order('id', { ascending: true }); }, 50000),
             sb.rpc('pode_marcar_rota'),
-            sb.from('rota_config').select('*').eq('id', 1).limit(1)
+            sb.from('rota_config').select('*').eq('id', 1).limit(1),
+            lerOpcional(function () { return vendPaginar(function () { return sb.from('rota_cliente_veiculo').select('documento,veiculo').order('documento', { ascending: true }); }, 50000); }),
+            lerOpcional(function () { return vendPaginar(function () { return sb.from('rota_pedido_veiculo').select('cd_pedido,veiculo').order('cd_pedido', { ascending: true }); }, 50000); }),
+            lerOpcional(function () { return sb.from('rota_veiculos').select('id,nome,modo,capacidade_volume,dias_sem_saida,volta_sede,ativo,cor,ordem').order('ordem', { ascending: true }).order('id', { ascending: true }); })
         ]).then(function (rs) {
             if (seq !== pe.seq) return null;
             if (rs[0].error) return rs;
@@ -6989,6 +7176,17 @@
             pe.canhotos = {}; pe.can052 = !!(rs[2] && !rs[2].error);
             if (pe.can052) (rs[2].data || []).forEach(function (c) { (pe.canhotos[c.cd_pedido] || (pe.canhotos[c.cd_pedido] = [])).push(c); });
             pe.podeMarcar = !!(rs[3] && !rs[3].error && rs[3].data === true);
+            pe.padroes = {};
+            if (rs[5] && !rs[5].error && Array.isArray(rs[5].data)) {
+                rs[5].data.forEach(function (r) { if (r && r.documento && r.veiculo) pe.padroes[String(r.documento)] = String(r.veiculo); });
+            }
+            pe.porPedido = {};
+            if (rs[6] && !rs[6].error && Array.isArray(rs[6].data)) {
+                rs[6].data.forEach(function (r) { if (r && r.cd_pedido != null && r.veiculo) pe.porPedido[Number(r.cd_pedido)] = String(r.veiculo); });
+            }
+            if (rs[7] && !rs[7].error && Array.isArray(rs[7].data) && rs[7].data.length) {
+                pe.veiculos = rs[7].data;
+            }
             var erroLeitura = rs[0].error || (rs[2].error && !solidTabelaAusente(rs[2].error) ? rs[2].error : null);
             if (rs[4].error && !solidTabelaAusente(rs[4].error)) erroLeitura = rs[4].error;
             if ((rs[2].data || []).length >= 50000) erroLeitura = { message: 'Limite de leitura de canhotos atingido; atualizacao incompleta.' };
@@ -7095,6 +7293,7 @@
             (window.TempRioRotaCore.etapaEnviada(x) && dEtapa ? '<p class="adm-pe-comp-bairro">faturado em ' + esc(peHora(dEtapa)) + '</p>' : '') +
             (peDataEntrega(x) ? '<p class="adm-pe-comp-bairro">' + esc(peDataEntrega(x)) + '</p>' : '') +
             (window.TempRioRotaCore.legadoRecebido(x, pe.cfg) ? '<p class="adm-pe-comp-bairro">Legado anterior ao controle de canhoto</p>' : '') +
+            peVeiculoHtml(x) +
             peRecebidoHtml(x) +
         '</div>';
     }
@@ -7121,6 +7320,7 @@
             (peDataEntrega(x) ? linha('fa-truck-fast', esc(peDataEntrega(x))) : '') +
             (window.TempRioRotaCore.legadoRecebido(x, pe.cfg) ? linha('fa-clock-rotate-left', 'Legado anterior ao controle de canhoto') : '') +
             (col.id === 'recebido' ? '' : selosAtraso(seloAtraso(ref), '')) +
+            peVeiculoHtml(x) +
             peRecebidoHtml(x) +
         '</div>';
     }
@@ -7250,7 +7450,7 @@
         }
         peUltimaEntrega = peAssinaturaEntrega();
         var cols = PE_COLUNAS.map(function (c) { return { c: c, l: peItensDa(c) }; });
-        return peBarraTopo() +
+        return (pe.msgVeic ? '<p role="alert" class="rota-aviso">' + esc(pe.msgVeic) + '</p>' : '') + peBarraTopo() +
             '<div class="adm-kanban-segmentos" role="tablist" aria-label="Etapas dos pedidos do ERP">' +
                 cols.map(function (x) {
                     return '<button type="button" role="tab" class="adm-chip adm-chip-etapa' + (peSegmento === x.c.id ? ' is-ativo' : '') + '" data-cor="' + x.c.cor + '" data-pe-seg="' + x.c.id +
@@ -7288,6 +7488,7 @@
         peModalVolta = { el: opener, id: String(x.cd_pedido), atrs: atrsAnt };
         abrirModal(peCartaoDetalhado(x, true) + '<div id="pe-canhoto" data-pe-canhoto="' + esc(String(x.cd_pedido)) + '">' + peCanhotoHtml(x) + '</div>');
         peLigarCanhoto(x);
+        peLigarVeiculos($('#modal-detalhe-corpo'));
         if (window.TempRioEntregaAdmin) window.TempRioEntregaAdmin.ligar($('#modal-detalhe-corpo'), peContextoEntrega);
         if (painel) {
             painel.classList.add('adm-modal-compacto');
@@ -7459,6 +7660,7 @@
     }
 
     function ligarOrigemPedidos(raiz) {
+        peLigarVeiculos(raiz);
         if (window.TempRioEntregaAdmin) window.TempRioEntregaAdmin.ligar(raiz, peContextoEntrega);
         raiz.querySelectorAll('[data-origem-pedidos]').forEach(function (b) {
             b.addEventListener('click', function () { peOrigem = b.getAttribute('data-origem-pedidos'); desenharPedidos(); });

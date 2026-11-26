@@ -719,6 +719,98 @@
     white-space: nowrap;
 }
 
+/* 068-A: Seletor de veículo inline no cartão do quadro da semana e no cartão de Pedidos */
+.rq-cartao-veic-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.22rem;
+    background: var(--adm-neutro-fundo);
+    border: 1px solid var(--adm-borda-forte);
+    border-radius: 999px;
+    padding: 0.02rem 0.32rem 0.02rem 0.38rem;
+    max-width: 100%;
+}
+
+.rq-cartao-veic-wrap:focus-within {
+    border-color: var(--adm-acao);
+}
+
+.rq-select-veiculo.adm-input {
+    width: auto;
+    min-width: 4.1rem;
+    max-width: 8.5rem;
+    height: 1.25rem;
+    min-height: 0;
+    padding: 0 0.2rem;
+    font-size: 0.65rem;
+    font-weight: 700;
+    line-height: 1.15;
+    color: var(--adm-tinta);
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    cursor: pointer;
+}
+
+.rq-select-veiculo.adm-input option {
+    background: var(--adm-superficie);
+    color: var(--adm-tinta);
+}
+
+.adm-pe-veic-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.28rem;
+    margin-top: 0.24rem;
+    padding: 0.1rem 0.42rem;
+    border-radius: 0.42rem;
+    background: var(--adm-neutro-fundo);
+    border: 1px solid var(--adm-borda-forte);
+    font-size: 0.7rem;
+    color: var(--adm-tinta-2);
+    max-width: 100%;
+}
+
+.adm-pe-veic-wrap:focus-within {
+    border-color: var(--adm-acao);
+}
+
+.adm-pe-veic-sel.adm-input {
+    width: auto;
+    min-width: 4.5rem;
+    max-width: 9.5rem;
+    height: 1.35rem;
+    min-height: 0;
+    padding: 0 0.25rem;
+    font-size: 0.7rem;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--adm-tinta);
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    cursor: pointer;
+}
+
+.adm-pe-veic-sel.adm-input option {
+    background: var(--adm-superficie);
+    color: var(--adm-tinta);
+}
+
+.adm-pe-veic-leitura {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    margin-top: 0.22rem;
+    padding: 0.08rem 0.42rem;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: var(--adm-tinta-2);
+    background: var(--adm-neutro-fundo);
+    border: 1px solid var(--adm-borda);
+}
+
 .rq-cartao-loc {
     display: inline-flex;
     align-items: center;

@@ -268,6 +268,7 @@
             corVeiculo: v ? v.cor : (raw && raw.corVeiculo) || '#64748b',
             modoVeiculo: modoVeiculo,
             faltaMarcar: !vid || !!(raw && raw.faltaMarcar),
+            veiculoSomenteLeitura: !!(raw && raw.veiculoSomenteLeitura),
             dia: diaColuna || (raw && raw.dia ? String(raw.dia).slice(0, 10) : null),
             diaAnterior: raw && raw.diaAnterior ? String(raw.diaAnterior).slice(0, 10) : null,
             ordem: raw && raw.ordem != null ? Number(raw.ordem) : null,
@@ -1068,6 +1069,9 @@
         if (cartao.bloqueado || (diaOrigemObj && !diaOrigemObj.editavel)) {
             return { ok: false, motivo: 'Pedido em dia fechado/passado ou já entregue não pode ser movido.', estado: st };
         }
+        if (tipo === 'trocar_veiculo' && cartao.veiculoSomenteLeitura) {
+            return { ok: false, motivo: 'O veículo deste pedido está somente leitura após a saída.', estado: st };
+        }
 
         if (tipo === 'remover') {
             if (daBandeja || !diaOrigemObj) {
@@ -1080,6 +1084,46 @@
             cartao.origemDia = 'removido';
             cartao.motivoBandeja = 'removido';
             cloneBandeja.unshift(cartao);
+        } else if (tipo === 'trocar_veiculo') {
+            var novoVeicId = String((acao && acao.veiculo) || '').trim();
+            var novoVeicObj = st.veiculosPorId[novoVeicId];
+            if (!novoVeicObj || !novoVeicObj.ativo) {
+                return { ok: false, motivo: 'Veículo inválido ou inativo.', estado: st };
+            }
+            if (cartao.veiculo === novoVeicObj.id && !cartao.faltaMarcar) {
+                return { ok: true, estado: st, acao: acao };
+            }
+            cartao.veiculo = novoVeicObj.id;
+            cartao.nomeVeiculo = novoVeicObj.id === 'caminhao' ? 'CEASA' : novoVeicObj.nome;
+            cartao.corVeiculo = novoVeicObj.cor;
+            cartao.modoVeiculo = novoVeicObj.modo;
+            cartao.faltaMarcar = false;
+            var msgTroca = '';
+            if (!daBandeja && diaOrigemObj) {
+                if (!veiculoSaiNoDia(novoVeicObj, diaOrigemObj.dia, diaOrigemObj.feriado, diaOrigemObj.semSaidaVeiculos)) {
+                    diaOrigemObj.cartoes.splice(idxOrigem, 1);
+                    cartao.diaAnterior = diaOrigemObj.dia;
+                    cartao.dia = null;
+                    cartao.ordem = null;
+                    cartao.origemDia = 'removido';
+                    cartao.motivoBandeja = 'sem_dia';
+                    cloneBandeja.unshift(cartao);
+                    msgTroca = (novoVeicObj.id === 'caminhao' ? 'CEASA' : novoVeicObj.nome) + ' não sai em ' + dataBr(diaOrigemObj.dia) + ': o pedido #' + cd + ' voltou para a bandeja.';
+                } else {
+                    cartao.origemDia = 'rascunho';
+                }
+            } else if (daBandeja) {
+                if (cartao.motivoBandeja === 'falta_marcar') cartao.motivoBandeja = 'sem_dia';
+            }
+            var estadoTroca = normalizarEstado(Object.assign({}, st, {
+                dias: cloneDias,
+                bandeja: cloneBandeja,
+                temRascunho: !daBandeja || st.temRascunho,
+                confirmaSalvarAtraso: false,
+                msg: msgTroca,
+                msgErro: false
+            }));
+            return { ok: true, estado: estadoTroca, acao: acao };
         } else if (tipo === 'programar' || tipo === 'mover' || tipo === 'aceitar_sugestao') {
             var paraDia = String((acao && (acao.paraDia || acao.dia)) || '').slice(0, 10);
             var diaAlvoObj = acharDia(paraDia);
@@ -1380,6 +1424,21 @@
             ? ' <i class="fa-solid fa-location-pin-lock rq-ic-sem-geo" title="Sem localização no mapa (fora da linha)" aria-label="Sem localização"></i>'
             : '';
 
+        var rotuloSelVeic = 'Veículo do pedido #' + c.cd_pedido + ' de ' + c.cliente;
+        var htmlVeicDetalhe = podeArrastar && !c.veiculoSomenteLeitura
+            ? '<label class="rq-cartao-veic-wrap no-print" style="--veic-cor:' + esc(c.corVeiculo) + '">' +
+                '<span class="rota-veic-cor" style="--veic-cor:' + esc(c.corVeiculo) + '" aria-hidden="true"></span>' +
+                '<span class="sr-only">' + esc(rotuloSelVeic) + '</span>' +
+                '<select class="adm-input rq-select-veiculo" data-rq-veiculo-select="' + esc(c.cd_pedido) + '" aria-label="' + esc(rotuloSelVeic) + '">' +
+                ((!c.veiculo || c.faltaMarcar) ? '<option value="" selected>Marcar…</option>' : '') +
+                st.veiculos.map(function (v) {
+                    var rotV = v.id === 'caminhao' ? 'CEASA' : v.nome;
+                    var sel = (!c.faltaMarcar && c.veiculo === v.id) ? ' selected' : '';
+                    return '<option value="' + esc(v.id) + '"' + sel + '>' + esc(rotV) + '</option>';
+                }).join('') +
+                '</select></label>'
+            : '<span class="rq-cartao-veic"><span class="rota-veic-cor" style="--veic-cor:' + esc(c.corVeiculo) + '" aria-hidden="true"></span>' + esc(c.nomeVeiculo) + '</span>';
+
         return '<li class="' + classes.join(' ') + '" style="--veic-cor:' + esc(c.corVeiculo) + '"' +
             ' data-rq-cartao="' + esc(c.cd_pedido) + '"' +
             (c.dia ? ' data-rq-dia="' + esc(c.dia) + '"' : ' data-rq-bandeja-item="1"') +
@@ -1404,7 +1463,7 @@
             '</div>' +
             '<div class="rq-cartao-corpo">' +
                 '<div class="rq-cartao-detalhe-linha">' +
-                    '<span class="rq-cartao-veic"><span class="rota-veic-cor" style="--veic-cor:' + esc(c.corVeiculo) + '" aria-hidden="true"></span>' + esc(c.nomeVeiculo) + '</span>' +
+                    htmlVeicDetalhe +
                     '<span class="rq-cartao-cidade">' + esc(c.localizacao) + '</span>' +
                 '</div>' +
                 '<div class="rq-cartao-selos">' + htmlSeloPrazo(c, false) + (selosExtra.length ? ' ' + selosExtra.join('') : '') + '</div>' +
@@ -1923,6 +1982,8 @@
                 }
             } else if (acao.tipo === 'sugerir_semana') {
                 if (typeof cbs.onSugerirSemana === 'function') cbs.onSugerirSemana(r.aplicados || [], st);
+            } else if (acao.tipo === 'trocar_veiculo') {
+                if (typeof cbs.onTrocarVeiculo === 'function') cbs.onTrocarVeiculo(acao, st);
             }
             if (typeof cbs.onChange === 'function') cbs.onChange(st, acao);
             return r;
@@ -2138,9 +2199,18 @@
             }
 
             var cardClick = t.closest('.rq-cartao');
-            if (cardClick && !t.closest('details.rq-menu') && !t.closest('button')) {
+            if (cardClick && !t.closest('details.rq-menu') && !t.closest('button') && !t.closest('select') && !t.closest('.rq-cartao-veic-wrap')) {
                 cardClick.classList.toggle('is-aberto');
             }
+        });
+
+        alvo.addEventListener('change', function (ev) {
+            var sel = ev.target && ev.target.closest && ev.target.closest('[data-rq-veiculo-select]');
+            if (!sel || sel.disabled) return;
+            var cdV = Number(sel.getAttribute('data-rq-veiculo-select'));
+            var novoV = sel.value || '';
+            if (!cdV || !novoV) return;
+            executar({ tipo: 'trocar_veiculo', cd_pedido: cdV, veiculo: novoV }, '[data-rq-cartao="' + cdV + '"] [data-rq-veiculo-select]');
         });
 
         alvo.addEventListener('input', function (ev) {
