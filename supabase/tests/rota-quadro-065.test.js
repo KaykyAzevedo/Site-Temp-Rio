@@ -515,10 +515,9 @@ test('066 assistente e mapa: linha deposito->paradas->deposito por dia/veiculo, 
     assert.equal(card1534.atrasoDias, 3);
     assert.equal(colSex.atrasados, 2, 'contador no topo da coluna soma #1546 (1 dia) + #1534 (3 dias)');
     const htmlAtr = Q.html(rAtr.estado);
-    assert.ok(htmlAtr.includes('Passa 3 dias da meta'), 'selo vermelho Passa 3 dias da meta no cartao');
-    assert.ok(htmlAtr.includes('Passa 1 dia da meta'), 'selo vermelho Passa 1 dia da meta em #1536/#1546');
-    assert.ok(htmlAtr.includes('data-rq-contador-atraso="2"'), 'contador de atrasos no topo da coluna');
-    assert.ok(htmlAtr.includes('depois da meta'), 'aviso depois da meta no topo da coluna');
+    // 068SM: o dado de atraso continua no core, mas a tela nao mostra meta/atraso
+    assert.ok(!/meta/i.test(htmlAtr.replace(/rq-[a-z-]*meta/g, '')), 'sem a palavra meta na tela');
+    assert.ok(!htmlAtr.includes('data-rq-contador-atraso') && !htmlAtr.includes('data-rq-selo-atraso'), 'sem selos/contadores de atraso por meta');
 
     // 3. Sugestoes (stub do contrato 066): chips com Aceitar/Ignorar e botao "Sugerir semana" (pre-preenche rascunho sem salvar)
     const stub066 = Q.gerarStubSugestoes066(st);

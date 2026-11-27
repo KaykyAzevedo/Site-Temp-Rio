@@ -17,13 +17,13 @@
         { v: 6, curto: 'Sáb', nome: 'Sábado' }
     ];
     var MOTIVOS_ERRO = {
-        parametro_invalido: 'Confira os dados informados para a meta de entrega.',
+        parametro_invalido: 'Confira os dados informados para a entrega agendada.',
         motivo_invalido: 'Informe um motivo de 1 a 200 caracteres, sem < > nem caracteres de controle.',
         pedido_nao_encontrado: 'Pedido não encontrado. Atualize a tela.',
-        pedido_historico: 'Pedido já está no Histórico e não pode ter a meta alterada.',
+        pedido_historico: 'Pedido já está no Histórico e não pode ter a data agendada alterada.',
         cliente_sem_documento: 'Este pedido não tem cliente identificado para salvar regra permanente.',
         dia_sem_saida: 'A data escolhida não é dia útil configurado ou é feriado.',
-        prazo_indisponivel: 'Não foi possível calcular uma meta de entrega válida com essas regras.',
+        prazo_indisponivel: 'Não foi possível calcular uma data válida com essas regras.',
         veiculo_invalido: 'Veículo inválido para consultar o calendário.'
     };
     var MOTIVOS_CAL = {
@@ -219,7 +219,7 @@
                 prazos: {},
                 regras: {},
                 padrao: null,
-                erro: String((err && err.message) || err || 'Não foi possível ler as metas de entrega.')
+                erro: String((err && err.message) || err || 'Não foi possível ler as entregas agendadas.')
             };
         });
     }
@@ -280,7 +280,7 @@
         var veic = String(veiculo || 's10');
         return chamarRpc(sb, 'rota_068_calendario_veiculo', { p_veiculo: veic, p_de: de, p_ate: ate }).then(function (d) {
             checarStatusOk(d);
-            if (!Array.isArray(d.dias_prazo)) throw new Error('Calendário de meta de entrega incompleto.');
+            if (!Array.isArray(d.dias_prazo)) throw new Error('Calendário de entrega agendada incompleto.');
             return d;
         });
     }
@@ -300,23 +300,22 @@
         return 'padrão';
     }
 
+    // 068SM: sem "meta". Só a ENTREGA AGENDADA pelo cliente (tipo 'data'): marcar / alterar / remover data.
     function htmlCard(pedido, opts) {
         opts = opts || {};
         if (!parteBAtiva() || !pedido) return '';
         if (opts.erro) {
-            return '<p class="adm-prazo068-linha adm-entrega-erro" role="alert">Meta de entrega indisponível: ' + esc(opts.erro) + '</p>';
+            return '<p class="adm-prazo068-linha adm-entrega-erro" role="alert">Entrega agendada indisponível: ' + esc(opts.erro) + '</p>';
         }
         if (!opts.instalada) return '';
-        var row = opts.prazos && opts.prazos[pedido.cd_pedido];
-        if (!row) return '';
-        var texto = row.prazo_ideal ? dataBr(row.prazo_ideal) : (row.prazo_padrao_dias != null ? row.prazo_padrao_dias + ' dias úteis' : '2 dias úteis');
-        var orig = origemRotulo(row.origem);
-        var atraso = Number(row.atraso_dias || 0);
-        var seloAtraso = atraso > 0 ? ' <span class="adm-prazo068-atraso">+' + atraso + 'd</span>' : '';
+        var row = (opts.prazos && opts.prazos[pedido.cd_pedido]) || {};
+        var agendado = row.tipo === 'data' && !!row.prazo_ideal;
         var pode = podeEditar(opts) && row.travado !== true;
-        return '<div class="adm-prazo068-linha" data-prazo068-box="' + esc(pedido.cd_pedido) + '">' +
-            '<span>Meta · <strong>' + esc(texto) + '</strong> <small class="adm-prazo068-orig">(' + esc(orig) + ')</small>' + seloAtraso + '</span>' +
-            (pode ? ' <button type="button" class="adm-botao-fantasma no-print" data-prazo068-cd="' + esc(pedido.cd_pedido) + '" aria-label="Alterar meta de entrega do pedido #' + esc(pedido.cd_pedido) + '">Alterar meta</button>' : '') +
+        if (!agendado && !pode) return '';
+        var cd = esc(pedido.cd_pedido);
+        return '<div class="adm-prazo068-linha" data-prazo068-box="' + cd + '">' +
+            '<span>Entrega agendada: <strong>' + (agendado ? esc(dataBr(row.prazo_ideal)) : 'sem data') + '</strong></span>' +
+            (pode ? ' <button type="button" class="adm-botao-fantasma no-print" data-prazo068-cd="' + cd + '" aria-label="' + (agendado ? 'Alterar' : 'Marcar') + ' entrega agendada do pedido #' + cd + '">' + (agendado ? 'Alterar data' : 'Marcar data') + '</button>' : '') +
         '</div>';
     }
 
@@ -356,18 +355,18 @@
         var auditoria = row.em ? 'Última alteração: ' + esc(row.por || 'equipe') + ' · ' + esc(horaSP(row.em)) + (row.motivo ? ' · ' + esc(row.motivo) : '') : '';
 
         dlg.innerHTML = '<form class="adm-prazo068-form" novalidate>' +
-            '<h2 id="prazo068-tit" class="text-lg font-bold">Meta de entrega do pedido #' + esc(pedido.cd_pedido) + '</h2>' +
-            '<p class="text-xs my-1" style="color:var(--adm-tinta-2)">É uma meta, não bloqueia: o pedido pode sair depois.</p>' +
-            (row.prazo_ideal ? '<p class="text-sm my-2">Meta atual: <strong>' + esc(dataBr(row.prazo_ideal)) + '</strong> (' + esc(origemRotulo(row.origem)) + ')</p>' : '') +
+            '<h2 id="prazo068-tit" class="text-lg font-bold">Entrega agendada do pedido #' + esc(pedido.cd_pedido) + '</h2>' +
+            '<p class="text-xs my-1" style="color:var(--adm-tinta-2)">Data combinada com o cliente: o pedido ganha prioridade máxima nessa data.</p>' +
+            (row.tipo === 'data' && row.prazo_ideal ? '<p class="text-sm my-2">Data agendada atual: <strong>' + esc(dataBr(row.prazo_ideal)) + '</strong></p>' : '') +
             (auditoria ? '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">' + auditoria + '</p>' : '') +
-            '<fieldset class="adm-prazo068-fs"><legend>Aplicar em</legend>' +
+            '<fieldset class="adm-prazo068-fs" hidden><legend>Aplicar em</legend>' +
                 '<label class="adm-prazo068-opt"><input type="radio" name="escopo" value="pedido" checked> Só este pedido (exceção)</label>' +
                 '<label class="adm-prazo068-opt"><input type="radio" name="escopo" value="cliente"' + (!doc ? ' disabled' : '') + '> Regra deste cliente (limpa exceção deste pedido)</label>' +
                 (!doc ? '<p class="text-xs" style="color:var(--adm-tinta-3)">Pedido sem documento: disponível apenas como exceção por pedido.</p>' : '') +
             '</fieldset>' +
-            '<fieldset class="adm-prazo068-fs"><legend>Tipo de meta</legend>' +
-                '<label class="adm-prazo068-opt"><input type="radio" name="tipo" value="dias_uteis" checked> +N dias úteis</label>' +
-                '<label class="adm-prazo068-opt" data-prazo068-opt-data><input type="radio" name="tipo" value="data"> Data agendada</label>' +
+            '<fieldset class="adm-prazo068-fs" hidden><legend>Tipo</legend>' +
+                '<label class="adm-prazo068-opt"><input type="radio" name="tipo" value="dias_uteis"> +N dias úteis</label>' +
+                '<label class="adm-prazo068-opt" data-prazo068-opt-data><input type="radio" name="tipo" value="data" checked> Data agendada</label>' +
                 '<label class="adm-prazo068-opt" data-prazo068-opt-semana hidden><input type="radio" name="tipo" value="semana"> Dias fixos da semana</label>' +
             '</fieldset>' +
             '<label class="block my-3" data-prazo068-blk-dias>Dias úteis (0 a 365)<input type="number" name="dias" class="adm-input" min="0" max="365" step="1" value="' + esc(diasIni) + '"></label>' +
@@ -381,15 +380,15 @@
                     var chk = semanaIni.indexOf(d.v) >= 0 && !dis;
                     return '<label><input type="checkbox" name="semana" value="' + d.v + '"' + (chk ? ' checked' : '') + (dis ? ' disabled' : '') + '> ' + esc(d.curto) + '</label>';
                 }).join('') + '</div>' +
-                (!permiteDom ? '<p class="text-xs mt-1" style="color:var(--adm-tinta-3)">Domingo só fica disponível se habilitado em Meta padrão.</p>' : '') +
+                (!permiteDom ? '<p class="text-xs mt-1" style="color:var(--adm-tinta-3)">Domingo só fica disponível se habilitado nas regras da rota.</p>' : '') +
             '</fieldset>' +
             '<label class="block my-3">Motivo (obrigatório, 1 a 200 caracteres)<textarea name="motivo" class="adm-input block w-full" maxlength="200" rows="2" required></textarea></label>' +
             '<p class="text-xs" style="color:var(--adm-tinta-3)"><span data-prazo068-cont>0</span>/200</p>' +
             '<p role="alert" class="adm-entrega-erro" data-prazo068-erro></p>' +
             '<div class="adm-prazo068-acoes">' +
-                '<button type="submit" class="adm-botao">Salvar meta</button>' +
-                (row.excecao ? '<button type="button" class="adm-botao-fantasma" data-prazo068-rem-exc="1">Remover exceção</button>' : '') +
-                (regra && doc ? '<button type="button" class="adm-botao-fantasma" data-prazo068-rem-reg="1">Remover regra do cliente</button>' : '') +
+                '<button type="submit" class="adm-botao">Salvar data agendada</button>' +
+                (row.excecao ? '<button type="button" class="adm-botao-fantasma" data-prazo068-rem-exc="1">Remover data agendada</button>' : '') +
+                
                 '<button type="button" class="adm-botao-fantasma" data-prazo068-cancelar="1">Cancelar</button>' +
             '</div>' +
         '</form>';
@@ -567,75 +566,6 @@
         if (ta) ta.focus();
     }
 
-    function abrirConfigPadrao(getOpts, opener) {
-        var o = getOpts();
-        if (!parteBAtiva() || !podeEditar(o) || !o.sb) return;
-        fechar();
-        var pad = o.padrao || { prazo_ideal_dias: 2, prazo_dias_uteis_semana: [1, 2, 3, 4, 5], atualizado_por: null, atualizado_em: null };
-        var diasSemana = normalizarDiasSemana(pad.prazo_dias_uteis_semana);
-        if (!diasSemana.length) diasSemana = [1, 2, 3, 4, 5];
-
-        var dlg = document.createElement('dialog');
-        dialogo = dlg;
-        dlg.className = 'adm-prazo068-dlg';
-        dlg.setAttribute('aria-labelledby', 'prazo068-pad-tit');
-        var aud = pad.atualizado_em ? 'Atualizado por ' + esc(pad.atualizado_por || 'equipe') + ' · ' + esc(horaSP(pad.atualizado_em)) : '';
-        dlg.innerHTML = '<form class="adm-prazo068-form" novalidate>' +
-            '<h2 id="prazo068-pad-tit" class="text-lg font-bold">Meta de entrega padrão</h2>' +
-            '<p class="text-xs my-2" style="color:var(--adm-tinta-2)">Vale como meta de entrega para todos os pedidos sem regra de cliente nem exceção. É uma meta, não bloqueia: o pedido pode sair depois. Independente dos dias de saída dos veículos.</p>' +
-            (aud ? '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">' + aud + '</p>' : '') +
-            '<label class="block my-3">Meta padrão (dias úteis, 0 a 365)<input type="number" name="dias" class="adm-input" min="0" max="365" step="1" value="' + esc(pad.prazo_ideal_dias) + '" required></label>' +
-            '<fieldset class="adm-prazo068-fs"><legend>Dias úteis que contam para a meta</legend>' +
-                '<div class="adm-prazo068-sem">' + DIAS_SEMANA.map(function (d) {
-                    return '<label><input type="checkbox" name="uteis" value="' + d.v + '"' + (diasSemana.indexOf(d.v) >= 0 ? ' checked' : '') + '> ' + esc(d.curto) + '</label>';
-                }).join('') + '</div></fieldset>' +
-            '<p role="alert" class="adm-entrega-erro" data-prazo068-erro></p>' +
-            '<div class="adm-prazo068-acoes"><button type="submit" class="adm-botao">Salvar meta padrão</button>' +
-                '<button type="button" class="adm-botao-fantasma" data-prazo068-cancelar="1">Cancelar</button></div>' +
-        '</form>';
-
-        var ocupado = false;
-        var erroEl = dlg.querySelector('[data-prazo068-erro]');
-        dlg.querySelector('[data-prazo068-cancelar]').onclick = fechar;
-        dlg.addEventListener('cancel', function (ev) { if (ocupado) ev.preventDefault(); });
-        dlg.addEventListener('close', function () { if (opener && opener.isConnected) opener.focus(); });
-
-        dlg.querySelector('form').onsubmit = function (ev) {
-            ev.preventDefault();
-            if (ocupado) return;
-            var atual = getOpts();
-            if (atual.sb !== o.sb || atual.sessao !== o.sessao || !podeEditar(atual)) { fechar(); return; }
-            var dias = Number(dlg.querySelector('[name=dias]').value);
-            var uteis = Array.from(dlg.querySelectorAll('[name=uteis]:checked')).map(function (c) { return Number(c.value); });
-            if (!Number.isInteger(dias) || dias < 0 || dias > 365) { erroEl.textContent = 'Informe de 0 a 365 dias úteis.'; return; }
-            if (!uteis.length) { erroEl.textContent = 'Selecione pelo menos um dia útil da semana.'; return; }
-            erroEl.textContent = '';
-            ocupado = true;
-            var btn = dlg.querySelector('[type=submit]'), rot = btn.textContent;
-            dlg.querySelectorAll('button').forEach(function (b) { b.disabled = true; });
-            btn.textContent = 'Salvando…';
-            salvarPadrao(o.sb, dias, uteis).then(function () {
-                if (!dlg.isConnected || getOpts().sb !== o.sb) return;
-                fechar();
-                if (typeof raiz.dispatchEvent === 'function' && typeof raiz.CustomEvent === 'function') {
-                    raiz.dispatchEvent(new raiz.CustomEvent('temprio-prazo068'));
-                }
-            }).catch(function (err) {
-                if (dlg.isConnected) erroEl.textContent = String((err && err.message) || err);
-            }).then(function () {
-                ocupado = false;
-                if (dlg.isConnected) {
-                    btn.textContent = rot;
-                    dlg.querySelectorAll('button').forEach(function (b) { b.disabled = false; });
-                }
-            });
-        };
-
-        document.body.appendChild(dlg);
-        dlg.showModal();
-        dlg.querySelector('[name=dias]').focus();
-    }
-
     function ligar(el, getOpts, pedidos) {
         if (!el || !parteBAtiva()) return;
         (pedidos || []).forEach(function (p) { if (p && p.cd_pedido != null) registroPedidos[Number(p.cd_pedido)] = p; });
@@ -664,7 +594,6 @@
         textoDiasSemana: textoDiasSemana,
         htmlCard: htmlCard,
         abrirPrazo: abrirPrazo,
-        abrirConfigPadrao: abrirConfigPadrao,
         ligar: ligar,
         fechar: fechar
     };

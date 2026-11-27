@@ -455,17 +455,17 @@
     // 046: salvar plano da semana no banco — só com a 046 lida e quem pode marcar.
     function podeSalvarSemana() { return st.v2 && st.pln046 && podeEditar(); }
 
-    var SIT = { vencido: ['Meta passada', 'rota-sit-vencido', 'fa-triangle-exclamation'], hoje: ['Meta hoje', 'rota-sit-hoje', 'fa-hourglass-end'],
-                amanha: ['Meta na próxima saída', 'rota-sit-amanha', 'fa-hourglass-half'], ok: ['Na meta', 'rota-sit-ok', 'fa-check'], sem_data: ['Sem data', 'rota-sit-ok', 'fa-question'] };
+    var SIT = { vencido: ['Vencido', 'rota-sit-vencido', 'fa-triangle-exclamation'], hoje: ['Hoje', 'rota-sit-hoje', 'fa-hourglass-end'],
+                amanha: ['Próxima saída', 'rota-sit-amanha', 'fa-hourglass-half'], ok: ['Ok', 'rota-sit-ok', 'fa-check'], sem_data: ['Sem data', 'rota-sit-ok', 'fa-question'] };
     // soProblema=true (v3): só mostra selo quando há problema (vencido, vence hoje ou sem data); no prazo fica limpo.
     // US-2: listas auxiliares da semana vêm sem x.situacao no core — calcula em relação a diaRef e nunca trata undefined como "No prazo".
-    // 068AG: agenda do cliente. Meta = data agendada; selo forte, prioridade máxima e texto de encaixe.
+    // 068AG: agenda do cliente. A data agendada é a data de entrega; selo forte, prioridade máxima e texto de encaixe.
     var MOTIVO_AG = { fora_data: 'fora da data agendada', plano_fora_data: 'plano salvo fora da data agendada (nada foi reescrito)', sem_veiculo: 'sem veículo definido',
         sem_saida: 'veículo sem saída nesse dia', capacidade: 'acima da capacidade (mantido na data)', atrasado: 'passou da data agendada', bandeja_manual: 'na bandeja (movido manualmente)' };
     function diaCurto(iso) { return iso ? String(nomeDia(iso) || '').slice(0, 3).toLowerCase() : ''; }
     function seloAgendado(x) {
         if (!x) return '';
-        var h = !x.agendado ? '' : '<span class="rota-selo rota-selo-agendado" title="Agendado pelo cliente: a meta é a data agendada e o pedido tem prioridade máxima"><i class="fa-solid fa-calendar-check" aria-hidden="true"></i>Agendado' +
+        var h = !x.agendado ? '' : '<span class="rota-selo rota-selo-agendado" title="Agendado pelo cliente: a data agendada é a data de entrega e o pedido tem prioridade máxima"><i class="fa-solid fa-calendar-check" aria-hidden="true"></i>Agendado' +
             (x.dataAgendada ? ' p/ ' + esc(dataBr(x.dataAgendada)) : '') + (x.prioridadeMaxima ? ' · prioridade máxima' : '') + '</span>';
         if (x.agendado && x.alertaAgendadoForte) h += ' <span class="rota-sit rota-sit-vencido"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>Agendamento em risco</span>';
         var e = x.encaixeAgendado;
@@ -519,14 +519,8 @@
             st.agendados = null; st.agendadosErro = String((e && e.message) || e || 'erro'); if (st.ativo) desenhar();   // sem fallback silencioso: avisa
         });
     }
-    function seloPrazoBase(x, soProblema, diaRef, veicRef) {
-        if (!x) return '';
-        var sit = x.situacao || (diaRef && situacaoPrazo ? situacaoPrazo(x.prazo, diaRef, st.cfg, veicRef || x.veiculo) : null);
-        if (!sit || !SIT[sit]) return x.prazo && !soProblema ? '<span class="rota-selo">Meta · ' + esc(dataBr(x.prazo)) + '</span>' : '';
-        if (soProblema && (sit === 'ok' || sit === 'amanha')) return '';
-        var s = SIT[sit];
-        return '<span class="rota-sit ' + s[1] + '"><i class="fa-solid ' + s[2] + '" aria-hidden="true"></i>' + s[0] + (x.prazo ? ' · ' + dataBr(x.prazo) : '') + '</span>';
-    }
+    // 068SM: o site não mostra meta/prazo; só a entrega agendada (seloAgendado).
+    function seloPrazoBase() { return ''; }
     // '530 potes avulsos (≈22 cx24)': potes de produto com código próprio, em caixas de 24 equivalentes.
     function txtAvulsos(n) {
         return NUM.format(n) + (n === 1 ? ' pote avulso' : ' potes avulsos') + ' (≈' + NUM.format(Math.round(n / 24)) + ' cx24)';
@@ -898,7 +892,7 @@
                 return '<tr><td><strong>' + esc(nome) + '</strong><div class="rota-sub">' + esc((x0.c && x0.c.bairro) || 'sem bairro') + ' · #' + g.xs.map(function (x) { return esc(x.p.cd_pedido); }).join(', #') +
                     ' · <span class="rota-selo"><i class="fa-solid fa-calendar-day" aria-hidden="true"></i>' + esc(motivo) + '</span></div></td>' +
                     '<td data-rotulo="Caixas">' + g.xs.map(function (x) { return txtCaixas(x.v); }).join('<br>') + '</td>' +
-                    '<td data-rotulo="Vai para">' + (x0.proxima ? esc(nomeDia(x0.proxima) + ' ' + dataBr(x0.proxima)) : 'sem data') + (x0.estoura ? ' <strong class="rota-txt-ruim">passa da meta</strong>' : '') + '</td>' +
+                    '<td data-rotulo="Vai para">' + (x0.proxima ? esc(nomeDia(x0.proxima) + ' ' + dataBr(x0.proxima)) : 'sem data') + '' + '</td>' +
                     (podeAjustarFx() ? '<td data-rotulo="Trazer para hoje"><div class="rota-marc-linha"><label class="sr-only" for="' + idSel + '">Veículo para ' + esc(nome) + '</label>' +
                         '<select class="adm-input rota-sel" id="' + idSel + '">' + saem.map(function (id) { return '<option value="' + esc(id) + '"' + (id === padrao ? ' selected' : '') + '>' + esc(rotuloMarca(id)) + '</option>'; }).join('') + '</select>' +
                         '<button type="button" class="adm-botao-fantasma no-print" data-rota-trazer="' + esc(cdsDe(g.xs).join(',')) + '" data-rota-trazer-sel="' + idSel + '"' +
@@ -957,7 +951,7 @@
                 '<div class="rota-sub">' + esc([sp.bairro, sp.cidade].filter(Boolean).join(' · ') || 'sem bairro') +
                 ' · pedido' + (sp.pedidos.length > 1 ? 's ' : ' ') + sp.pedidos.map(function (x) { return esc(x.p.cd_pedido); }).join(', ') +
                 (sp.precisao === 'bairro' ? ' · <span class="rota-aviso-txt">posição aproximada (bairro)</span>' : '') + '</div></td>' +
-                '<td data-rotulo="Caixas">' + cx + '</td><td class="num" data-rotulo="Valor">' + esc(brl(val)) + '</td><td data-rotulo="Meta">' + seloPrazo(pior, false) + '</td>' +
+                '<td data-rotulo="Caixas">' + cx + '</td><td class="num" data-rotulo="Valor">' + esc(brl(val)) + '</td><td data-rotulo="Agendamento">' + seloPrazo(pior, false) + '</td>' +
                 '<td data-rotulo="Veículo">' + celulaVeiculoParada(sp, nome) + '</td></tr>';
         }
         var prazoRuim = seloPrazo(pior, true);
@@ -987,7 +981,7 @@
         if (!n) return '<p class="adm-vazio-linha"><span class="adm-vazio-titulo">' + esc(vazio) + '</span></p>';
         if (!st.v2) {
             return '<div class="overflow-x-auto"><table class="adm-tabela rota-tabela"><thead><tr><th>#</th>' +
-                '<th>Cliente</th><th>Caixas</th><th class="num">Valor</th><th>Meta</th><th>Veículo</th></tr></thead><tbody>' +
+                '<th>Cliente</th><th>Caixas</th><th class="num">Valor</th><th>Agendamento</th><th>Veículo</th></tr></thead><tbody>' +
                 listaParadas.map(function (sp, i) { return htmlParada(sp, i + 1); }).join('') +
                 (g.semPosicao.length ? '<tr class="rota-sep"><td colspan="6">Sem posição no mapa — entregar conforme o bairro</td></tr>' + g.semPosicao.map(function (sp) { return htmlParada(sp, null); }).join('') : '') +
                 '</tbody></table></div>';
@@ -1654,7 +1648,7 @@
                 (x.proxima ? ' · vai ' + esc(nomeDia(x.proxima) + ' ' + dataBr(x.proxima)) : '') + '</span>';
         }
         if (x.motivoFica === 'sem_volume') {
-            return '<span class="rota-selo"><i class="fa-solid fa-circle-question" aria-hidden="true"></i>sem volume (na meta)</span>';
+            return '<span class="rota-selo"><i class="fa-solid fa-circle-question" aria-hidden="true"></i>sem volume</span>';
         }
         if (x.motivoFica === 'sem_saida_veiculo') {
             return '<span class="rota-selo rota-selo-fechado"><i class="fa-solid fa-calendar-xmark" aria-hidden="true"></i>' + esc(rotuloMarca(x.veiculo)) + ' não sai neste dia' +
@@ -1675,7 +1669,7 @@
             : proxPadrao ? esc(nomeDia(proxPadrao)) + ' ' + esc(dataBr(proxPadrao)) : 'sem saída nos próximos ' + NUM.format(ROTA.BUSCA_SAIDA_DIAS) + ' dias';
         return '<section class="adm-card p-4 mb-5 rota-cartao' + (estouram ? ' rota-cartao-alerta' : '') + '" aria-labelledby="rota-fica-tit">' +
             '<div class="rota-cab rota-cab-compacto"><p class="rota-tit" id="rota-fica-tit"><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> Fica p/ próxima saída (' + NUM.format(pl.fica.length) + ' · ' + titProx + ')</p>' +
-            (estouram ? '<span class="rota-sit rota-sit-vencido"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>' + NUM.format(estouram) + (estouram === 1 ? ' passa da meta' : ' passam da meta') + '</span>' : '') + '</div>' +
+            '</div>' +
             '<div class="overflow-x-auto"><table class="adm-tabela rota-tabela"><thead><tr><th>Cliente</th><th>Caixas</th><th>Veículo</th></tr></thead><tbody>' +
             pl.fica.map(function (x) {
                 var nome = nomeCliente(x.c, x);
@@ -1686,7 +1680,7 @@
                     ' · #' + esc(x.p.cd_pedido) + ' · ' + seloMotivoFica(x) +
                     (x.motivoFica !== 'dia_fechado' && x.motivoFica !== 'sem_saida_s10' && x.motivoFica !== 'sem_saida_veiculo' && x.proxima !== proxVeic(x.veiculo) ? ' · sai ' + (x.proxima ? esc(nomeDia(x.proxima) + ' ' + dataBr(x.proxima)) : 'sem data') : '') +
                     (prazoRuim ? ' ' + prazoRuim : '') + (plDia ? ' ' + plDia : '') +
-                    (x.estoura ? ' · <strong class="rota-txt-ruim">passa da meta</strong>' : '') + '</div>' +
+                    '</div>' +
                     enderecoEntregaHtml(x.p, x.c) + (st.v2 ? htmlRegrasCliente(x.p.documento, nome, true, true) : '') + '</td><td data-rotulo="Caixas">' + txtCaixas(x.v) + '</td>' +
                     '<td data-rotulo="Veículo">' + (st.v2 ? seletorPedidoV2(x, nome, false) : seloMotivo(x) + menuVeiculo(x.p.documento, nome)) + '</td></tr>';
             }).join('') + '</tbody></table></div></section>';
@@ -1766,7 +1760,7 @@
             partes.push('<span class="rota-sit rota-sit-hoje"><i class="fa-solid fa-hand-pointer" aria-hidden="true"></i>Marque ' + esc(s.nomeVeiculo || rotuloMarca(s.veiculo || 's10')) + '</span>');
         }
         if (s.estoura) {
-            partes.push('<span class="rota-sit rota-sit-vencido"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>passa da meta' + (s.prazo ? ' · ' + esc(dataBr(s.prazo)) : '') + '</span>');
+            /* 068SM: sem alerta de meta */
         } else {
             var pr = seloPrazo({ prazo: s.prazo, situacao: s.situacao }, true);
             if (pr) partes.push(pr);
@@ -1938,7 +1932,7 @@
             'Caminhão: ' + (st.v2 ? 'só o Centro de distribuição CEASA (sem paradas em bairros no caminho)' : 'só o CEASA'),
             st.v2 ? 'Horário estimado: saída às ' + esc(hhmm(cfg.horaSaida) || '07:00') + ' · velocidade média ' + NUM1.format(cfg.velocidadeKmh) + ' km/h · ' + NUM.format(cfg.minutosParada) + ' min por parada' : null,
             'Feriados: ' + (cfg.feriadosSemSaida ? 'sem saída (nacionais, Carnaval, Sexta-feira Santa, Corpus Christi' + (extras.length ? ' e ' + esc(extras.map(dataBr).join(', ')) : '') + ')' : 'têm saída normal'),
-            'Corte do pedido: ' + (cfg.corteHora == null ? 'sem corte' : 'a partir das ' + cfg.corteHora + 'h a meta conta do dia seguinte'),
+            'Corte do pedido: ' + (cfg.corteHora == null ? 'sem corte' : 'a partir das ' + cfg.corteHora + 'h o pedido conta do dia seguinte'),
             cfg.canhotoDesde ? 'Controle de canhoto desde ' + esc(dataBr(diaSP(cfg.canhotoDesde)) + ' ' + dataHoraControle(cfg.canhotoDesde).slice(11)) + ' (São Paulo). Faturamentos anteriores são legado recebido.' : 'Controle de canhoto para todos os faturamentos (sem corte de legado).',
             'Volta da S10: ' + (cfg.voltaSede ? 'o km e o horário incluem a volta para a sede' : 'o km e o horário não incluem a volta'),
             st.v2
@@ -1957,7 +1951,7 @@
             '<ul>' + itens.map(function (t) { return '<li>' + t + '</li>'; }).join('') +
             '<li>Candidatos: pedidos sem canhoto ativo e fora do legado anterior ao controle; inclui faturados (saiu/atendido) até 7 dias após a saída prevista.</li>' +
             (st.v2 ? htmlAjudaV2() : htmlAjudaV1()) +
-            '<li>Meta de entrega: data do pedido + ' + ROTA.PRAZO_DIAS_UTEIS + ' dias úteis (é uma meta, não bloqueia: o pedido pode sair depois; S10 sai de segunda a sexta; caminhão do CEASA de segunda a sábado; feriado conforme as regras acima; pedido depois do corte conta do dia seguinte).</li>' +
+            '<li>Saídas: S10 sai de segunda a sexta; caminhão do CEASA de segunda a sábado; feriado conforme as regras acima; pedido depois do corte conta do dia seguinte).</li>' +
             '</ul>' + aviso + '</details>';
     }
     // datetime-local representa Sao Paulo, nunca o fuso do aparelho.
@@ -2003,7 +1997,7 @@
                 '<button type="button" class="adm-botao-fantasma" id="rota-dlg-add-data">Adicionar</button></div>' +
                 '<ul class="rota-chips" id="rota-dlg-datas" aria-label="Datas extras sem saída">' + extras.map(chipData).join('') + '</ul></fieldset>' +
             '<fieldset><legend>Horário de corte do pedido</legend>' +
-                '<label for="rota-dlg-corte" class="rota-sub">Pedido feito a partir desta hora conta a meta do dia seguinte</label>' +
+                '<label for="rota-dlg-corte" class="rota-sub">Pedido feito a partir desta hora conta do dia seguinte</label>' +
                 '<select id="rota-dlg-corte" class="adm-input">' + horas + '</select></fieldset>' +
             (st.cfgLinha && Object.prototype.hasOwnProperty.call(st.cfgLinha, 'canhoto_desde') ?
                 '<fieldset><legend>Controle de canhoto</legend><label class="rota-dlg-campo"><span>Exigir canhoto para faturamentos a partir de (São Paulo)</span>' +
@@ -4093,8 +4087,7 @@
         var bairro = (x.c && x.c.bairro) || 'sem bairro';
         var prazoRuim = seloPrazo(x, true);
         var alertas = [];
-        if (x.estoura) alertas.push('<span class="rota-sit rota-sit-vencido"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>passa da meta</span>');
-        else if (prazoRuim) alertas.push(prazoRuim);
+        if (prazoRuim) alertas.push(prazoRuim);
         if (x.diaFechado) alertas.push('<span class="rota-selo rota-selo-fechado"><i class="fa-solid fa-calendar-xmark" aria-hidden="true"></i>não recebe neste dia</span>');
         if (x.salvoInvalido) alertas.push('<span class="rota-selo rota-selo-fechado"><i class="fa-solid fa-calendar-xmark" aria-hidden="true"></i>salvo em dia sem saída (' + esc(dataBr(x.salvoInvalido)) + ')</span>');
         if (x.regra && x.regra.prioridade) alertas.push('<span class="rota-selo rota-selo-pri"><i class="fa-solid fa-bolt" aria-hidden="true"></i>Prioridade</span>');
@@ -4125,7 +4118,7 @@
         var regTxt = resumoRegiaoDia(d, sem.regioes);
         var alertasDia = [];
         if (d.excesso) alertasDia.push('<span class="rota-sit rota-sit-vencido"><i class="fa-solid fa-box" aria-hidden="true"></i>acima de ' + NUM.format(capCx) + ' cx24</span>');
-        if (estouram) alertasDia.push('<span class="rota-sit rota-sit-vencido"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>' + NUM.format(estouram) + (estouram === 1 ? ' passa da meta' : ' passam da meta') + '</span>');
+        
         if (fechados) alertasDia.push('<span class="rota-selo rota-selo-fechado"><i class="fa-solid fa-calendar-xmark" aria-hidden="true"></i>' + NUM.format(fechados) + (fechados === 1 ? ' não recebe neste dia' : ' não recebem neste dia') + '</span>');
         if (d.horario && d.horario.atrasos) alertasDia.push('<span class="rota-sit rota-sit-vencido"><i class="fa-solid fa-clock" aria-hidden="true"></i>' + NUM.format(d.horario.atrasos) + ' fora do horário</span>');
         var itens = [];
@@ -4258,7 +4251,7 @@
                         '<span><strong>~' + NUM.format(totCx) + ' cx24</strong> na semana</span>' +
                         (sem.resumo.salvos ? '<span><strong>' + NUM.format(sem.resumo.salvos) + '</strong> ' + (sem.resumo.salvos === 1 ? 'fixado' : 'fixados') + (temRasc ? ' (com edição não salva)' : '') + '</span>' : '') +
                         (sem.resumo.faltaMarcar ? '<span class="rota-sit rota-sit-hoje"><i class="fa-solid fa-hand-pointer" aria-hidden="true"></i>' + NUM.format(sem.resumo.faltaMarcar) + ' falta(m) marcar</span>' : '') +
-                        (sem.resumo.estouram ? '<span class="rota-sit rota-sit-vencido"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>' + NUM.format(sem.resumo.estouram) + (sem.resumo.estouram === 1 ? ' passa da meta' : ' passam da meta') + '</span>' : '') +
+                        ''  +
                         (feriadosTxt ? '<span class="rota-selo rota-selo-fechado"><i class="fa-solid fa-calendar-xmark" aria-hidden="true"></i>Feriado sem saída: ' + esc(feriadosTxt) + '</span>' : '') +
                     '</div>' +
                     '<div class="rota-sem-acoes no-print">' + botoesAcao.join('') + '</div>' +
@@ -4484,7 +4477,7 @@
         var cab = '<div class="rota-topo"><div><h2 class="rota-titulo"><i class="fa-solid fa-route" aria-hidden="true"></i> Rota do dia</h2>' +
             '<p class="rota-sub">' + (st.coletado ? 'ERP às ' + esc(new Date(st.coletado).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: ROTA.TZ })) + ' · ' : '') +
             (st.frota ? st.frota.ativos.map(function (v) { return esc(rotuloMarca(v.id)) + ' ' + esc(txtDiasSaida(v)); }).join(' · ') : '') +
-            ' · meta de ' + ROTA.PRAZO_DIAS_UTEIS + ' dias úteis' + (st.cfg && st.cfg.feriadosSemSaida ? ' (sem feriados)' : '') + '</p></div>';
+            '' + (st.cfg && st.cfg.feriadosSemSaida ? ' (sem feriados)' : '') + '</p></div>';
         if (st.carregando && !st.carregado) { alvo.innerHTML = cab + '</div><p class="adm-vazio-linha"><i class="fa-solid fa-spinner fa-spin"></i><span class="adm-vazio-texto">Carregando pedidos e posições…</span></p>'; return; }
         if (st.erro) {
             alvo.innerHTML = cab + '</div><div class="adm-card p-6"><p class="text-sm mb-3">Não foi possível carregar a rota: ' + esc(st.erro) + '</p><button type="button" class="adm-botao-fantasma" id="rota-tentar">Tentar de novo</button></div>';
@@ -4563,7 +4556,6 @@
             btnVoltarSemana +
             (nFora ? '<button type="button" class="adm-botao-fantasma" id="rota-atalho-fora"><i class="fa-solid fa-ban" aria-hidden="true"></i> Fora da rota (' + NUM.format(nFora) + ')</button>' : '') +
             '<button type="button" class="adm-botao-fantasma" id="rota-frota"><i class="fa-solid fa-truck-fast" aria-hidden="true"></i> Frota</button>' +
-            (raiz.TempRioPrazo068B && st.prazo068Instalada && (st.podeMarcar || st.papel === 'admin') ? '<button type="button" class="adm-botao-fantasma" id="rota-prazo-padrao"><i class="fa-regular fa-calendar-check" aria-hidden="true"></i> Meta padrão</button>' : '') +
             (st.papel === 'admin' ? '<button type="button" class="adm-botao-fantasma" id="rota-configurar"' + (st.cfgAusente ? ' disabled title="Falta aplicar a migração 040"' : '') + '><i class="fa-solid fa-sliders" aria-hidden="true"></i> Configurar</button>' : '') +
             '<button type="button" class="adm-botao-fantasma" id="rota-btn-ajuda" aria-expanded="' + (st.cfgAberto ? 'true' : 'false') + '" title="Regras da rota e como funciona" aria-label="Regras da rota e como funciona"><i class="fa-regular fa-circle-question" aria-hidden="true"></i></button>' +
             '<button type="button" class="adm-botao-fantasma" id="rota-atualizar"><i class="fa-solid fa-rotate" aria-hidden="true"></i> Atualizar</button>' +
@@ -4575,8 +4567,8 @@
         if (st.avisoPerm) avisos.push(st.avisoPerm);
         if (st.saidaErro) avisos.push('Não foi possível ler as rotas enviadas ao motorista (' + st.saidaErro + '): envio desligado até atualizar.');
         var nota = st.vista === 'proxima' && !pl.hoje.semSaida ? '<p class="rota-sub mb-3">' + (pl.hoje.fechada
-            ? 'A rota de hoje está fechada: aqui entram os pedidos que chegaram depois do fechamento, os removidos de hoje e o que ainda não estava na meta.'
-            : 'Simulação: considera que a rota de hoje sai como planejada; aqui ficam o que sobrou e o que ainda não estava na meta.') + '</p>' : '';
+            ? 'A rota de hoje está fechada: aqui entram os pedidos que chegaram depois do fechamento, os removidos de hoje e o que ficou sem saída.'
+            : 'Simulação: considera que a rota de hoje sai como planejada; aqui ficam o que sobrou e o que ainda não tem saída.') + '</p>' : '';
         var bannerDesat = st.v2 && st.erroV2 && st.desatualizado
             ? '<div class="adm-card p-4 mb-5 rota-banner rota-banner-erro" role="alert"><p><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> ' +
                 '<strong>Rota DESATUALIZADA:</strong> não foi possível reler as marcações (' + esc(st.erroV2) + '). Mostrando o último retrato completo' +
@@ -4624,7 +4616,7 @@
         return '<li>Marcação: escolha por pedido vence o padrão do cliente. Pedido em separação entra automaticamente; sem escolha nem padrão, usa ' + esc(rotuloMarca(ROTA.VEICULO_SEPARANDO)) + '. Nos demais pedidos sem marcação, a regra do endereço (CEASA até ' + NUM.format(ROTA.CEASA_RAIO_KM * 1000) + ' m; senão S10) é só uma dica e o pedido fica em "Falta marcar".</li>' +
                 (st.ign045 ? '<li>Tirar da rota: o pedido sai da rota, de "Falta marcar" e do WhatsApp até alguém clicar em "Voltar para a rota" (lista "Fora da rota"). Pedido aberto antigo no ERP continua aparecendo até alguém tirar.</li>' : '') +
                 '<li>Regras por cliente: dias em que não recebe adiam o pedido, exceto em separação: ele entra com aviso para conferência. Prioridade, janela e observação continuam valendo.</li>' +
-                '<li>S10 (segunda a sexta): por meta de entrega (meta passada primeiro), até ' + NUM.format(Math.round(ROTA.CAPACIDADE_S10 / ROTA.VOLUME_CX24)) + ' cx24 equivalentes (volume ' + NUM.format(ROTA.CAPACIDADE_S10) + ': cx24 = ' + NUM1.format(ROTA.VOLUME_CX24) + ', cx48 = ' + NUM1.format(ROTA.VOLUME_CX48) + ', pote avulso = 9/24). Em separação entra mesmo se exceder: confira o aviso de carga.</li>' +
+                '<li>S10 (segunda a sexta): por pedido mais antigo (agendados primeiro), até ' + NUM.format(Math.round(ROTA.CAPACIDADE_S10 / ROTA.VOLUME_CX24)) + ' cx24 equivalentes (volume ' + NUM.format(ROTA.CAPACIDADE_S10) + ': cx24 = ' + NUM1.format(ROTA.VOLUME_CX24) + ', cx48 = ' + NUM1.format(ROTA.VOLUME_CX48) + ', pote avulso = 9/24). Em separação entra mesmo se exceder: confira o aviso de carga.</li>' +
                 '<li>Caminhão (segunda a sábado): tudo o que está marcado CEASA vai para o Centro de distribuição CEASA (uma parada, com a lista de carga agregada por cliente; sem limite de capacidade). O caminhão não para em bairros no caminho.</li>' +
                 '<li>Semana (referência): agrupa os pedidos em aberto da S10 por região nos dias de segunda a sexta da semana seguinte (até 300 cx24/dia). Permite mover pedidos entre dias e salvar; na rota do dia aparece apenas o selo informativo "planejado p/ dia DD/MM".</li>' +
                 '<li>Sugestões de juntar: indica pedidos pendentes de clientes que estão no caminho de uma rota S10 prevista (mesmo cliente, desvio de até ' + NUM1.format(ROTA.JUNTAR_DESVIO_KM || 3) + ' km ou mesmo bairro sem pino) e cabem na capacidade de 300 cx24, sugerindo mandar para a produção para sair junto.</li>' +
@@ -4633,7 +4625,7 @@
     // Ajuda da aba — v1 (sem a 044): regra automática de antes, com exceção por cliente.
     function htmlAjudaV1() {
         return '<li>Veículo, nesta ordem: exceção marcada para o cliente &gt; CEASA (endereço com "CEASA", Av. Brasil 19001 ou até ' + NUM.format(ROTA.CEASA_RAIO_KM * 1000) + ' m do CEASA) &gt; S10.</li>' +
-            '<li>S10: por meta de entrega (meta passada primeiro), até ' + NUM.format(ROTA.CAPACIDADE_S10) + ' de volume (cx24 = ' + NUM1.format(ROTA.VOLUME_CX24) + ', cx48 = ' + NUM1.format(ROTA.VOLUME_CX48) + ', pote avulso = 9/24); o resto fica para a próxima saída. Caminhão: sem limite.</li>' +
+            '<li>S10: por pedido mais antigo (agendados primeiro), até ' + NUM.format(ROTA.CAPACIDADE_S10) + ' de volume (cx24 = ' + NUM1.format(ROTA.VOLUME_CX24) + ', cx48 = ' + NUM1.format(ROTA.VOLUME_CX48) + ', pote avulso = 9/24); o resto fica para a próxima saída. Caminhão: sem limite.</li>' +
             '<li>Ordem (S10 e caminhão): sai da sede, vai sempre para o cliente mais perto e depois desfaz cruzamentos (2-opt). Distância em linha reta × ' + NUM1.format(ROTA.FATOR_ESTRADA) + ' (estimativa).</li>';
     }
     function ligarEventos(alvo, atual, sem) {
@@ -4656,12 +4648,6 @@
         alvo.querySelector('#rota-imprimir').addEventListener('click', imprimir);
         var cfgBtn = alvo.querySelector('#rota-configurar');
         if (cfgBtn && podeConfigurar()) cfgBtn.addEventListener('click', abrirDialogo);
-        var prazoPadBtn = alvo.querySelector('#rota-prazo-padrao');
-        if (prazoPadBtn && raiz.TempRioPrazo068B) prazoPadBtn.addEventListener('click', function () {
-            raiz.TempRioPrazo068B.abrirConfigPadrao(function () {
-                return { sb: st.sb, papel: st.papel, podeMarcar: st.podeMarcar, padrao: st.padraoPrazo068, sessao: st.sessao };
-            }, prazoPadBtn);
-        });
         var resumo = alvo.querySelector('.rota-config-resumo');
         if (resumo) resumo.addEventListener('toggle', function () {
             st.cfgAberto = resumo.open;
