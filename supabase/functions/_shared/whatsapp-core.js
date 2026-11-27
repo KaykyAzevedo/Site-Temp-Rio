@@ -208,7 +208,7 @@
                 return Promise.all([core.coletarEstados070(sb,d.pedidos),sb.rpc('rota_070_definitiva_ler',{p_dia:hoje})]).then(function (r) {
                     if (r[1].error) throw erroDe(r[1]);
                     if (!r[1].data || r[1].data.status !== 'ok' || !r[1].data.reservas_070) throw new Error('Reserva070 indisponivel');
-                    d.pedidos_estado=r[0];d.reservas_070=r[1].data.reservas_070;return d;
+                    d.pedidos_estado=r[0];d.reservas_070=r[1].data.reservas_070;return d.ativa068AG?core.coletarAgendados068ag(sb,d.pedidos).then(function(m){d.agendados=m;return d;}):d;
                 });
             });
         });
@@ -283,7 +283,7 @@
                           ignorados: ignorados, veiculos: rs[7], canhotos: rs[8], saidas: leituras[0], confirmacoes: leituras[2].porPedido,
                           prazos: prazos, regrasPrazo: regrasPrazo };   // null em veiculos = sem a 047 (padrões)
                 if (v2) { d.v2 = true; d.porPedido = porPedido; d.regras = regras; }
-                d.ativa070=!!(cfgLinha && cfgLinha.previsao_definitiva_070);
+                d.ativa070=!!(cfgLinha && cfgLinha.previsao_definitiva_070);d.ativa068AG=!!(cfgLinha && cfgLinha.agendados_prioridade_068ag);
                 return d;
             });
         });
@@ -530,7 +530,7 @@
         return core.planejar(d.pedidos, d.clientes, hoje, opcoesRota(d));
     }
     function opcoesRota(d) {
-        return { modo_planejamento:d.ativa070?'definitiva':'previsao',pedidos_estado:d.pedidos_estado,reservas_070:d.reservas_070,cfg: d.cfg, excecoes: d.excecoes, marcacao: !!d.v2, padroes: d.excecoes, porPedido: d.porPedido || {},
+        return { agendados:d.agendados,modo_planejamento:d.ativa070?'definitiva':'previsao',pedidos_estado:d.pedidos_estado,reservas_070:d.reservas_070,cfg: d.cfg, excecoes: d.excecoes, marcacao: !!d.v2, padroes: d.excecoes, porPedido: d.porPedido || {},
                  regras: d.regras || {}, ignorados: d.ignorados || {}, veiculos: d.veiculos, fechada: d.fechada || null, canhotos: d.canhotos || {}, saidas: d.saidas || {}, confirmacoes: d.confirmacoes || {},
                  prazos: d.prazos || {}, regrasPrazo: d.regrasPrazo || {},
                  projetarSeparando: false };   // fechada: mensagem usa somente inclusao confirmada pela054
@@ -866,6 +866,7 @@
                 return (multi ? b.nome + ': ' : '') + trajeto(b, max);
             }).join(' | ');
         var pr = [];
+        if(pl.alertasAgendados && pl.alertasAgendados.length)pr.push(pl.alertasAgendados.length+' ALERTA(S): AGENDADO exige conferir data/capacidade');
         if(pl.semVeiculoPedidos && pl.semVeiculoPedidos.length)pr.push(plural(pl.semVeiculoPedidos.length,'pedido sem veiculo','pedidos sem veiculo'));
         if (prio) pr.push(plural(prio, 'cliente com prioridade alta', 'clientes com prioridade alta'));
         if (janela) pr.push(janela + ' com horário fixo');

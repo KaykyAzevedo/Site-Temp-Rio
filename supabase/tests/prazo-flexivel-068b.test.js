@@ -83,7 +83,8 @@ test('068B B068-R2 rota-core: planejar, planejarSemana e sugestoesJuntar propaga
 
     // Com 068B (opts.prazos + opts.regrasPrazo): planejar detalhe do dia 03/12 ve 09/12 e 04/12!
     const plCom = core.planejar([ped1, ped2], clientes, '2026-12-03', { marcacao: true, padroes, cfg: cfgPadrao, prazos, regrasPrazo });
-    const p1Com = plCom.s10.pedidos.find((x) => x.p.cd_pedido === 99102);
+    assert.ok(!plCom.entregues[99102]); // 068AG: nao antecipar data do cliente
+    const p1Com = plCom.fica.find((x) => x.p.cd_pedido === 99102);
     const p2Com = plCom.s10.pedidos.find((x) => x.p.cd_pedido === 99103);
     assert.equal(p1Com.prazo, '2026-12-09');
     assert.equal(p1Com.situacao, 'ok');
@@ -95,15 +96,19 @@ test('068B B068-R2 rota-core: planejar, planejarSemana e sugestoesJuntar propaga
         padroes, cfg: cfgPadrao, prazos, regrasPrazo, plano: { 99102: { dia: '2026-12-03', veiculo_id: 's10' } }
     });
     const diaQui = semCom.dias.find((d) => d.dia === '2026-12-03');
-    const sp1 = diaQui.pedidos.find((x) => x.p.cd_pedido === 99102);
+    assert.ok(!diaQui.pedidos.some((x)=>x.p.cd_pedido===99102));
+    const sp1 = semCom.foraDaSemana.find((x)=>x.p.cd_pedido===99102);
+    assert.equal(sp1.dataAncora,'2026-12-09');
     assert.equal(sp1.prazo, '2026-12-09');
     assert.equal(sp1.estoura, false);
 
     // sugestoesJuntar propaga prazos e regrasPrazo
     const rotas = [{ dia: '2026-12-03', veiculo: 's10', fonte: 'plano', paradas: [{ documento: '66000000000099', nome: 'Ancora', pos: [-22.901, -43.20] }], volume: 90 }];
+    rotas.push({...rotas[0],dia:'2026-12-09'});
     const jCom = core.sugestoesJuntar([ped1, ped2], clientes, rotas, { padroes, cfg: cfgPadrao, prazos, regrasPrazo, hoje: '2026-11-30' });
     const sj1 = jCom.sugestoes.find((s) => s.cds.includes(99102));
     const sj2 = jCom.sugestoes.find((s) => s.cds.includes(99103));
+    assert.equal(sj1.dia,'2026-12-09');
     assert.equal(sj1.prazo, '2026-12-09');
     assert.equal(sj1.estoura, false);
     assert.equal(sj2.prazo, '2026-12-04');
@@ -144,9 +149,10 @@ test('068B r8 + 070 rota-core: modos previsao e definitiva (Rota de amanha) usam
     const prev = core.planejar([pedPronto, pedAberto], clientes, '2026-11-30', {
         marcacao: true, padroes, cfg: cfg070, pedidos_estado, modo_planejamento: 'previsao', hoje: '2026-11-26', prazos, regrasPrazo
     });
-    assert.equal(prev.s10.pedidos.length, 2);
-    assert.equal(prev.s10.pedidos.find((x) => x.p.cd_pedido === 701547).prazo, '2026-12-09');
-    assert.equal(prev.s10.pedidos.find((x) => x.p.cd_pedido === 701547).situacao, 'ok');
+    assert.equal(prev.s10.pedidos.length, 1);
+    assert.equal(prev.fica[0].dataAncora,'2026-12-09');
+    assert.equal(prev.fica.find((x) => x.p.cd_pedido === 701547).prazo, '2026-12-09');
+    assert.equal(prev.fica.find((x) => x.p.cd_pedido === 701547).situacao, 'ok');
     assert.equal(prev.s10.pedidos.find((x) => x.p.cd_pedido === 701545).prazo, '2026-11-27');
     assert.equal(prev.s10.pedidos.find((x) => x.p.cd_pedido === 701545).situacao, 'vencido');
 
@@ -154,10 +160,11 @@ test('068B r8 + 070 rota-core: modos previsao e definitiva (Rota de amanha) usam
     const def = core.planejar([pedPronto, pedAberto], clientes, '2026-11-30', {
         marcacao: true, padroes, cfg: cfg070, pedidos_estado, modo_planejamento: 'definitiva', hoje: '2026-11-26', prazos, regrasPrazo
     });
-    assert.equal(def.s10.pedidos.length, 1);
-    assert.equal(def.s10.pedidos[0].p.cd_pedido, 701547);
-    assert.equal(def.s10.pedidos[0].prazo, '2026-12-09');
-    assert.equal(def.s10.pedidos[0].situacao, 'ok');
+    assert.equal(def.s10.pedidos.length, 0);
+    const onDate=core.planejar([pedPronto,pedAberto],clientes,'2026-12-09',{marcacao:true,padroes,cfg:cfg070,pedidos_estado,modo_planejamento:'definitiva',hoje:'2026-11-26',prazos,regrasPrazo});
+    assert.equal(onDate.s10.pedidos.length,1);
+    assert.equal(onDate.s10.pedidos[0].p.cd_pedido,701547);
+    assert.equal(onDate.s10.pedidos[0].prazo,'2026-12-09');
 
     // planejarSemana modo definitiva respeita prazo flexivel e nao marca estoura
     const semDef = core.planejarSemana([pedPronto, pedAberto], clientes, '2026-11-30', {
@@ -165,9 +172,10 @@ test('068B r8 + 070 rota-core: modos previsao e definitiva (Rota de amanha) usam
         plano: { 701547: { dia: '2026-12-03', veiculo_id: 's10' } }
     });
     const dQui = semDef.dias.find((d) => d.dia === '2026-12-03');
-    assert.equal(dQui.pedidos.length, 1);
-    assert.equal(dQui.pedidos[0].prazo, '2026-12-09');
-    assert.equal(dQui.pedidos[0].estoura, false);
+    assert.equal(dQui.pedidos.length,0);
+    assert.ok(!semDef.dias.some(d=>d.pedidos.some(x=>x.p.cd_pedido===701547)));
+    const weekDate=core.planejarSemana([pedPronto,pedAberto],clientes,'2026-12-07',{padroes,cfg:cfg070,pedidos_estado,modo_planejamento:'definitiva',hoje:'2026-11-26',prazos,regrasPrazo});
+    assert.equal(weekDate.dias.find(d=>d.dia==='2026-12-09').pedidos[0].prazo,'2026-12-09');
 });
 
 test('068B migracao e rollback: checagens estruturais de seguranca', () => {
@@ -318,8 +326,8 @@ test('068B B068-R8-1 Edge: coletarRota + montarRota/montarChefe propagam excecao
     try {
         const mRota = W.montarRota(d, 's10', AGORA, {});
         const mChefe = W.montarChefe(d, AGORA, { template: 'rota_sugerida' });
-        assert.equal(mRota.resumo.paradas, 3);
-        assert.equal(mChefe.resumo.entregas, 3);
+        assert.equal(mRota.resumo.paradas, 2); // 068AG: agenda09Dec nao sai03Dec
+        assert.equal(mChefe.resumo.entregas, 2);
     } finally {
         core.planejar = orig;
     }
@@ -330,10 +338,12 @@ test('068B B068-R8-1 Edge: coletarRota + montarRota/montarChefe propagam excecao
             '66000000000002': { tipo: 'dias_uteis', dias: 5 },
             '66000000000003': { tipo: 'semana', dias_semana: [5] }
         });
-        const r1 = v.pl.s10.pedidos.find((x) => x.p.cd_pedido === 99102);
+        assert.ok(!v.pl.entregues[99102]);
+        const r1 = orig([p1],d.clientes,'2026-12-09',v.opts).s10.pedidos[0];
+        assert.ok(!v.pl.s10.pedidos.some(x=>x.p.cd_pedido===99102));
         const r2 = v.pl.s10.pedidos.find((x) => x.p.cd_pedido === 99103);
         const r3 = v.pl.s10.pedidos.find((x) => x.p.cd_pedido === 99104);
-        assert.equal(r1.prazo, '2026-12-09'); assert.equal(r1.situacao, 'ok');
+        assert.equal(r1.prazo, '2026-12-09'); assert.equal(r1.situacao, 'hoje'); // sai exatamente na data cliente
         assert.equal(r2.prazo, '2026-12-04'); assert.equal(r2.situacao, 'amanha');
         assert.equal(r3.prazo, '2026-12-04'); assert.equal(r3.situacao, 'amanha');
     }

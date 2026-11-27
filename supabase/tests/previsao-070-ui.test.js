@@ -160,13 +160,14 @@ test('070 loader real atravessando00h descarta pacote completo e relê estado/re
  const sb={from:query,rpc(n,p){
   if(n==='pode_marcar_rota')return Promise.resolve({data:true});
   if(n==='rota_065_ler_semana'){leituras++;if(leituras===1)return new Promise(r=>resolver=r);return Promise.resolve(leitura('2026-11-27'));}
+  if(n==='rota_068ag_agendados_ler')return Promise.resolve({data:p.p_cds.map(cd=>({cd_pedido:cd,agendado:false,data_agendada:null,data_ancora:null,movido_manualmente:false,na_bandeja:false,dia_plano:null}))});
   if(n==='rota_050_ler')return Promise.resolve({data:null});
   if(n==='rota_070_definitiva_ler')return Promise.resolve({data:{status:'ok',dia:p.p_dia,cabecalho:null,foto:null,reservas_070:agora.includes('27T')&&p.p_dia==='2026-11-27'?{'2026-11-27':{dia:'2026-11-27',origem:'virada',versao:1,itens:[{cd_pedido:1,veiculo_id:'s10',ordem:1,ativo:true,pronto_ao_reservar:true}]}}:{}}});
   return query('rpc_vazia');
  }};
  Object.assign(s,{sb,papel:'admin',ativo:true,semanaIni:'2026-11-23'});a.carregar();for(let i=0;i<100&&!resolver;i++)await new Promise(r=>setTimeout(r,1));assert.ok(resolver);
  agora='2026-11-27T00:00:01-03:00';resolver(leitura('2026-11-26'));for(let i=0;i<100&&(!s.carregado||s.carregando);i++)await new Promise(r=>setTimeout(r,1));
- assert.equal(s.erro,null);assert.equal(s.estadosDia,'2026-11-27');assert.equal(leituras,2);assert.equal(s.estadosH[1].pronto_despacho,false);assert.equal(s.sem065Dados['2026-11-23'].hoje,'2026-11-27');assert.ok(s.reservas070['2026-11-27']);
+ for(let i=0;i<100&&!s.agendados;i++)await new Promise(r=>setTimeout(r,1));assert.equal(s.erro,null);assert.equal(s.estadosDia,'2026-11-27');assert.equal(leituras,2);assert.equal(s.estadosH[1].pronto_despacho,false);assert.equal(s.sem065Dados['2026-11-23'].hoje,'2026-11-27');assert.ok(s.reservas070['2026-11-27']);
  s.modo070='definitiva';const q=a.montarDadosQuadro065('2026-11-23');assert.equal(q.bandeja.length,0);assert.equal(q.dias.find(d=>d.dia==='2026-11-27').cartoes[0].cd_pedido,1);
 });
 

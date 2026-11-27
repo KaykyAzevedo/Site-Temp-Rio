@@ -332,7 +332,8 @@
         if (modo !== 'previsao' && modo !== 'definitiva') throw new Error('Modo de planejamento070 invalido');
         if (modo === 'previsao') return pendenteEntrega(p, opts.canhotos, opts.hoje || dia, opts.cfg, opts);
         var e = estado070(p, opts), r = reserva070(p, dia, opts), h = opts.reservas_070 && opts.reservas_070[dia];
-        if (e.entregue || (e.data_saida_marcada && e.data_saida_marcada > dia)) return false;
+        var ag=agendadoDe(p,opts);
+        if (e.entregue || (ag ? ag.na_bandeja || ag.data_ancora!==dia : e.data_saida_marcada && e.data_saida_marcada>dia)) return false;
         if (r) return true;
         return e.pronto_despacho && !(h && h.origem === 'manual');
     }
@@ -352,7 +353,13 @@
                 }
             });
         });
+        Object.keys(opts.agendados || opts.prazos || {}).forEach(function(cd){var ag=agendadoDe({cd_pedido:cd},opts);if(ag){if(ag.na_bandeja)delete plano[cd];else plano[cd]=Object.assign({},typeof plano[cd]==='object'?plano[cd]:{}, {dia:ag.data_ancora});}});
         return Object.assign({}, opts, { plano: plano, porPedido: porPedido });
+    }
+    function coletarAgendados068ag(sb,pedidos) {
+        var ids=Array.from(new Set((pedidos||[]).map(function(p){return p.cd_pedido;}))),mapa={},flow=Promise.resolve();
+        for(var i=0;i<ids.length;i+=200)(function(bloco){flow=flow.then(function(){return sb.rpc('rota_068ag_agendados_ler',{p_cds:bloco}).then(function(r){if(r.error)throw new Error('Agenda068AG: '+(r.error.message||r.error.code));if(!Array.isArray(r.data)||r.data.length!==bloco.length)throw new Error('Agenda068AG incompleta');r.data.forEach(function(e){if(!e||bloco.indexOf(e.cd_pedido)<0||mapa[e.cd_pedido]||typeof e.agendado!=='boolean')throw new Error('Agenda068AG invalida');mapa[e.cd_pedido]=e;agendadoDe({cd_pedido:e.cd_pedido},{agendados:mapa});});});});})(ids.slice(i,i+200));
+        return flow.then(function(){return mapa;});
     }
     function coletarEstados070(sb, pedidos) {
         var ids = Array.from(new Set((pedidos || []).map(function (p) { return p.cd_pedido; }))), mapa = {}, corrente = Promise.resolve();
@@ -367,6 +374,23 @@
             }); });
         })(ids.slice(i,i+200));
         return corrente.then(function () { return mapa; });
+    }
+    // 068AG: agenda do cliente e ancora; somente movimento manual explicito pode sobrepor.
+    function agendadoDe(p, opts) {
+        opts=opts||{};var a=opts.agendados && opts.agendados[p.cd_pedido],ex=opts.prazos && opts.prazos[p.cd_pedido];
+        if(opts.agendados && (!a || typeof a.agendado!=='boolean'))throw new Error('Estado068AG indisponivel');
+        if(a && !a.agendado)return null;
+        if(!a){if(!ex || ex.tipo!=='data' || !/^\d{4}-\d{2}-\d{2}$/.test(ex.data||ex.data_agendada||''))return null;a={agendado:true,data_agendada:ex.data||ex.data_agendada,data_ancora:ex.data||ex.data_agendada,movido_manualmente:false,na_bandeja:false};}
+        if(!/^\d{4}-\d{2}-\d{2}$/.test(a.data_agendada||'') || (!a.na_bandeja && !/^\d{4}-\d{2}-\d{2}$/.test(a.data_ancora||'')))throw new Error('Ancora068AG invalida');
+        return a;
+    }
+    function marcarAgendado(x, opts) {
+        var a=agendadoDe(x.p,opts);if(!a)return x;
+        x.agendado=true;x.prazo=a.data_agendada;x.prioridadeMaxima=true;x.dataAgendada=a.data_agendada;x.dataAncora=a.data_ancora;x.movidoManualmente=!!a.movido_manualmente;x.naBandejaManual=!!a.na_bandeja;x.diaPlanoAgendado=a.dia_plano||null;return x;
+    }
+    function alertaAgendado(res,x,dia,motivo) {
+        res.alertasAgendados=res.alertasAgendados||[];
+        res.alertasAgendados.push({cd_pedido:x.p.cd_pedido,data_agendada:x.dataAgendada,dia:dia||null,motivo:motivo});x.alertaAgendadoForte=true;
     }
     function pendenteEntrega(p, canhotos, hoje, cfg, ctx) {
         if (p && ctx && ctx.pedidos_estado) {
@@ -685,6 +709,9 @@
     // Ordem da rota com horário: prioritários ("entregar primeiro") antes de todos; cada grupo ordenado por
     // ordenarGrupo. Sem prioridade e sem janela: EXATAMENTE ordenarParadas (rota de antes da 044).
     function ordenarComHorario(origem, paradas, tempo, volta, fim) {
+        var ag=paradas.filter(function(sp){return sp.prioridadeMaxima;}),outros=paradas.filter(function(sp){return !sp.prioridadeMaxima;});
+        if(ag.length){var seq=ordenarGrupo(origem,tempo.saida,ag,tempo,outros.length?null:(fim||(volta?origem:null)));if(!outros.length)return seq;var hAg=calcularHorarios(origem,seq,tempo,false),tAg=Object.assign({},tempo,{saida:hAg.fimMin});return seq.concat(ordenarComHorario(seq[seq.length-1].pos,outros,tAg,volta,fim||(volta?origem:null)));}
+
         var pri = paradas.filter(function (sp) { return sp.regra && sp.regra.prioridade; });
         var resto = paradas.filter(function (sp) { return !(sp.regra && sp.regra.prioridade); });
         var temJanela = paradas.some(function (sp) { return sp.regra && (sp.regra.ini != null || sp.regra.fim != null); });
@@ -839,6 +866,7 @@
                 (sp.pos ? comPos : semPos).push(sp);
             }
             sp.pedidos.push(x);
+            if(x.agendado){sp.regra=Object.assign({},sp.regra||{}, {prioridade:true,prioridadeAgendado:true});sp.prioridade=true;sp.prioridadeMaxima=true;}
         });
         var tempo = o.tempo || tempoDe(null);
         // 050 (rota fechada): ordem SALVA quando todas as paradas têm ordem (menor ordem entre os pedidos do cliente);
@@ -963,7 +991,7 @@
         var fx = v2 && opts.fechada && opts.fechada.data === dia ? fechadaDe(opts.fechada) : null;
         var res = { dia: dia, semSaida: !temSaida(dia, cfg), feriado: ehFeriado(dia, cfg), cfg: cfg, modo: v2 ? 'marcacao' : 'auto',
                     veiculos: Object.create(null), ordem: [], frota: cfg.veiculos, fica: [], aguardando: [], ignorados: [], entregues: {},
-                    fechada: fx ? fx.meta : null, adicoesSeparando: [], semVeiculo:0, semVeiculoPedidos:[],
+                    fechada: fx ? fx.meta : null, adicoesSeparando: [], semVeiculo:0, semVeiculoPedidos:[],alertasAgendados:[],
                     enviadosAntigos: (pedidos || []).filter(function (p) { return enviadoAntigo(p, opts.canhotos, opts.hoje || dia, cfg, opts); }) };
         function bloco(v, inativo) {
             var b = { id: v.id, nome: v.nome, modo: v.modo, cor: v.cor, capacidade: v.capacidade, semLimite: v.capacidade == null, inativo: !!inativo,
@@ -1008,6 +1036,8 @@
                 x = { p: p, c: c, prazo: prazo, situacao: situacaoPrazo(prazo, dia, cfg, vq), v: v,
                       veiculo: ve.veiculo, motivo: ve.motivo, detalhe: ve.detalhe, ceasa: ve.motivo === 'ceasa' ? ve.detalhe : null };
             }
+            marcarAgendado(x,opts);
+            if(x.agendado && x.diaPlanoAgendado && x.diaPlanoAgendado!==x.dataAncora)alertaAgendado(res,x,x.diaPlanoAgendado,'plano_fora_data');
             x.regra = p.documento ? regras[p.documento] || null : null;
             x.separando = opts.modo_planejamento === 'definitiva' ? elegivel070(p,dia,opts) : v2 && (p.etapa === 'separando' || sepAdiado);
             var ig = ignorados[p.cd_pedido];
@@ -1033,16 +1063,27 @@
                 res.adicoesSeparando.push({ cd_pedido: Number(cd), veiculo_id: x.veiculo });
             }
         });
+        var pontosAg=cands.filter(function(x){return x.agendado && x.dataAncora===dia && x.veiculo && x.c && x.c.pos;});
+        cands.forEach(function(x){if(x.agendado || !x.c || !x.c.pos)return;var best=null;pontosAg.forEach(function(a){if(a.veiculo!==x.veiculo)return;var d=km(a.c.pos,x.c.pos);if(d<=5 && (!best || d<best.km))best={cd_pedido:a.p.cd_pedido,data:dia,nome:a.c.nome,km:d};});x._encaixeAg=best;});
         // Prioridade: prazo (mais antigo primeiro), depois o pedido mais antigo, depois o código (estável).
         cands.sort(function (a, b) {
+            if(!!a.agendado!==!!b.agendado)return a.agendado?-1:1;
+            if(!!a._encaixeAg!==!!b._encaixeAg)return a._encaixeAg?-1:1;
+            if(a._encaixeAg && b._encaixeAg && a._encaixeAg.km!==b._encaixeAg.km)return a._encaixeAg.km-b._encaixeAg.km;
             var pa = a.prazo || '9999', pb = b.prazo || '9999';
             if (pa !== pb) return pa < pb ? -1 : 1;
             var da = String(a.p.dt_pedido), db = String(b.p.dt_pedido);
             if (da !== db) return da < db ? -1 : 1;
             return Number(a.p.cd_pedido) - Number(b.p.cd_pedido);
         });
+        var anchorsByVeiculo={};cands.forEach(function(x){if(x.agendado && x.veiculo && x.dataAncora===dia && !x.naBandejaManual)(anchorsByVeiculo[x.veiculo]||(anchorsByVeiculo[x.veiculo]=[])).push(x);});
         cands.forEach(function (x) {
-            if(!x.veiculo){x.motivoFica='sem_veiculo';res.aguardando.push(x);return;}
+            if(!x.veiculo){x.motivoFica='sem_veiculo';if(x.agendado)alertaAgendado(res,x,x.dataAncora,'sem_veiculo');res.aguardando.push(x);return;}
+            if(x.agendado && !fx){
+                if(x.naBandejaManual){alertaAgendado(res,x,null,'bandeja_manual');res.aguardando.push(x);return;}
+                if(x.dataAncora!==dia){x.proxima=x.dataAncora;x.motivoFica='agendado_outro_dia';if(x.dataAncora<(opts.hoje||dia))alertaAgendado(res,x,x.dataAncora,'atrasado');res.fica.push(x);return;}
+                if(x.dataAncora!==x.dataAgendada)alertaAgendado(res,x,dia,'fora_data');
+            }
             // Se o primeiro tique do dia atrasar, o fechamento automatico ainda
             // nao pode capturar um pedido criado/separado depois da saida.
             if (!fx && opts.fechamentoAutomatico && [x.p.dt_pedido, x.p.dt_sep_inicio].some(function (em) { return em && Date.parse(em) > limite; })) {
@@ -1057,6 +1098,7 @@
                     if (temProp(fx.removidos, x.p.cd_pedido)) x.removidoHoje = fx.removidos[x.p.cd_pedido];
                     res.fica.push(x); return;
                 }
+                if(x.agendado && dia!==x.dataAgendada)alertaAgendado(res,x,dia,'fora_data');
                 x.veiculo = it.veiculo; x.fechadaOrdem = fx.recalcular[it.veiculo] ? null : it.ordem; x.origemFechada = it.origem;
                 x.entrouAoSeparar = it.origem === 'separando' || x.separando;
                 x.diaSemReceber = x.entrouAoSeparar && naoRecebe(x.regra, dia);
@@ -1069,6 +1111,7 @@
             if (v2 && !x.veiculo) { res.aguardando.push(x); return; }   // falta marcar: fora da rota
             var b = temProp(res.veiculos, x.veiculo) ? res.veiculos[x.veiculo] : null;
             if (!b) { x.veiculoInativo = true; res.aguardando.push(x); return; }   // 047: veículo inativo/inexistente
+            if (x.agendado && (b.semSaida || naoRecebe(x.regra,dia))) {x.motivoFica='agendado_sem_saida';x.proxima=x.dataAncora;alertaAgendado(res,x,x.dataAncora,'sem_saida');res.fica.push(x);return;}
             if (b.semSaida) {   // este veículo não sai hoje (S10 no sábado, feriado...): próxima saída DELE em que o cliente recebe
                 var ps = x.separando ? proximaSaida(dia, false, cfg, b.id) : proximaSaidaCliente(dia, x.regra, cfg, b.id);
                 x.motivoFica = b.id === 's10' ? 'sem_saida_s10' : 'sem_saida_veiculo'; x.proxima = ps; x.estoura = !ps || (!!x.prazo && x.prazo < ps);
@@ -1079,7 +1122,7 @@
                 x.motivoFica = 'dia_fechado'; x.proxima = pc; x.estoura = !pc || (!!x.prazo && x.prazo < pc);
                 res.fica.push(x); return;
             }
-            if (x.separando) {   // como Trazer para hoje: prioridade de inclusão, capacidade só avisa
+            if (x.agendado || (x.separando && !anchorsByVeiculo[x.veiculo])) {   // AG ancora ganha de vencido/separando; como Trazer para hoje: prioridade de inclusão, capacidade só avisa
                 x.entrouAoSeparar = true; x.diaSemReceber = naoRecebe(x.regra, dia);
                 b.pedidos.push(x); res.entregues[x.p.cd_pedido] = true;
                 if (x.v.vol == null) b.desconhecidos++;
@@ -1112,6 +1155,7 @@
             x.proxima = proxCli; x.motivoFica = 'capacidade';
             res.fica.push(x);
         });
+        res.ordem.forEach(function(id){var b=res.veiculos[id];b.pedidos.forEach(function(x){if(x.agendado && b.capacidade!=null && b.volume>b.capacidade+1e-9)alertaAgendado(res,x,dia,'capacidade');if(x._encaixeAg && (b.capacidade==null || b.volume<=b.capacidade+1e-9))x.encaixeAgendado=x._encaixeAg;});});
         var om = { regras: regras, tempo: tempo, ordemFixa: !!fx };
         res.ordem.forEach(function (id) {
             var b = res.veiculos[id];
@@ -1242,7 +1286,7 @@
         var res = { inicio: ini, fim: todos.length ? todos[todos.length - 1] : ini, veiculo: vid, nomeVeiculo: vei ? vei.nome : vid, capacidade: CAP === Infinity ? null : CAP,
                     semLimite: CAP === Infinity, veiculoInvalido: !valido,
                     dias: [], semSaida: semSaida, faltaMarcar: [], cd: null, cdPedidos: [], outros: [], semPosicao: [], sobra: [], foraDaSemana: [], regioes: [],
-                    semVeiculo:0,semVeiculoPedidos:[],resumo: { pedidos: 0, estouram: 0, volume: 0, salvos: 0 } };
+                    semVeiculo:0,semVeiculoPedidos:[],alertasAgendados:[],resumo: { pedidos: 0, estouram: 0, volume: 0, salvos: 0 } };
         if (!valido) { res.semSaidaNaSemana = true; res.resumo.sobra = 0; res.resumo.semPosicao = 0; res.resumo.faltaMarcar = 0; return res; }
         var dd = dias.map(function (d) { return { dia: d, nome: nomeDia(d), lista: [], usado: 0, regiao: null, centro: null }; });
         var s10 = [];
@@ -1251,17 +1295,25 @@
             var c = clienteDoPedido(p, clientes), m = marcacao068v(p,padroes,porPedido,plano,null);
             var x = { p: p, c: c, prazo: prazoPedido(p, cfg, m ? m.veiculo : null, prazosPed, regrasPrazo), v: volumePedido(p), veiculo: m ? m.veiculo : null, marcacao: m ? m.origem : null,
                       regra: p.documento ? regras[p.documento] || null : null, dia: null, origemDia: null, diaSugerido: null, estoura: false, diaFechado: false, regiao: null, ang: null };
-            if (!m) { x.sugestao = sugestaoDe(p, c, cfg);x.semVeiculo=true;x.faltaMarcar=true;res.semVeiculoPedidos.push({cd_pedido:Number(p.cd_pedido)});res.semVeiculo=res.semVeiculoPedidos.length;res.faltaMarcar.push(x); return; }
+            marcarAgendado(x,opts);
+            if(x.agendado && x.diaPlanoAgendado && x.diaPlanoAgendado!==x.dataAncora)alertaAgendado(res,x,x.diaPlanoAgendado,'plano_fora_data');
+            if (!m) { if(x.agendado)alertaAgendado(res,x,x.dataAncora,'sem_veiculo');x.sugestao = sugestaoDe(p, c, cfg);x.semVeiculo=true;x.faltaMarcar=true;res.semVeiculoPedidos.push({cd_pedido:Number(p.cd_pedido)});res.semVeiculo=res.semVeiculoPedidos.length;res.faltaMarcar.push(x); return; }
             if (m.veiculo !== vid) { var om2 = veiculoDaFrota(m.veiculo, cfg); if (om2 && om2.ativo && om2.modo === 'cd_ceasa') res.cdPedidos.push(x); else res.outros.push(x); return; }
             s10.push(x);
         });
         if (res.cdPedidos.length) res.cd = paradaCd(res.cdPedidos.map(function (x) { return { p: x.p, c: x.c, v: x.v }; }));
-        function ordX(a, b) { var pa = a.prazo || '9999', pb = b.prazo || '9999'; if (pa !== pb) return pa < pb ? -1 : 1; var da = String(a.p.dt_pedido), db = String(b.p.dt_pedido); if (da !== db) return da < db ? -1 : 1; return Number(a.p.cd_pedido) - Number(b.p.cd_pedido); }
+        function ordX(a, b) { if(!!a.agendado!==!!b.agendado)return a.agendado?-1:1;var pa = a.prazo || '9999', pb = b.prazo || '9999'; if (pa !== pb) return pa < pb ? -1 : 1; var da = String(a.p.dt_pedido), db = String(b.p.dt_pedido); if (da !== db) return da < db ? -1 : 1; return Number(a.p.cd_pedido) - Number(b.p.cd_pedido); }
         // ---- unidades (cliente; pedidos salvos ficam à parte, por dia) ----
         var porBairro = {};
         Object.keys(clientes || {}).forEach(function (doc) { var c = clientes[doc]; if (c && c.pos && c.bairro) { var b = normBairro(c.bairro); (porBairro[b] || (porBairro[b] = [])).push(anguloDe(c.pos)); } });
         var unid = {}, salvos = [], lista = [];
         s10.sort(ordX).forEach(function (x) {
+            if(x.agendado){
+                if(x.naBandejaManual){x.motivoSobra='agendado_bandeja_manual';alertaAgendado(res,x,null,'bandeja_manual');res.sobra.push(x);return;}
+                if(x.dataAncora<ini || x.dataAncora>somaDias(ini,6)){x.dia=x.dataAncora;x.origemDia='agendado';res.foraDaSemana.push(x);return;}
+                if(idx[x.dataAncora]==null){x.diaSugerido=x.dataAncora;x.motivoSobra='agendado_sem_saida';alertaAgendado(res,x,x.dataAncora,'sem_saida');res.sobra.push(x);return;}
+                x.origemDia='agendado';if(naoRecebe(x.regra,x.dataAncora))alertaAgendado(res,x,x.dataAncora,'sem_saida');if(x.dataAncora!==x.dataAgendada)alertaAgendado(res,x,x.dataAncora,'fora_data');salvos.push({x:x,dia:x.dataAncora});return;
+            }
             var pd = plano[x.p.cd_pedido];
             if (pd && typeof pd === 'object') pd = !pd.veiculo_id || pd.veiculo_id === vid ? pd.dia : null;   // 047: salvo para outro veículo não vale
             pd = pd && /^\d{4}-\d{2}-\d{2}$/.test(String(pd)) ? String(pd) : null;
@@ -1276,7 +1328,7 @@
             if (x.prazo && (!u.prazo || x.prazo < u.prazo)) u.prazo = x.prazo;
         });
         // ---- salvos primeiro (vencem a sugestão) ----
-        salvos.forEach(function (sv) { var di = dd[idx[sv.dia]]; sv.x.dia = sv.dia; di.lista.push(sv.x); if (sv.x.v.vol != null) di.usado += sv.x.v.vol; });
+        salvos.sort(function(a,b){return ordX(a.x,b.x);}).forEach(function (sv) { var di = dd[idx[sv.dia]]; sv.x.dia = sv.dia; di.lista.push(sv.x); if (sv.x.v.vol != null) di.usado += sv.x.v.vol; });
         // ---- regiões ----
         // Âncoras das regiões: clientes com POSIÇÃO. Sem nenhum (ex.: o único geolocalizado do bairro foi salvo num dia, ou
         // só há pedido de cliente sem pino), os de ângulo pelo BAIRRO formam as regiões (PS-2). O ângulo só decide o dia:
@@ -1311,8 +1363,12 @@
         }
         var semAng = lista.filter(function (u) { return u.reg == null; });
         semAng.forEach(function (u) { u.xs.forEach(function (x) { x.motivoSemPosicao = 'sem_posicao'; res.semPosicao.push(x); }); });
+        var agendaPontos=salvos.filter(function(s){return s.x.agendado && s.x.c && s.x.c.pos;});
+        lista.forEach(function(u){var best=null;if(u.xs[0].c && u.xs[0].c.pos)agendaPontos.forEach(function(s){var d=km(u.xs[0].c.pos,s.x.c.pos);if(d<=5 && (!best || d<best.km))best={dia:s.dia,km:d,cd_pedido:s.x.p.cd_pedido,nome:s.x.c.nome};});u.encaixeAgendado=best;});
         var aloca = lista.filter(function (u) { return u.reg != null; });
         aloca.sort(function (a, b) {
+            if(!!a.encaixeAgendado!==!!b.encaixeAgendado)return a.encaixeAgendado?-1:1;
+            if(a.encaixeAgendado && b.encaixeAgendado && a.encaixeAgendado.km!==b.encaixeAgendado.km)return a.encaixeAgendado.km-b.encaixeAgendado.km;
             if (a.pri !== b.pri) return a.pri ? -1 : 1;
             var pa = a.prazo || '9999', pb = b.prazo || '9999'; if (pa !== pb) return pa < pb ? -1 : 1;
             // mesmo prazo: a região do dia mais cedo primeiro (quem é da região de segunda pega a segunda antes de quem
@@ -1327,6 +1383,7 @@
             var base = noPrazo.length ? noPrazo : perm, estoura = !noPrazo.length && !!u.prazo;
             var ordem = base.indexOf(alvo) >= 0 ? [alvo].concat(pertoDe(u, base.filter(function (d) { return d !== alvo; }))) : pertoDe(u, base);
             // já vencido (nenhum dia permitido até o prazo): fica no dia da região mesmo assim, marcado (estoura)
+            if(u.encaixeAgendado && perm.indexOf(u.encaixeAgendado.dia)>=0)ordem=[u.encaixeAgendado.dia].concat(ordem.filter(function(d){return d!==u.encaixeAgendado.dia;}));
             var sugerido = ordem[0], escolhido = null;
             for (var k = 0; k < ordem.length && !escolhido; k++) if (dd[idx[ordem[k]]].usado + u.vol <= CAP + 1e-9) escolhido = ordem[k];
             if (!escolhido && !estoura && noPrazo.length < perm.length) {   // não coube até o prazo: dia depois do prazo (estoura)
@@ -1335,7 +1392,7 @@
             }
             if (!escolhido) { u.xs.forEach(function (x) { x.motivoSobra = 'capacidade'; x.diaSugerido = sugerido; res.sobra.push(x); }); return; }
             var di = dd[idx[escolhido]]; di.usado += u.vol;
-            u.xs.forEach(function (x) { x.dia = escolhido; x.origemDia = 'sugestao'; x.diaSugerido = escolhido; x.regiao = u.reg; x.ang = u.ang == null ? null : Math.round(u.ang); di.lista.push(x); });
+            u.xs.forEach(function (x) {if(u.encaixeAgendado && escolhido===u.encaixeAgendado.dia)x.encaixeAgendado={cd_pedido:u.encaixeAgendado.cd_pedido,data:escolhido,nome:u.encaixeAgendado.nome,km:u.encaixeAgendado.km}; x.dia = escolhido; x.origemDia = 'sugestao'; x.diaSugerido = escolhido; x.regiao = u.reg; x.ang = u.ang == null ? null : Math.round(u.ang); di.lista.push(x); });
         });
         // ---- montar os dias ----
         dd.forEach(function (di) {
@@ -1343,6 +1400,7 @@
                 x.situacao = situacaoPrazo(x.prazo, di.dia, cfg, vid); x.estoura = !!x.prazo && x.prazo < di.dia; x.diaFechado = naoRecebe(x.regra, di.dia);
                 if (x.ang == null && x.c && x.c.pos) x.ang = Math.round(anguloDe(x.c.pos));
             });
+            if(di.usado>CAP+1e-9)di.lista.forEach(function(x){if(x.agendado)alertaAgendado(res,x,di.dia,'capacidade');});
             di.lista.sort(ordX);
             var mp = montarParadas(di.lista, volta, { regras: regras, tempo: tempo });
             var t = { c24: 0, c48: 0, avulsos: 0, desconhecidos: 0, volume: 0 };
@@ -1498,7 +1556,8 @@
         var unid = Object.create(null), lista = [];
         (pedidos || []).forEach(function (p) {
             if (!(opts.modo_planejamento === 'definitiva' ? rs.some(function (r) { return elegivel070(p,r.dia,opts); }) : pendenteEntrega(p, opts.canhotos, hoje, cfg, opts)) || excluir[p.cd_pedido] || ignorados[p.cd_pedido] || naRota[p.cd_pedido]) return;
-            var c = clienteDoPedido(p, clientes), m = marcacaoDe(p, padroes, porPedido), precisaMarcar = false, alvo = null;
+            var c = clienteDoPedido(p, clientes), m = marcacaoDe(p, padroes, porPedido), precisaMarcar = false, alvo = null, ag=agendadoDe(p,opts);
+            if(ag && ag.na_bandeja)return;
             if (m) {
                 var vm = veiculoDaFrota(m.veiculo, cfg);
                 if (vm && vm.ativo && vm.modo === 'cd_ceasa') { res.descartados.ceasa++; return; }
@@ -1509,18 +1568,18 @@
                 precisaMarcar = true;
             }
             // Sentinela V-BACK V2: o grupo é cliente + VEÍCULO marcado (pedidos do mesmo cliente em veículos diferentes nunca se misturam).
-            var ch = (p.documento ? 'd:' + p.documento : 'p:' + p.cd_pedido) + '|' + (alvo || '*'), u = temProp(unid, ch) ? unid[ch] : null;
+            var ch = (p.documento ? 'd:' + p.documento : 'p:' + p.cd_pedido) + '|' + (alvo || '*') + (ag ? '|ag:'+ag.data_ancora : ''), u = temProp(unid, ch) ? unid[ch] : null;
             if (!u) { u = unid[ch] = { chave: ch, documento: p.documento || null, c: c, alvo: alvo, xs: [], vol: 0, semVol: 0, dtMin: null, aberto: false, precisaMarcar: false,
-                                       regra: p.documento ? regras[p.documento] || null : null, prazos: Object.create(null) }; lista.push(u); }
+                                       regra: p.documento ? regras[p.documento] || null : null, ag:ag, prazos: Object.create(null) }; lista.push(u); }
             var v = volumePedido(p);
-            u.xs.push({ p: p, c: c, v: v, prazo: prazoPedido(p, cfg, alvo || 's10', prazosPed, regrasPrazo), veiculo: m ? m.veiculo : null, marcacao: m ? m.origem : null, precisaMarcar: precisaMarcar });
+            u.xs.push(marcarAgendado({ p: p, c: c, v: v, prazo: prazoPedido(p, cfg, alvo || 's10', prazosPed, regrasPrazo), veiculo: m ? m.veiculo : null, marcacao: m ? m.origem : null, precisaMarcar: precisaMarcar },opts));
             if (v.vol == null) u.semVol++; else u.vol += v.vol;
             if (p.etapa === 'aberto') u.aberto = true;
             if (precisaMarcar) u.precisaMarcar = true;
         });
         // Prazo do cliente nos dias úteis de cada veículo (o mais cedo dos pedidos dele).
         function prazoU(u, vid) {
-            if (!temProp(u.prazos, vid)) u.prazos[vid] = u.xs.reduce(function (mn, x) { var pz = prazoPedido(x.p, cfg, vid, prazosPed, regrasPrazo); return pz && (!mn || pz < mn) ? pz : mn; }, null);
+            if (!temProp(u.prazos, vid)) u.prazos[vid] = u.xs.reduce(function (mn, x) { var pz = x.agendado ? x.dataAgendada : prazoPedido(x.p, cfg, vid, prazosPed, regrasPrazo); return pz && (!mn || pz < mn) ? pz : mn; }, null);
             return u.prazos[vid];
         }
         // ---- avaliar cada cliente em cada rota ----
@@ -1529,7 +1588,7 @@
         lista.forEach(function (u) {
             var pos = u.c && u.c.pos ? u.c.pos : null, kb = chaveBairro(u.c), uf = ufDe(u.c);
             var ops = [], motivos = {};
-            var minhas = rs.filter(function (r) { return !u.alvo || r.veiculo === u.alvo; });
+            var minhas = rs.filter(function (r) { return (!u.alvo || r.veiculo === u.alvo) && (!u.ag || r.dia===u.ag.data_ancora); });
             if (!minhas.length) { res.descartados.sem_rota++; return; }
             minhas.forEach(function (r) {
                 if (naoRecebe(u.regra, r.dia)) { motivos.dia_fechado = true; return; }
@@ -1637,7 +1696,7 @@
         veiculoDe: veiculoDe,
         montarParadas: montarParadas,
         clienteDoPedido: clienteDoPedido, enderecoDoCliente: enderecoDoCliente,
-        coletarEstados070: coletarEstados070, elegivel070: elegivel070, planejar: planejar, fechadaDe: fechadaDe, itensDaRota: itensDaRota, sequenciaDe: sequenciaDe, propostaSeparando: propostaSeparando,
+        coletarAgendados068ag: coletarAgendados068ag, agendadoDe: agendadoDe, coletarEstados070: coletarEstados070, elegivel070: elegivel070, planejar: planejar, fechadaDe: fechadaDe, itensDaRota: itensDaRota, sequenciaDe: sequenciaDe, propostaSeparando: propostaSeparando,
         linksGoogleMaps: linksGoogleMaps,
         // 044
         minutosDe: minutosDe,

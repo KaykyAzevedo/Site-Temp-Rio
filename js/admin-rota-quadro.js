@@ -271,6 +271,8 @@
             corVeiculo: v ? v.cor : (raw && raw.corVeiculo) || '#64748b',
             modoVeiculo: modoVeiculo,
             faltaMarcar: !vid || !!(raw && raw.faltaMarcar),
+            agendado: !!(raw && raw.agendado),
+            dataAgendada: (raw && raw.dataAgendada) || null,
             entregue: entregue,
             pendente: raw && typeof raw.pendente === 'boolean' ? raw.pendente : undefined,
             veiculoSomenteLeitura: entregue !== undefined ? entregue : !!(raw && raw.veiculoSomenteLeitura),
@@ -1453,6 +1455,7 @@
             selosExtra.push('<span class="rota-selo rq-selo-sem-geo" data-rq-sem-geo="' + esc(c.cd_pedido) + '" title="Pedido sem coordenadas cadastradas — fora da linha do mapa"><i class="fa-solid fa-location-pin-lock" aria-hidden="true"></i>Sem localização</span>');
         }
         if (!c.veiculo || c.faltaMarcar) selosExtra.unshift('<span class="rota-selo rota-selo-sem-veiculo" data-rq-sem-veiculo="' + esc(c.cd_pedido) + '" title="Nenhum veículo definido: escolha o veículo"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>Sem veículo</span>');
+        if (c.agendado) selosExtra.unshift('<span class="rota-selo rota-selo-agendado" data-rq-agendado="' + esc(c.cd_pedido) + '" title="Agendado pelo cliente: prioridade máxima"><i class="fa-solid fa-calendar-check" aria-hidden="true"></i>Agendado' + (c.dataAgendada ? ' p/ ' + esc(dataBr(c.dataAgendada)) : '') + '</span>');
         if (c.prioridade) selosExtra.push('<span class="rota-selo rota-selo-pri"><i class="fa-solid fa-bolt" aria-hidden="true"></i>Prioridade</span>');
         if (c.janela) selosExtra.push('<span class="rota-selo"><i class="fa-regular fa-clock" aria-hidden="true"></i>' + esc(c.janela) + '</span>');
         if (c.diaFechado) selosExtra.push('<span class="rota-selo rota-selo-fechado"><i class="fa-solid fa-calendar-xmark" aria-hidden="true"></i>Não recebe neste dia</span>');

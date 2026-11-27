@@ -279,3 +279,9 @@
 .adm-hist068-veic-form { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; width: 100%; }
 .adm-hist068-veic-form select { flex: 0 1 9rem; }
 .adm-hist068-veic-form input { flex: 1 1 9rem; min-width: 0; }
+
+/* 068AG: pedido agendado (selo forte, prioridade maxima, encaixe) */
+.rota-selo-agendado { color: var(--adm-tinta); background: var(--adm-atencao-fundo); border-color: var(--adm-acao); font-weight: 800; }
+.rota-selo-agendado i { color: var(--adm-acao); }
+.rota-selo-agendado-encaixe { color: var(--adm-tinta-2); border-color: var(--adm-acao); }
+.rota-lista-alertas { margin: 0.4rem 0 0; padding-left: 1.1rem; display: grid; gap: 0.2rem; font-size: 0.85rem; }

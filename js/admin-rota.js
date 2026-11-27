@@ -46,9 +46,10 @@
     var segundaDe = core.segundaDe;
     var km = core.km;
     var norm = core.norm;
-    var planejar = core.planejar;
-    var planejarSemana = core.planejarSemana;
-    var sugestoesJuntar = core.sugestoesJuntar;
+    function exigeAg(opts) { if (st.v2 && st.agObrig && !(opts && opts.agendados)) throw new Error('Agendamentos indisponíveis: cálculo bloqueado.'); return opts; }
+    var planejar = function (a, b, c, o) { return core.planejar(a, b, c, exigeAg(o)); };
+    var planejarSemana = function (a, b, c, o) { return core.planejarSemana(a, b, c, exigeAg(o)); };
+    var sugestoesJuntar = function (a, b, c, o) { return core.sugestoesJuntar(a, b, c, exigeAg(o)); };
     var linksGoogleMaps = core.linksGoogleMaps;
     var hhmm = core.hhmm;
     var minutosDe = core.minutosDe;
@@ -93,7 +94,7 @@
                fx050: false, fxLinha: null, fxFoto: null, fxDias: {}, fxDiasErro: {}, fxErro: null, fxSalvando: false, msgFx: '', fxConfirmaReabrir: false, fxRender: false, focoFx: null,
                canhotos: {}, confirmacoes: {}, entrega063: false, diasSaida: {},
                // 065 (quadro da semana): leitura/gravação por RPC rota_065_ler_semana / rota_065_salvar_semana / rota_065_marcar_sem_saida
-               estadosH: null, estadosDia: null, movimentoReq: {}, calendarioH: {}, movimentoErro: null, v068v: {}, sem065: false, sem065Dados: {}, semQuadroRasc: {}, semFiltroVeic: 'todos', semVersaoConflito: false,
+               estadosH: null, estadosDia: null, movimentoReq: {}, calendarioH: {}, movimentoErro: null, v068v: {}, agendados: null, agendadosErro: '', agObrig: false, agReq: 0, sem065: false, sem065Dados: {}, semQuadroRasc: {}, semFiltroVeic: 'todos', semVersaoConflito: false,
                semMsgErro: false, semPilhasExp: {}, semBuscaBandeja: '', semFiltroBandeja: 'todos', semMapaAberto: true,
                // 066 (assistente da semana): rota_066_sugestoes / rota_066_registrar (stub local até RPC existir)
                sug066: false, sug066Dados: {}, sug066Ignoradas: {}, seqSug066: 0, relendoSug066: {}, sessao: 0,
@@ -135,6 +136,7 @@
     // Chamada quando QUALQUER gravação termina (ok ou erro), antes do redesenho: sobe a versão e solta a recarga adiada.
     function aposMutacao() {
         st.mut++;
+        if (st.agendados) carregarAgendados();   // movimento manual (H/065/saída070) muda a âncora
         if (st.recargaPendente && !pendentes()) {   // o desenhar() seguinte recarrega (e este timeout garante, se ninguém desenhar)
             st.recargaPendente = false; st.carregado = false; st.msgVeiculo = st.msgVeiculo === MSG_ESPERA ? '' : st.msgVeiculo;
             setTimeout(function () { if (!st.carregado && !st.carregando) desenhar(); }, 0);
@@ -271,7 +273,7 @@
                 st.frota = core.frotaDe(linhasFrota());   // v1 (sem 044): só caminhão e S10
                 return sincronizarSeparando(sb).then(function () {
                     if (seq !== st.seq) return;
-                    st.carregando = false; st.carregado = true; desenhar();
+                    st.carregando = false; st.carregado = true; carregarAgendados(); desenhar();
                 });
             });
         }).catch(function (e) {
@@ -457,7 +459,67 @@
                 amanha: ['Meta na próxima saída', 'rota-sit-amanha', 'fa-hourglass-half'], ok: ['Na meta', 'rota-sit-ok', 'fa-check'], sem_data: ['Sem data', 'rota-sit-ok', 'fa-question'] };
     // soProblema=true (v3): só mostra selo quando há problema (vencido, vence hoje ou sem data); no prazo fica limpo.
     // US-2: listas auxiliares da semana vêm sem x.situacao no core — calcula em relação a diaRef e nunca trata undefined como "No prazo".
+    // 068AG: agenda do cliente. Meta = data agendada; selo forte, prioridade máxima e texto de encaixe.
+    var MOTIVO_AG = { fora_data: 'fora da data agendada', plano_fora_data: 'plano salvo fora da data agendada (nada foi reescrito)', sem_veiculo: 'sem veículo definido',
+        sem_saida: 'veículo sem saída nesse dia', capacidade: 'acima da capacidade (mantido na data)', atrasado: 'passou da data agendada', bandeja_manual: 'na bandeja (movido manualmente)' };
+    function diaCurto(iso) { return iso ? String(nomeDia(iso) || '').slice(0, 3).toLowerCase() : ''; }
+    function seloAgendado(x) {
+        if (!x) return '';
+        var h = !x.agendado ? '' : '<span class="rota-selo rota-selo-agendado" title="Agendado pelo cliente: a meta é a data agendada e o pedido tem prioridade máxima"><i class="fa-solid fa-calendar-check" aria-hidden="true"></i>Agendado' +
+            (x.dataAgendada ? ' p/ ' + esc(dataBr(x.dataAgendada)) : '') + (x.prioridadeMaxima ? ' · prioridade máxima' : '') + '</span>';
+        if (x.agendado && x.alertaAgendadoForte) h += ' <span class="rota-sit rota-sit-vencido"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>Agendamento em risco</span>';
+        var e = x.encaixeAgendado;
+        if (e && e.data) h += ' <span class="rota-selo rota-selo-agendado-encaixe"><i class="fa-solid fa-location-dot" aria-hidden="true"></i>Agendado ' + esc(diaCurto(e.data)) + ' p/ ' + esc(e.nome || '') +
+            ' · a ' + esc(String(e.km == null ? '' : NUM.format(Math.round(Number(e.km) * 10) / 10))) + ' km, encaixa na ' + esc(diaCurto(e.data)) + '</span>';
+        return h;
+    }
     function seloPrazo(x, soProblema, diaRef, veicRef) {
+        var ag = seloAgendado(x), base = seloPrazoBase(x, soProblema, diaRef, veicRef);
+        return ag ? ag + (base ? ' ' + base : '') : base;
+    }
+    function htmlAlertasAgendados(lista) {
+        if (!lista || !lista.length) return '';
+        var vistos = {}, itens = lista.filter(function (a) { var k = a.cd_pedido + '|' + a.motivo; if (vistos[k]) return false; vistos[k] = true; return true; });
+        return '<section class="adm-card p-4 mb-4 rota-cartao rota-cartao-alerta" role="alert" data-rota-agendados-alerta aria-label="Alertas de pedidos agendados">' +
+            '<p class="rota-tit"><i class="fa-solid fa-calendar-check" aria-hidden="true"></i> Pedidos agendados com alerta (' + NUM.format(itens.length) + ')</p>' +
+            '<ul class="rota-lista-alertas">' + itens.map(function (a) {
+                var ped = (st.pedidos || []).filter(function (p) { return Number(p.cd_pedido) === Number(a.cd_pedido); })[0];
+                var nome = ped ? nomeCliente(core.clienteDoPedido(ped, st.clientes), { p: ped }) : '';
+                return '<li><strong>#' + esc(a.cd_pedido) + '</strong>' + (nome ? ' ' + esc(nome) : '') + ' · agendado p/ ' + esc(a.data_agendada ? dataBr(a.data_agendada) : '?') +
+                    (a.dia ? ' · dia ' + esc(dataBr(a.dia)) : '') + ' — ' + esc(MOTIVO_AG[a.motivo] || a.motivo) + '</li>';
+            }).join('') + '</ul></section>';
+    }
+    function htmlAgendadosErro() {
+        return st.agendadosErro ? '<div class="adm-card p-3 mb-3" role="alert" data-rota-agendados-erro><p class="adm-entrega-erro">Agendamentos não carregados: ' + esc(st.agendadosErro) +
+            '. A rota está sem prioridade de agendados; atualize antes de decidir.</p></div>' : '';
+    }
+    // Linhas históricas/sintéticas da foto (pedido já entregue, fora de st.pedidos) não têm agenda: completa só elas, nunca os pedidos reais.
+    function agendadosCom(mapa, pedidos) {
+        if (!mapa) return undefined;
+        var m = Object.assign({}, mapa);
+        (pedidos || []).forEach(function (p) { if (p && !m[p.cd_pedido]) m[p.cd_pedido] = { cd_pedido: p.cd_pedido, agendado: false, data_agendada: null, data_ancora: null, movido_manualmente: false, na_bandeja: false, dia_plano: null }; });
+        return m;
+    }
+    // O mapa só vale se cobrir TODOS os pedidos atuais (o core recusa mapa incompleto); entre uma recarga e a releitura, planeja sem ele (o aviso de carga aparece).
+    function agendadosOk() {
+        if (!st.agendados) return undefined;
+        return (st.pedidos || []).every(function (p) { return p && st.agendados[p.cd_pedido]; }) ? st.agendados : undefined;
+    }
+    // Sem agenda lida (erro/carregando/incompleta) NADA que dependa dela é calculado: o core cairia na data do cliente e sugeriria errado.
+    function agBloqueado() { return !!(st.v2 && st.agObrig && !agendadosOk()); }
+    function carregarAgendados() {
+        var sb0 = st.sb, sessao0 = st.sessao, req = ++st.agReq;
+        if (!sb0 || !st.v2 || typeof core.coletarAgendados068ag !== 'function') return Promise.resolve();
+        st.agObrig = true;
+        return Promise.resolve().then(function () { return core.coletarAgendados068ag(sb0, st.pedidos || []); }).then(function (mapa) {
+            if (st.sb !== sb0 || st.sessao !== sessao0 || st.agReq !== req) return;
+            st.agendados = mapa; st.agendadosErro = ''; if (st.ativo) desenhar();
+        }, function (e) {
+            if (st.sb !== sb0 || st.sessao !== sessao0 || st.agReq !== req) return;
+            st.agendados = null; st.agendadosErro = String((e && e.message) || e || 'erro'); if (st.ativo) desenhar();   // sem fallback silencioso: avisa
+        });
+    }
+    function seloPrazoBase(x, soProblema, diaRef, veicRef) {
         if (!x) return '';
         var sit = x.situacao || (diaRef && situacaoPrazo ? situacaoPrazo(x.prazo, diaRef, st.cfg, veicRef || x.veiculo) : null);
         if (!sit || !SIT[sit]) return x.prazo && !soProblema ? '<span class="rota-selo">Meta · ' + esc(dataBr(x.prazo)) + '</span>' : '';
@@ -1653,7 +1715,7 @@
             regras: st.v2 ? st.regras : {},
             ignorados: st.v2 && st.ign045 ? st.ignorados : {},
             excluir: excluir || {},
-            prazos: st.prazos068, regrasPrazo: st.regrasPrazo068,
+            agendados: agendadosOk(), prazos: st.prazos068, regrasPrazo: st.regrasPrazo068,
             hoje: hojeSP(), saidas: st.diasSaida, canhotos: st.canhotos, confirmacoes: st.confirmacoes
         });
         var todas = (sj && sj.sugestoes) || [];
@@ -2858,6 +2920,7 @@
             });
             var cfgHist = Object.assign({}, oDia.cfg || st.cfg, { canhotoDesde: null });
             var resFoto = planejar(pedidosFoto, st.clientes, d, Object.assign({}, oDia, {
+                agendados: agendadosCom(oDia.agendados, pedidosFoto),
                 hoje: d,
                 cfg: cfgHist,
                 canhotos: {},
@@ -2984,6 +3047,7 @@
         return '<section class="adm-card p-4 mb-4" aria-label="Confirmar rota de amanhã"><div class="rota-cab rota-cab-compacto"><strong>Rota de amanhã · '+esc(nomeDia(dia))+' '+esc(dataBr(dia))+'</strong>'+((st.papel==='admin'||st.podeMarcar)&&!foto?'<button type="button" class="adm-botao" id="rota-070-confirmar"'+(st.semSalvando||erro?' disabled':'')+'>'+(st.semSalvando?'Confirmando…':'Confirmar rota de amanhã ('+contagem+')')+'</button>':'')+'</div><p class="rota-sub">'+(foto?'Rota já fechada.':r.cabecalho?'Reserva '+(r.cabecalho.origem==='manual'?'confirmada':'automática')+' · versão '+esc(r.cabecalho.versao)+'.':'Sem confirmação, entram automaticamente os pedidos prontos aptos para amanhã.')+'</p>'+(diferenca?'<p class="rota-sub mt-2" role="status" data-rota-070-pendente>Há alterações de composição ou ordem ainda não confirmadas. A reserva atual tem '+confirmados+(confirmados===1?' pedido':' pedidos')+'; a seleção abaixo tem '+contagem+'. Confirme novamente para atualizar a rota definitiva.</p>':'')+(!foto&&semPlano&&semPlano.semVeiculoPedidos&&semPlano.semVeiculoPedidos.length?'<p class="rota-sub mt-2" role="status" data-rota-070-sem-veiculo><span class="rota-selo rota-selo-sem-veiculo"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>'+semPlano.semVeiculoPedidos.length+(semPlano.semVeiculoPedidos.length===1?' pedido sem veículo':' pedidos sem veículo')+'</span> Não entram na rota de amanhã até você escolher o veículo (seção "Falta marcar").</p>':'')+(erro?'<p role="alert">'+esc(erro)+'</p>':'')+'</section>';
     }
     function confirmarDefinitiva070() {
+        if(agBloqueado())return Promise.resolve();
         if(!raiz.TempRioPrevisao||st.modo070!=='definitiva'||!podeSalvarSemana()||pendentes())return Promise.resolve();
         var dia=somaDias(hojeSP(),1),ini=segundaDe(dia),r=st.definitiva070[dia],itens;
         if(!r||r.foto&&r.foto.estado==='fechada')return Promise.resolve();
@@ -2993,7 +3057,7 @@
         st.semSalvando=true;st.msgSemana='';desenhar();
         return raiz.TempRioPrevisao.salvarDefinitiva(sb0,dia,itens,versao,st.req070[chave]).then(function(){
             if(st.sb!==sb0||st.sessao!==sessao0||!st.ativo)return;st.semSalvando=false;delete st.req070[chave];delete st.semQuadroRasc[ini];aposMutacao();return carregarSemana065(ini,true);
-        },function(e){if(st.sb!==sb0||st.sessao!==sessao0||!st.ativo)return;st.semSalvando=false;st.msgSemana='Não foi possível confirmar: '+e.message;st.semMsgErro=true;desenhar();});
+        },function(e){if(st.sb!==sb0||st.sessao!==sessao0||!st.ativo)return;st.semSalvando=false;st.msgSemana=/pedido_agendado_fora_data/.test(String(e&&e.message))?'Não foi possível confirmar: há pedido agendado fora da data do cliente. Mova-o manualmente para a data agendada (Mover) antes de confirmar.':'Não foi possível confirmar: '+e.message;st.semMsgErro=true;desenhar();});
     }
     function trocarModo070(modo) {
         if(!raiz.TempRioPrevisao || pendentes() || ['previsao','definitiva'].indexOf(modo)<0 || modo===st.modo070)return;
@@ -3248,6 +3312,8 @@
                 c48: v.c48,
                 avulsos: v.avulsos,
                 volume: v.vol,
+                agendado: !!(st.agendados && st.agendados[p.cd_pedido] && st.agendados[p.cd_pedido].agendado),
+                dataAgendada: (st.agendados && st.agendados[p.cd_pedido] && st.agendados[p.cd_pedido].data_agendada) || null,
                 veiculo: vid || null,
                 semVeiculo: !vid,
                 faltaMarcar: !vid
@@ -3345,7 +3411,7 @@
                     saidas: st.diasSaida,
                     canhotos: st.canhotos,
                     confirmacoes: st.confirmacoes,
-                    prazos: st.prazos068,
+                    agendados: agendadosOk(), prazos: st.prazos068,
                     regrasPrazo: st.regrasPrazo068,
                     hoje: hoje
                 });
@@ -4329,7 +4395,7 @@
 
     function optsPlano() {
         return { modo_planejamento: st.modo070, reservas_070: st.reservas070, pedidos_estado: estadosPedidosAtuais(), cfg: st.cfg, excecoes: st.excecoes, marcacao: st.v2, padroes: st.excecoes, porPedido: st.porPedido, regras: st.regras,
-                 prazos: st.prazos068, regrasPrazo: st.regrasPrazo068,
+                 agendados: agendadosOk(), prazos: st.prazos068, regrasPrazo: st.regrasPrazo068,
                  ignorados: st.v2 && st.ign045 ? st.ignorados : {}, plano: st.v2 ? planoEfetivo() : {}, veiculos: linhasFrota(),
                  fechada: st.v2 && st.fx050 && !st.fxErro ? st.fxFoto : null,
                  projetarSeparando: false, saidas: st.diasSaida, canhotos: st.canhotos, confirmacoes: st.confirmacoes, hoje: hojeSP(), agora: new Date().toISOString() };   // fechada: só mostra inclusao já confirmada pela054
@@ -4438,6 +4504,16 @@
             alvo.querySelector('#rota-tentar').addEventListener('click', function () { st.carregado = false; carregar(); });
             return;
         }
+        if (agBloqueado()) {
+            alvo.innerHTML = cab + '</div>' + (st.agendadosErro
+                ? '<div class="adm-card p-6 rota-banner rota-banner-erro" role="alert" data-rota-agendados-erro><p class="mb-2"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> <strong>Não foi possível ler os agendamentos</strong> (' + esc(st.agendadosErro) + ').</p>' +
+                  '<p class="rota-sub mb-3">Sugestões, planos e a confirmação da rota de amanhã ficam bloqueados para não ignorar a data agendada do cliente.</p>' +
+                  '<button type="button" class="adm-botao" id="rota-tentar"><i class="fa-solid fa-rotate" aria-hidden="true"></i> Tentar de novo</button></div>'
+                : '<p class="adm-vazio-linha" role="status"><i class="fa-solid fa-spinner fa-spin"></i><span class="adm-vazio-texto">Carregando agendamentos…</span></p>');
+            var btAg = alvo.querySelector('#rota-tentar');
+            if (btAg) btAg.addEventListener('click', function () { carregarAgendados(); desenhar(); });
+            return;
+        }
         if(raiz.TempRioPrevisao && (!estadosPedidosAtuais() || st.erro070)){
             alvo.innerHTML=cab+'</div><div class="adm-card p-4" role="alert">Estado de despacho ou reserva indisponível. '+esc(st.erro070 || st.msgSemana || 'Atualize para continuar.')+' <button type="button" class="adm-botao-fantasma" id="rota-tentar">Atualizar</button></div>';
             alvo.querySelector('#rota-tentar').addEventListener('click',recarregarTudo);return;
@@ -4467,7 +4543,7 @@
         var temQuadro065 = !!obterQuadroMod();
         var sem = st.v2 && st.vista === 'semana'
             ? planejarSemana(st.pedidos, st.clientes, semIni, { modo_planejamento: st.modo070, reservas_070: st.reservas070, pedidos_estado: estadosPedidosAtuais(), cfg: st.cfg, padroes: st.excecoes, porPedido: st.porPedido, regras: st.regras,
-                prazos: st.prazos068, regrasPrazo: st.regrasPrazo068,
+                agendados: agendadosOk(), prazos: st.prazos068, regrasPrazo: st.regrasPrazo068,
                 ignorados: st.ign045 ? st.ignorados : {}, plano: planoSemanaObj(semIni), veiculos: linhasFrota(), veiculo: semVeiculoAtual(), saidas: st.diasSaida, canhotos: st.canhotos, confirmacoes: st.confirmacoes, hoje: hojeSP() })
             : null;
         var nFora = st.v2 && st.ign045 && atual.ignorados ? atual.ignorados.length : 0;
@@ -4511,12 +4587,12 @@
             ? calcularJuntar(atual, st.vista === 'proxima' && !pl.hoje.semSaida ? pl.hoje.entregues : {})
             : null;
         var corpo = st.vista === 'semana' && sem
-            ? htmlDefinitiva070(semIni, sem) + '<p class="rota-imp-dia">Plano da semana · ' + esc(temQuadro065 ? 'Frota' : (sem.nomeVeiculo || 'S10')) + ' · ' + esc(dataBr(semIni)) + ' a ' + esc(dataBr(somaDias(semIni, 5))) + '</p>' +
+            ? htmlAgendadosErro() + htmlAlertasAgendados(sem && sem.alertasAgendados) + htmlDefinitiva070(semIni, sem) + '<p class="rota-imp-dia">Plano da semana · ' + esc(temQuadro065 ? 'Frota' : (sem.nomeVeiculo || 'S10')) + ' · ' + esc(dataBr(semIni)) + ' a ' + esc(dataBr(somaDias(semIni, 5))) + '</p>' +
               (avisos.length ? '<div class="adm-card p-4 mb-5 rota-banner" role="status">' + avisos.map(function (a) { return '<p><i class="fa-solid fa-circle-info" aria-hidden="true"></i> ' + esc(a) + '</p>'; }).join('') + '</div>' : '') +
               (temQuadro065 ? '<div id="rota-semana-quadro" class="mb-4"></div>' + htmlSugestoesJuntar(calcularJuntar(sem)) : htmlSemana(sem))
             : '<p class="rota-imp-dia">Rota de ' + esc(nomeDia(atual.dia)) + ', ' + esc(dataBr(atual.dia)) + '</p>' +
               (avisos.length ? '<div class="adm-card p-4 mb-5 rota-banner" role="status">' + avisos.map(function (a) { return '<p><i class="fa-solid fa-circle-info" aria-hidden="true"></i> ' + esc(a) + '</p>'; }).join('') + '</div>' : '') +
-              htmlFechamento(atual) + nota + htmlAguardando(atual) + htmlSugestoesJuntar(jnDia) +
+              htmlFechamento(atual) + nota + htmlAgendadosErro() + htmlAlertasAgendados(atual && atual.alertasAgendados) + htmlAguardando(atual) + htmlSugestoesJuntar(jnDia) +
               htmlGradeVeiculos(atual) + htmlOutrosDias(atual);
         alvo.innerHTML = cab + seletor + (raiz.TempRioPrevisao ? raiz.TempRioPrevisao.htmlModos(st.modo070,{desabilitado:pendentes()}) : '') + bannerDesat + corpo +
             htmlForaDaRota(atual) + htmlConfigResumo(atual) +
@@ -4859,7 +4935,7 @@
             st.vista = 'semana'; st.diaDetalhe = null;
             st.modo070='previsao';st.reservas070={};st.definitiva070={};st.erro070=null;st.req070={};st.rasc070={};
             st.estadosH=null;st.estadosDia=null;st.movimentoReq={};st.calendarioH={};
-            st.sem065 = false; st.v068v = {}; st.sem065Dados = {}; st.semQuadroRasc = {}; st.semFiltroVeic = 'todos'; st.semVersaoConflito = false;
+            st.sem065 = false; st.v068v = {}; st.agendados = null; st.agendadosErro = ''; st.agObrig = false; st.sem065Dados = {}; st.semQuadroRasc = {}; st.semFiltroVeic = 'todos'; st.semVersaoConflito = false;
             st.semMsgErro = false; st.semPilhasExp = {}; st.semBuscaBandeja = ''; st.semFiltroBandeja = 'todos'; st.semMapaAberto = true;
             st.sug066 = false; st.sug066Dados = {}; st.sug066Ignoradas = {}; st.seqSug066 = 0; st.relendoSug066 = {}; st.sessao++;
             st.prazo068Instalada = false; st.prazos068 = {}; st.regrasPrazo068 = {}; st.padraoPrazo068 = null; st.prazo068Erro = '';
