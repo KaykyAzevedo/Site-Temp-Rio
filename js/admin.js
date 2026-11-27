@@ -783,7 +783,7 @@
         if (window.TempRioWhats) window.TempRioWhats.sair(); // WhatsApp: esquece telefones/textos da conta
         if (window.TempRioUsuarios) window.TempRioUsuarios.sair(); // Usuários: esquece a lista (e qualquer senha na tela)
         pe.seq++; pe.carregado = false; pe.carregando = false;
-        pe.itens = []; pe.estadosH=null;pe.estadosDia=null;pe.cal070={};pe.salvando070={};pe.erros070={};pe.req070={};pe.recarga070=false; pe.canhotos = {}; pe.confirmacoes = {}; pe.entrega063 = false; pe.saidas = {}; pe.cfg = null;
+        pe.itens = []; pe.estadosH=null;pe.estadosDia=null;pe.cal070={};pe.salvando070={};pe.erros070={};pe.req070={};pe.recarga070=false; pe.canhotos = {}; pe.confirmacoes = {}; pe.problemas = null; pe.entrega063 = false; pe.saidas = {}; pe.cfg = null;
         if (window.TempRioEntregaAdmin) window.TempRioEntregaAdmin.fechar();
         pe.historico = { aberto: false, busca: '', pagina: 0 };
         cmp.seq++; cmp.carregado = false; cmp.carregando = false; cmp.por = null; cmp.brutas = null;
@@ -6954,14 +6954,16 @@
     var PE_MODO_CHAVE = 'adm.peModo';
     var pe = { carregado: false, carregando: false, erro: null, ausente: false, itens: [], coletado: null, seq: 0,
                // 052 (opcional): canhotos ativos { cd_pedido: [{caminho, enviado_em, origem}] }, tabela lida?, pode anexar?
-               confirmacoes: {}, entrega063: false, canhotos: {}, can052: false, podeMarcar: false, cfg: null, saidas: {},
+               confirmacoes: {}, problemas: null, entrega063: false, canhotos: {}, can052: false, podeMarcar: false, cfg: null, saidas: {},
                // 068-A: marcação de veículo por cliente/pedido visível e editável em Pedidos para admin / pode_marcar_rota
                veiculos: [], padroes: {}, porPedido: {}, gravandoVeic: {}, msgVeic: '',
                estadosH: null, estadosDia: null, cal070:{}, salvando070:{}, erros070:{}, req070:{},recarga070:false,
                historico: { aberto: false, busca: '', pagina: 0 } };
     // Canhoto ativo (052) comprova recebimento; saiu/atendido sem canhoto são só faturamento.
     var peUltimaEntrega = '';
-    function peContexto() { return { pedidos_estado: pe.estadosDia===window.TempRioRotaCore.diaSP(new Date()) ? pe.estadosH : null, canhotos: pe.canhotos, cfg: pe.cfg, saidas: pe.saidas, confirmacoes: pe.confirmacoes, agora: new Date() }; }
+    function peLerProblemas(l) { return window.TempRioEntregaAdmin && window.TempRioEntregaAdmin.lerProblemas ? window.TempRioEntregaAdmin.lerProblemas(sb, l) : Promise.resolve(null); }
+    function peProblema(x) { return !!(pe.problemas && pe.problemas[x.cd_pedido]); }
+    function peContexto() { return { pedidos_estado: pe.estadosDia===window.TempRioRotaCore.diaSP(new Date()) ? pe.estadosH : null, canhotos: pe.canhotos, cfg: pe.cfg, saidas: pe.saidas, confirmacoes: pe.confirmacoes, problemas: pe.problemas, agora: new Date() }; }
     function peEstado070(x) { return window.TempRioPrevisao && pe.estadosDia===window.TempRioRotaCore.diaSP(new Date()) && pe.estadosH && pe.estadosH[x.cd_pedido] || null; }
     function peOpcoesSaida070(cd) {
         var U=window.TempRioPrevisao,Cal=window.TempRioCalendario,e=peEstado070({cd_pedido:cd}),hoje=window.TempRioRotaCore.diaSP(new Date());
@@ -6993,7 +6995,7 @@
     function peRecebidoRecente(x) { var e=peEstado070(x); return window.TempRioPrevisao ? !!e && e.estado_070==='recebido' : window.TempRioRotaCore.recebidoRecente(x, peContexto()); }
     function peAssinaturaEntrega() { return pe.itens.map(function (x) { return peIndice(x) + ':' + (peRecebidoRecente(x) ? 1 : 0); }).join(','); }
     function peContextoEntrega() { return Object.assign({}, peContexto(), { sb: sb, papel: typeof papel !== 'undefined' ? papel : null, podeMarcar: pe.podeMarcar, instalada: pe.entrega063, sessao: pe.seq }); }
-    function peRecebidoHtml(x) { var e=peEstado070(x); if(window.TempRioPrevisao) return e && /^(recebido|historico)$/.test(e.estado_070) ? '<span class="rota-selo">'+(e.estado_070==='historico'?'Entregue':'Recebido')+'</span>' : ''; return window.TempRioEntregaAdmin ? window.TempRioEntregaAdmin.html(x, peContextoEntrega()) : esc(window.TempRioRotaCore.recebidoRotulo(x, peContexto())); }
+    function peRecebidoHtml(x) { var e=peEstado070(x); if(window.TempRioPrevisao) { var prob=window.TempRioEntregaAdmin && window.TempRioEntregaAdmin.problemaHtml ? window.TempRioEntregaAdmin.problemaHtml(x, peContextoEntrega()) : ''; var selo=!(peProblema(x) && prob) && e && /^(recebido|historico)$/.test(e.estado_070) ? '<span class="rota-selo">'+(e.estado_070==='historico'?'Entregue':'Recebido')+'</span>' : ''; return selo + prob; } return window.TempRioEntregaAdmin ? window.TempRioEntregaAdmin.html(x, peContextoEntrega()) : esc(window.TempRioRotaCore.recebidoRotulo(x, peContexto())); }
     if (typeof window.addEventListener === 'function') {
         window.addEventListener('temprio-entrega063', function () { if (sb && typeof papel !== 'undefined' && papel) carregarPedidosErp(); });
         window.addEventListener('temprio-movimento068', function () { if (sb && typeof papel !== 'undefined' && papel) carregarPedidosErp(); });
@@ -7204,9 +7206,9 @@
         ]).then(function (rs) {
             if (seq !== pe.seq) return null;
             if (rs[0].error) return rs;
-            return Promise.all([window.TempRioRotaCore.coletarSaidas(sb, rs[0].data || []), window.TempRioRotaCore.coletarConfirmacoes(sb, rs[0].data || []),
+            return Promise.all([window.TempRioRotaCore.coletarSaidas(sb, rs[0].data || []), window.TempRioRotaCore.coletarConfirmacoes(sb, rs[0].data || []), peLerProblemas(rs[0].data || []),
                 (window.TempRioPrevisao || window.TempRioMovimento) ? (window.TempRioPrevisao || window.TempRioMovimento).lerEstados(sb,(rs[0].data || []).map(function(x){return x.cd_pedido;})).then(function(m){return {mapa:m};},function(e){return {erro:e.message};}) : Promise.resolve({erro:'Estado dos pedidos indisponível.'})
-            ]).then(function (r) { rs.saidas = r[0]; rs.confirmacoes = r[1]; rs.estadosH=r[2]; return rs; });
+            ]).then(function (r) { rs.saidas = r[0]; rs.confirmacoes = r[1]; rs.problemas = r[2]; rs.estadosH=r[3]; return rs; });
         }).then(function (rs) {
             if (!rs || seq !== pe.seq) return;
             // UIH-R1: todas as fontes/blocos pertencem ao dia de início, nunca ao dia da resposta.
@@ -7237,9 +7239,13 @@
                 pe.ausente = false; pe.erro = null; pe.carregado = true; pe.itens = rs[0].data || [];
                 pe.cfg = window.TempRioRotaCore.cfgDe(rs[4].data && rs[4].data[0]);
                 pe.saidas = rs.saidas || {}; pe.confirmacoes = rs.confirmacoes.porPedido; pe.entrega063 = rs.confirmacoes.instalada;
+                pe.problemas = rs.problemas && rs.problemas.instalada ? rs.problemas.porPedido : null; pe.erroProblemas = rs.problemas && rs.problemas.erro || '';
+                // 068 C: problema ativo nunca conta como entregue (mesmo caminho do reprogramado: sem canhoto/marcacao/legado).
+                Object.keys(pe.problemas || {}).forEach(function (cd) { pe.confirmacoes[cd] = { reprogramado: true, problema: true }; });
                 pe.estadosH=rs.estadosH && rs.estadosH.mapa || null;pe.estadosDia=diaLeitura;
                 if(window.TempRioPrevisao && (!pe.estadosH || rs.estadosH.erro)){pe.erro='Estados de despacho indisponíveis. Atualize os pedidos.';}
                 pe.msgVeic=rs.estadosH && rs.estadosH.erro ? 'Não foi possível verificar quais pedidos estão no Histórico: '+rs.estadosH.erro : '';
+                if (pe.erroProblemas) pe.msgVeic = (pe.msgVeic ? pe.msgVeic + ' ' : '') + 'Não foi possível ler os problemas de entrega: ' + pe.erroProblemas;
                 var sy = rs[1] && !rs[1].error && rs[1].data && rs[1].data[0];
                 pe.coletado = sy && sy.coletado_em ? sy.coletado_em : null;
             }
@@ -7337,7 +7343,7 @@
         var atr = col.id === 'recebido' ? null : infoAtraso(ref);
         var ponto = atr ? '<span class="adm-pe-ponto ' + atr.cls + '" role="img" title="' + esc(atr.texto) + '" aria-label="' + esc(atr.texto) + '"></span>' : '';
         var rotuloAria = nome + ' — ' + loc.texto + (cargaTxt ? ' — ' + cargaTxt : '') + (peTemCanhoto(x) ? ' — canhoto anexado' : '') + (atr ? ' — ' + atr.texto : '') + ' (Pedido ' + x.cd_pedido + ')';
-        return '<div class="adm-kanban-erpcartao is-compacto" role="button" tabindex="0" data-cor="' + col.cor + '" data-pe-pedido="' + esc(String(x.cd_pedido)) + '" aria-label="' + esc(rotuloAria) + '">' +
+        return '<div class="adm-kanban-erpcartao is-compacto' + (peProblema(x) ? ' is-problema' : '') + '" role="button" tabindex="0" data-cor="' + col.cor + '" data-pe-pedido="' + esc(String(x.cd_pedido)) + '" aria-label="' + esc(rotuloAria) + '">' +
             '<div class="adm-pe-comp-topo">' +
                 '<span class="adm-pe-comp-nome" title="' + esc(nome) + '">' + esc(nome) + '</span>' +
                 (icoCarga || ponto ? '<span class="adm-pe-comp-ind">' + icoCarga + ponto + '</span>' : '') +
@@ -7362,7 +7368,7 @@
         var seloCarga = cargaTxt ? ' <span class="adm-pe-selo-carga">' + icoFa('fa-truck-ramp-box') + esc(cargaTxt) + '</span>' : '';
         var rotEtapa = PE_ROTULO_ETAPA[x.etapa] || col.titulo || x.etapa;
         var linha = function (ic, html, cls) { return '<p class="adm-kc-linha' + (cls ? ' ' + cls : '') + '">' + icoFa(ic) + '<span>' + html + '</span></p>'; };
-        return '<div class="adm-kanban-erpcartao' + (noModal ? ' is-modal-cartao' : '') + '" data-cor="' + col.cor + '">' +
+        return '<div class="adm-kanban-erpcartao' + (noModal ? ' is-modal-cartao' : '') + (peProblema(x) ? ' is-problema' : '') + '" data-cor="' + col.cor + '">' +
             (noModal ? '<p class="adm-pe-modal-etapa"><span class="adm-kanban-ico">' + icoFa(col.icone) + '</span><span>' + esc(col.titulo) + '</span></p>' : '') +
             '<p class="text-sm font-bold adm-kc-nome" title="' + esc(nome) + '">' + icoFa('fa-store') + '<span class="adm-nome-2l">' + esc(nome) + '</span></p>' +
             linha('fa-location-dot', esc(loc.texto), loc.semBairro ? 'is-sem-bairro' : '') +

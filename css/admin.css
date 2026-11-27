@@ -1263,3 +1263,9 @@ body.admin {
 .adm-pe-canhoto-conf { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; padding: 0.35rem 0.55rem; border-radius: 0.5rem; background: var(--adm-ruim-fundo); }
 .adm-pe-canhoto-perigo { background: var(--adm-ruim); color: #1a1410; }
 .adm-pe-canhoto-anexar:has(+ input:focus-visible) { outline: 2px solid currentColor; outline-offset: 2px; }
+
+/* 068 C: pedido com problema na entrega (vermelho = situação ruim) */
+.adm-kanban-erpcartao.is-problema { background: var(--adm-ruim-fundo); border-color: var(--adm-ruim-borda); box-shadow: inset 4px 0 0 var(--adm-ruim); }
+.adm-entrega-problema { margin-top: 0.35rem; padding: 0.4rem 0.5rem; border: 1px solid var(--adm-ruim-borda); border-radius: 0.5rem; background: var(--adm-ruim-fundo); color: var(--adm-ruim); font-size: 0.78rem; }
+.adm-entrega-problema-obs { margin: 0.15rem 0; color: var(--adm-tinta); white-space: normal; overflow-wrap: anywhere; }
+.adm-entrega-erro { color: var(--adm-ruim); font-size: 0.85rem; min-height: 1.1rem; margin: 0.25rem 0; }
