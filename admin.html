@@ -108,6 +108,7 @@
             <button type="button" id="btn-fixar-menu" class="adm-fixar-menu" aria-pressed="false" title="Fixar menu aberto"><i class="fa-solid fa-thumbtack"></i><span>Fixar menu</span></button>
             <button type="button" class="adm-aba is-ativa" data-aba="hoje"><i class="fa-solid fa-house"></i><span>Hoje</span></button>
             <button type="button" class="adm-aba" data-aba="pedidos"><i class="fa-solid fa-clipboard-list"></i><span>Pedidos</span></button>
+            <button type="button" class="adm-aba" data-aba="historicopedidos"><i class="fa-solid fa-clock-rotate-left"></i><span>Histórico</span></button>
             <!-- Site: tudo que vem do site (pedidos, clientes, produtos, vendas, visitas, leads, lista de espera, vitrines). -->
             <button type="button" class="adm-aba adm-so-desktop" data-aba="site"><i class="fa-solid fa-globe"></i><span>Site</span></button>
             <button type="button" class="adm-aba adm-so-desktop" data-aba="rotas"><i class="fa-solid fa-route"></i><span>Rotas</span></button>
@@ -210,6 +211,8 @@
             <section id="painel-dashboard"></section>
             <!-- Aba Pedidos: só o ERP (Kanban por etapa do WMS + vendas registradas no SOLIDCON). -->
             <section id="painel-pedidoserp" class="hidden"></section>
+            <!-- Aba Histórico (068D): entregas concluídas a partir de 23/11 e canhotos em lote por dia. -->
+            <section id="painel-historicopedidos" class="hidden"></section>
             <!-- Aba Site: seções na ordem abaixo (cabeçalho cab-<seção> aparece quando a aba mostra mais de uma). -->
             <h2 class="adm-secao-cab hidden" id="cab-pedidos">Pedidos do site</h2>
             <section id="painel-pedidos" class="hidden"></section>
@@ -279,6 +282,7 @@
     <!-- 052: foto do canhoto (reduz no aparelho, Storage privado, URL assinada) -->
     <script src="./js/canhoto.js"></script>
     <script src="./js/admin-arquivo-canhotos.js"></script>
+    <script src="./js/admin-historico-068d.js"></script>
     <script src="./js/admin.js"></script>
 </body>
 

@@ -1269,3 +1269,29 @@ body.admin {
 .adm-entrega-problema { margin-top: 0.35rem; padding: 0.4rem 0.5rem; border: 1px solid var(--adm-ruim-borda); border-radius: 0.5rem; background: var(--adm-ruim-fundo); color: var(--adm-ruim); font-size: 0.78rem; }
 .adm-entrega-problema-obs { margin: 0.15rem 0; color: var(--adm-tinta); white-space: normal; overflow-wrap: anywhere; }
 .adm-entrega-erro { color: var(--adm-ruim); font-size: 0.85rem; min-height: 1.1rem; margin: 0.25rem 0; }
+
+/* 068 D: Histórico de pedidos e canhotos em lote por dia */
+.adm-hist068-topo { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 0.75rem; margin-bottom: 1.25rem; }
+.adm-hist068-filtros { display: flex; flex-wrap: wrap; gap: 0.75rem 1rem; align-items: flex-end; }
+.adm-hist068-filtros > label { display: flex; flex-direction: column; gap: 0.3rem; min-width: 10.5rem; }
+.adm-hist068-busca { flex: 1 1 14rem; }
+.adm-hist068-dia-cab { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.4rem 1rem; margin-bottom: 0.75rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--adm-borda); }
+.adm-hist068-pedidos-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr)); gap: 0.65rem; margin-bottom: 0.85rem; }
+.adm-hist068-pedido { padding: 0.7rem 0.8rem; border: 1px solid var(--adm-borda); border-radius: 0.6rem; background: var(--adm-superficie-2); display: grid; gap: 0.2rem; }
+.adm-hist068-pedido-topo { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.adm-hist068-lote-bloco { padding-top: 0.75rem; border-top: 1px solid var(--adm-borda); display: grid; gap: 0.6rem; }
+.adm-hist068-lote-cab { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.85rem; }
+.adm-hist068-fotos-lista { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
+.adm-hist068-foto-item { padding: 0.55rem 0.7rem; border: 1px solid var(--adm-borda); border-radius: 0.55rem; background: var(--adm-superficie-2); }
+.adm-hist068-foto-topo { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.4rem 0.75rem; }
+.adm-hist068-foto-acoes { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+.adm-hist068-foto-preview { margin-top: 0.5rem; }
+.adm-hist068-lote-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.6rem 0.85rem; }
+.adm-hist068-lote-form > label { display: flex; flex-direction: column; gap: 0.25rem; max-width: 100%; }
+.adm-hist068-lote-form input[type="file"] { max-width: 100%; }
+.adm-hist068-semana-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 13rem), 1fr)); gap: 0.6rem; margin-top: 0.75rem; }
+.adm-hist068-semana-item { padding: 0.6rem 0.75rem; border: 1px solid var(--adm-borda); border-radius: 0.55rem; background: var(--adm-superficie-2); }
+@media (max-width: 640px) {
+    .adm-hist068-filtros > label { width: 100%; min-width: 0; }
+    .adm-hist068-lote-form button { min-height: 44px; }
+}

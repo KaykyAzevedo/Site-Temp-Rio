@@ -364,7 +364,7 @@
     // Seções = painéis (#painel-<seção>) com seus desenhistas; o menu agrupa seções em itens (NAV).
     // 'pedidos' = pedidos DO SITE (seção da aba Site; o nome ficou para não mexer em realtime/sino/redesenhos);
     // 'pedidoserp' = Kanban do ERP + vendas do SOLIDCON (aba Pedidos). site* = blocos do site que saíram de abas mistas.
-    var ABAS = ['dashboard', 'pedidoserp', 'pedidos', 'clientes', 'historico', 'vendas',
+    var ABAS = ['dashboard', 'pedidoserp', 'historicopedidos', 'pedidos', 'clientes', 'historico', 'vendas',
                 'espera', 'vitrine', 'regioes', 'visitas', 'solidcon', 'leads', 'lgpd', 'lojistas',
                 'siteclientes', 'siteprodutos', 'sitedash', 'sitevendas', 'rotas', 'whatsapp', 'usuarios'];
 
@@ -373,6 +373,7 @@
     var NAV = {
         hoje:     { secoes: ['dashboard'], restrito: false },
         pedidos:  { secoes: ['pedidoserp'], restrito: false },
+        historicopedidos: { secoes: ['historicopedidos'], restrito: false },
         site:     { secoes: ['pedidos', 'siteclientes', 'siteprodutos', 'sitedash', 'sitevendas', 'visitas', 'leads', 'espera', 'lojistas'], restrito: false },
         clientes: { secoes: ['clientes'],  restrito: false },
         estoque:  { secoes: ['vitrine'],   restrito: true },
@@ -780,6 +781,7 @@
         hmDestruir(); hm.animou = false; hm.pediu = false;
         if (window.TempRioRota) window.TempRioRota.sair();   // Rota do dia: solta o mapa e esquece os dados da conta
         if (window.TempRioArquivoCanhotos) window.TempRioArquivoCanhotos.sair();
+        if (window.TempRioHistorico068D) window.TempRioHistorico068D.sair();
         if (window.TempRioWhats) window.TempRioWhats.sair(); // WhatsApp: esquece telefones/textos da conta
         if (window.TempRioUsuarios) window.TempRioUsuarios.sair(); // Usuários: esquece a lista (e qualquer senha na tela)
         pe.seq++; pe.carregado = false; pe.carregando = false;
@@ -824,8 +826,9 @@
     function aplicarPapel() {
         var restrito = papel === 'vendedor';
         document.querySelectorAll('.adm-aba').forEach(function (b) {
-            var item = NAV[b.getAttribute('data-aba')];
-            b.classList.toggle('hidden', !!(restrito && item && item.restrito));
+            var aba = b.getAttribute('data-aba'), item = NAV[aba];
+            var ocultoD = aba === 'historicopedidos' && window.TempRio068Partes && window.TempRio068Partes.D !== true;
+            b.classList.toggle('hidden', !!(ocultoD || (restrito && item && item.restrito)));
         });
         // "Mais" some se nenhum item dele está disponível para o papel.
         var mais = document.getElementById('grupo-mais');
@@ -932,6 +935,7 @@
             var cab = document.getElementById('cab-' + a);
             if (cab) cab.classList.toggle('hidden', !(mostra && (vis.length > 1 || a === 'historico')));
         });
+        if (window.TempRioHistorico068D && vis.indexOf('historicopedidos') < 0) window.TempRioHistorico068D.pausar();
         var barra = document.getElementById('barra-pedidos');
         if (barra) {
             barra.classList.toggle('hidden', abaAtual !== 'site');
@@ -1023,6 +1027,13 @@
         if (!window.TempRioRota) { alvo.innerHTML = cartaoVazio('Rota do dia indisponível', 'O arquivo js/admin-rota.js não carregou.', 'erp'); return; }
         window.TempRioRota.desenhar(alvo, { sb: sb, papel: papel });
     }
+    // 068D: Histórico de pedidos e canhotos em lote por dia (js/admin-historico-068d.js).
+    function desenharHistoricoPedidos() {
+        var alvo = $('#painel-historicopedidos');
+        if (!alvo) return;
+        if (!window.TempRioHistorico068D) { alvo.innerHTML = cartaoVazio('Histórico de pedidos indisponível', 'O arquivo js/admin-historico-068d.js não carregou.', 'erp'); return; }
+        window.TempRioHistorico068D.desenhar(alvo, { sb: sb, papel: papel });
+    }
     // WhatsApp: tela e dados em js/admin-whatsapp.js. Aqui só o contêiner, o cliente e o confirmarAdmin.
     function desenharWhatsapp() {
         var alvo = $('#painel-whatsapp');
@@ -1054,6 +1065,7 @@
         solidcon: desenharSolidcon,
         lojistas: desenharLojistas,
         pedidoserp: desenharPedidosErpAba,
+        historicopedidos: desenharHistoricoPedidos,
         siteclientes: desenharSiteClientes,
         siteprodutos: desenharSiteProdutos,
         sitedash: desenharSiteDash,
