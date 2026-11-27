@@ -1,7 +1,9 @@
-.adm-cal{box-sizing:border-box;width:100%;max-width:20rem;min-width:15rem;color:var(--adm-texto,#e2e8f0);font-size:.8125rem}
+.adm-cal{box-sizing:border-box;width:100%;max-width:20rem;min-width:0;color:var(--adm-texto,#e2e8f0);font-size:.8125rem}
 .adm-cal-topo{display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin-bottom:.5rem}
 .adm-cal-topo button,.adm-cal-dia{border:1px solid transparent;border-radius:.45rem;background:transparent;color:inherit;min-height:2rem;cursor:pointer;font:inherit}
-.adm-cal-topo button{min-width:2rem;font-size:1.3rem}
+.adm-cal-topo button{min-width:2rem;font-size:1.3rem;flex:none;padding:0 .35rem}
+.adm-cal-topo strong{flex:1;min-width:0;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.adm-cal-dia{min-width:0;padding:0}
 .adm-cal-semana,.adm-cal-dias{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:.15rem;text-align:center}
 .adm-cal-semana{color:#94a3b8;margin-bottom:.25rem;font-size:.7rem}
 .adm-cal-dia:hover:enabled,.adm-cal-topo button:hover:enabled{background:rgba(148,163,184,.14)}
