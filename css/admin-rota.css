@@ -271,3 +271,11 @@
 .rota-fx-confirma { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; padding: 0.5rem 0.75rem; border: 1px solid var(--adm-atencao-borda); background: var(--adm-atencao-fundo); border-radius: 0.5rem; }
 .rota-btn-remover-hoje:hover, .rota-btn-remover-hoje:focus-visible { border-color: var(--adm-atencao-borda); color: var(--adm-tinta); background: var(--adm-atencao-fundo); }
 .rota-btn-remover-hoje:hover i, .rota-btn-remover-hoje:focus-visible i { color: var(--adm-atencao); }
+
+/* 068V: pedido sem veículo (nunca assume S10) */
+.rota-selo-sem-veiculo { color: var(--adm-atencao); background: var(--adm-atencao-fundo); border-color: var(--adm-atencao-borda); }
+.rota-selo-sem-veiculo i { color: var(--adm-atencao); }
+.adm-hist068-veic { display: grid; gap: 0.35rem; margin-top: 0.35rem; justify-items: start; }
+.adm-hist068-veic-form { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; width: 100%; }
+.adm-hist068-veic-form select { flex: 0 1 9rem; }
+.adm-hist068-veic-form input { flex: 1 1 9rem; min-width: 0; }

@@ -82,8 +82,8 @@ test('veículo: marcado CEASA fica fora; sem marcação com sugestão S10 = prec
     const dSem = add(b, 'SemMarca', 89, 0.05, { semMarca: true });
     const dEnd = add(b, 'EndCeasa', 91, 0.045, { semMarca: true, cli: { logradouro: 'Mercado CEASA' } });
     const r = R.sugestoesJuntar(b.rotaPeds.concat([ped(dCeasa), ped(dSem), ped(dEnd)]), b.clientes, rota, opts(b));
-    assert.equal(r.descartados.ceasa, 2);
-    assert.equal(r.sugestoes.length, 1); assert.equal(r.sugestoes[0].documento, dSem); assert.equal(r.sugestoes[0].precisaMarcar, true);
+    assert.equal(r.descartados.ceasa, 1);
+    assert.equal(r.sugestoes.length, 2);assert.deepEqual(r.sugestoes.map(x=>x.documento).sort(),[dSem,dEnd].sort());assert.ok(r.sugestoes.every(x=>x.precisaMarcar));
 });
 
 test('semana: escolhe o dia de trajeto mais perto, lista a alternativa; dia em que o cliente não recebe fica de fora', () => {
@@ -139,7 +139,7 @@ test('fora: rota de dia passado e de sábado; pedido já na rota, ignorado (045)
     const doc = add(b, 'Perto', 88, 0.03);
     const ps = b.rotaPeds.concat([ped(doc)]);
     assert.equal(R.sugestoesJuntar(ps, b.clientes, rota, opts(b, { hoje: '2026-12-03' })).sugestoes.length, 0);
-    const sab = { dia: SAB, paradas: rota.s10.paradas, volume: rota.s10.volume };
+    const sab = { veiculo:'s10',dia: SAB, paradas: rota.s10.paradas, volume: rota.s10.volume };
     let r = R.sugestoesJuntar(ps, b.clientes, sab, opts(b));
     assert.equal(r.rotas.length, 0); assert.equal(r.descartados.sem_rota, 1);
     // já na rota: nenhum dos 3 da rota vira sugestão
@@ -152,7 +152,7 @@ test('fora: rota de dia passado e de sábado; pedido já na rota, ignorado (045)
     novo.etapa = 'separado';
     assert.equal(R.sugestoesJuntar(ps, b.clientes, rota, opts(b)).sugestoes[0].acao, 'juntar');
     // rota sem nenhuma parada: nada a juntar
-    r = R.sugestoesJuntar(ps, b.clientes, { dia: QUA, paradas: [], volume: 0 }, opts(b));
+    r = R.sugestoesJuntar(ps, b.clientes, { veiculo:'s10',dia: QUA, paradas: [], volume: 0 }, opts(b));
     assert.equal(r.rotas.length, 0);
 });
 
@@ -204,29 +204,29 @@ test('2-B Sentinela: rota recebida SEM volume não vira carga zero (deriva dos p
     const b = base();
     b.rotaPeds[0].caixas_24 = 290;
     const rota = rotaDe(b);
-    const semVol = { dia: QUA, paradas: rota.s10.paradas };
+    const semVol = { veiculo:'s10',dia: QUA, paradas: rota.s10.paradas };
     const novos = [];
     for (let i = 0; i < 5; i++) novos.push(ped(add(b, 'Perto' + i, 86 + i, 0.03 + i * 0.005)));
     let r = R.sugestoesJuntar(b.rotaPeds.concat(novos), b.clientes, semVol, opts(b));
     assert.equal(r.rotas[0].volume, 2700); assert.equal(r.rotas[0].folga, 0); assert.equal(r.rotas[0].capacidadeDesconhecida, false);
     assert.equal(r.sugestoes.length, 0); assert.equal(r.descartados.capacidade, 5);
     // volume informado MENOR que o dos pedidos: vale o dos pedidos
-    r = R.sugestoesJuntar(b.rotaPeds.concat(novos), b.clientes, { dia: QUA, paradas: rota.s10.paradas, volume: 10 }, opts(b));
+    r = R.sugestoesJuntar(b.rotaPeds.concat(novos), b.clientes, { veiculo:'s10',dia: QUA, paradas: rota.s10.paradas, volume: 10 }, opts(b));
     assert.equal(r.rotas[0].volume, 2700); assert.equal(r.sugestoes.length, 0);
     // mesmos pedidos em 'pedidos' E nas paradas: conta UMA vez (1350 + 900 cabe; contado 2x não caberia)
     const b2 = base(); b2.rotaPeds[0].caixas_24 = 140;            // 140+5+5 = 150 cx24 = 1350
     const r2 = rotaDe(b2), d = add(b2, 'Grande', 88, 0.03);
-    r = R.sugestoesJuntar(b2.rotaPeds.concat([ped(d, { caixas_24: 100 })]), b2.clientes, { dia: QUA, paradas: r2.s10.paradas, pedidos: r2.s10.pedidos }, opts(b2));
+    r = R.sugestoesJuntar(b2.rotaPeds.concat([ped(d, { caixas_24: 100 })]), b2.clientes, { veiculo:'s10',dia: QUA, paradas: r2.s10.paradas, pedidos: r2.s10.pedidos }, opts(b2));
     assert.equal(r.rotas[0].volume, 1350); assert.equal(r.sugestoes.length, 1); assert.equal(r.sugestoes[0].folgaDepois, 2700 - 1350 - 900);
     // pedido da rota sem caixas: conta 0 e aparece em desconhecidos
     b2.rotaPeds[1].caixas_24 = null; b2.rotaPeds[1].caixas_48 = null;
-    r = R.sugestoesJuntar(b2.rotaPeds, b2.clientes, { dia: QUA, paradas: rotaDe(b2).s10.paradas }, opts(b2));
+    r = R.sugestoesJuntar(b2.rotaPeds, b2.clientes, { veiculo:'s10',dia: QUA, paradas: rotaDe(b2).s10.paradas }, opts(b2));
     assert.equal(r.rotas[0].desconhecidos, 1); assert.equal(r.rotas[0].volume, 1305);
 });
 
 test('2-B Sentinela: rota sem volume e sem pedidos = capacidade desconhecida (sugere marcado, folga null)', () => {
     const b = base(), rota = rotaDe(b);
-    const sóParadas = { dia: QUA, paradas: rota.s10.paradas.map((sp) => ({ chave: sp.chave, documento: sp.documento, nome: sp.nome, bairro: sp.bairro, pos: sp.pos })) };
+    const sóParadas = { veiculo:'s10',dia: QUA, paradas: rota.s10.paradas.map((sp) => ({ chave: sp.chave, documento: sp.documento, nome: sp.nome, bairro: sp.bairro, pos: sp.pos })) };
     const doc = add(b, 'Perto', 88, 0.03);
     // só o pedido novo (as paradas não trazem os pedidos da rota, então eles nem são conhecidos)
     const r = R.sugestoesJuntar([ped(doc, { caixas_24: 50 })], b.clientes, sóParadas, opts(b));
@@ -240,7 +240,7 @@ test('2-B Sentinela: rota sem volume e sem pedidos = capacidade desconhecida (su
 // ===================== Sentinela 2-B core (3 MÉDIOS) =====================
 test('Sentinela #1: cliente que SOZINHO passa da capacidade do veículo nunca é sugerido, mesmo com carga da rota desconhecida', () => {
     const b = base(), rota = rotaDe(b);
-    const sóParadas = { dia: QUA, paradas: rota.s10.paradas.map((sp) => ({ chave: sp.chave, documento: sp.documento, nome: sp.nome, bairro: sp.bairro, pos: sp.pos })) };
+    const sóParadas = { veiculo:'s10',dia: QUA, paradas: rota.s10.paradas.map((sp) => ({ chave: sp.chave, documento: sp.documento, nome: sp.nome, bairro: sp.bairro, pos: sp.pos })) };
     const doc = add(b, 'Perto', 88, 0.03);
     let r = R.sugestoesJuntar([ped(doc, { caixas_24: 400 })], b.clientes, sóParadas, opts(b));   // 3600 > 2700
     assert.equal(r.rotas[0].capacidadeDesconhecida, true);
@@ -286,7 +286,7 @@ test('Sentinela #3: sem posição, bairro homônimo de OUTRA cidade não conta; 
     assert.ok(r.sugestoes.every((s) => s.criterio === 'bairro'));
     assert.equal(r.descartados.sem_posicao, 2);
     // UF conhecida dos dois lados e diferente: não conta
-    const comUf = { dia: QUA, paradas: rota.s10.paradas.map((sp) => Object.assign({}, sp, { uf: 'RJ' })) };
+    const comUf = { veiculo:'s10',dia: QUA, paradas: rota.s10.paradas.map((sp) => Object.assign({}, sp, { uf: 'RJ' })) };
     const r2 = R.sugestoesJuntar([ped(outroUf), ped(mesma)], b.clientes, comUf, opts(b, { desvioMaxKm: 0 }));
     assert.deepEqual(r2.sugestoes.map((s) => s.documento), [mesma]);
 });

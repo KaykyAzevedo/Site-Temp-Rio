@@ -125,10 +125,10 @@ test('rota_chefe: 1 parte — paradas (6 vagas, "—" nas sobras) e a sugerida P
     assert.equal(s[4], '—');   // Strada inativa não aparece
     assert.ok(!/Strada/.test(m.texto));
     assert.match(s[5], / → volta ao depósito$/);
-    assert.equal(s[6], '1 cliente com prioridade alta · 1 com horário fixo');
+    assert.equal(s[6], '1 pedido sem veiculo \u00b7 1 cliente com prioridade alta · 1 com horário fixo');
     assert.equal(s[7], URL_P + '/admin.html#rotas');
     assert.ok(m.texto.endsWith('_Mensagem automática do Temp Rio._'));
-    assert.deepEqual(m.resumo, { entregas: 4, pedidos: 4, partesParadas: 1, omitidas: 0, aguardando: 1, fica: 0 });
+    assert.deepEqual(m.resumo, { entregas: 4, pedidos: 4, partesParadas: 1, omitidas: 0, aguardando: 1, fica: 0, semVeiculo: 1 });
 });
 
 test('rota_chefe: 3 partes — "n de 3", ordem = a mesma da rota_<veículo> (mesmo plano da aba Rotas)', () => {

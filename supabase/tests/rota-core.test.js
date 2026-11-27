@@ -28,7 +28,9 @@ test('compat whatsapp-rotinas: sem "marcacao" o planejador segue automático (co
     const clientes = { [docN(1)]: cli('Box Ceasa', 0, 0, { pos: CEASA, logradouro: 'Av Brasil', numero: '19001' }),
                        [docN(2)]: cli('Mercado A', 0.01, 0.01), [docN(3)]: cli('Mercado B', 0.03, -0.02) };
     const pedidos = [ped(docN(1)), ped(docN(2)), ped(docN(3))];
-    const pl = R.planejar(pedidos, clientes, DIA, { cfg: R.cfgDe(R.CFG_PADRAO), excecoes: {} });
+    const escolhas = { [docN(1)]:'caminhao',[docN(2)]:'s10',[docN(3)]:'s10' };
+    const sem = R.planejar(pedidos,clientes,DIA,{excecoes:{}});assert.equal(sem.semVeiculo,3);assert.equal(Object.keys(sem.entregues).length,0);
+    const pl = R.planejar(pedidos, clientes, DIA, { cfg: R.cfgDe(R.CFG_PADRAO), excecoes: escolhas });
     assert.equal(pl.modo, 'auto');
     assert.equal(pl.aguardando.length, 0);
     assert.equal(pl.caminhao.cd, null);
@@ -41,7 +43,7 @@ test('compat whatsapp-rotinas: sem "marcacao" o planejador segue automático (co
     const pl2 = R.planejar(pedidos, clientes, DIA, { excecoes: { [docN(2)]: 'caminhao' } });
     assert.ok(pl2.caminhao.pedidos.some((x) => x.p.documento === docN(2)));
     // A mensagem da whatsapp-rotinas monta igual (campos que ela usa continuam lá).
-    const d = { pedidos, clientes, cfg: R.cfgDe(R.CFG_PADRAO), excecoes: {} };
+    const d = { pedidos, clientes, cfg: R.cfgDe(R.CFG_PADRAO), excecoes: escolhas };
     const agora = new Date(DIA + 'T09:00:00-03:00');
     const s10 = W.montarRota(d, 's10', agora, {});
     assert.ok(!s10.vazio && s10.partes.length >= 1);
@@ -59,8 +61,8 @@ test('cliente novo sem marcação NÃO entra na rota: vai para aguardando, com a
     assert.equal(pl.s10.pedidos.length + pl.caminhao.pedidos.length + pl.fica.length, 0);
     assert.deepEqual(Object.keys(pl.entregues), []);
     const porDoc = {}; pl.aguardando.forEach((x) => { porDoc[x.p.documento] = x; });
-    assert.deepEqual([porDoc[docN(1)].sugestao.veiculo, porDoc[docN(1)].sugestao.motivo], ['caminhao', 'ceasa']);
-    assert.deepEqual([porDoc[docN(2)].sugestao.veiculo, porDoc[docN(2)].sugestao.motivo], ['s10', 'padrao']);
+    assert.deepEqual([porDoc[docN(1)].sugestao.veiculo, porDoc[docN(1)].sugestao.motivo], [null, 'sem_veiculo']);
+    assert.deepEqual([porDoc[docN(2)].sugestao.veiculo, porDoc[docN(2)].sugestao.motivo], [null, 'sem_veiculo']);
     assert.equal(porDoc.null.marcacao, null);
 });
 
@@ -126,7 +128,7 @@ test('dia que o cliente não recebe: pedido vai para a próxima saída em que el
     assert.equal(f.estoura, true);                                         // prazo 25/11 < 26/11
     assert.ok(!pl.entregues[pa.cd_pedido]);
     // Vale também no modo automático quando há regras (e não ocupa a S10).
-    const pl2 = R.planejar([pa], clientes, DIA, { regras });
+    const pl2 = R.planejar([pa], clientes, DIA, { regras,excecoes:{[docN(1)]:'s10'} });
     assert.equal(pl2.fica[0].motivoFica, 'dia_fechado');
 });
 
@@ -286,11 +288,11 @@ test('v3: capacidade da S10 = 300 cx24 (2700 de volume ≈ 163 cx48); 301 cx24 n
 test('v3: sugestão automática por bairro saiu (só endereço CEASA / Av. Brasil 19001 / raio)', () => {
     const cfg = R.cfgDe({ bairros_caminhao: ['Vila da Penha'] });
     const penha = cli('Mercado Penha', 0, 0, { pos: [-22.8400, -43.2800], bairro: 'Vila da Penha' });
-    assert.deepEqual(R.sugestaoDe(ped(docN(4)), penha, cfg), { veiculo: 's10', motivo: 'padrao', detalhe: null });
-    assert.equal(R.veiculoDe(ped(docN(4)), penha, cfg, {}).veiculo, 's10');   // v1 também
-    assert.equal(R.sugestaoDe(ped(docN(1)), cli('Box', 0, 0, { complemento: 'CEASA' }), cfg).motivo, 'ceasa');
-    assert.equal(R.sugestaoDe(ped(docN(1)), cli('Box', 0, 0, { logradouro: 'Av. Brasil', numero: '19.001' }), cfg).detalhe, 'av_brasil_19001');
-    assert.equal(R.sugestaoDe(ped(docN(1)), cli('Box', 0, 0, { pos: [CEASA[0] + 0.002, CEASA[1]] }), cfg).detalhe, 'raio');
+    assert.deepEqual(R.sugestaoDe(ped(docN(4)), penha, cfg), { veiculo: null, motivo: 'sem_veiculo', detalhe: null });
+    assert.equal(R.veiculoDe(ped(docN(4)), penha, cfg, {}).veiculo, null);   // v1 também
+    assert.equal(R.sugestaoDe(ped(docN(1)), cli('Box', 0, 0, { complemento: 'CEASA' }), cfg).motivo, 'sem_veiculo');
+    assert.equal(R.sugestaoDe(ped(docN(1)), cli('Box', 0, 0, { logradouro: 'Av. Brasil', numero: '19.001' }), cfg).detalhe, null);
+    assert.equal(R.sugestaoDe(ped(docN(1)), cli('Box', 0, 0, { pos: [CEASA[0] + 0.002, CEASA[1]] }), cfg).detalhe, null);
 });
 
 test('v3/045: pedido ignorado fica FORA da rota, de aguardando e de fica (v2 e v1), e vai para res.ignorados', () => {
@@ -319,7 +321,7 @@ test('v3/045: pedido ignorado fica FORA da rota, de aguardando e de fica (v2 e v
     const saiu = ped(docN(1), { etapa: 'saiu' });
     assert.equal(R.planejar([saiu], clientes, DIA, { marcacao: true, padroes, ignorados: { [saiu.cd_pedido]: true } }).ignorados.length, 0);
     // v1 (sem marcação) também respeita
-    const v1 = R.planejar([a, b], clientes, DIA, { cfg: R.cfgDe(R.CFG_PADRAO), excecoes: {}, ignorados: { [b.cd_pedido]: true } });
+    const v1 = R.planejar([a, b], clientes, DIA, { cfg: R.cfgDe(R.CFG_PADRAO), excecoes: {[docN(1)]:'s10'}, ignorados: { [b.cd_pedido]: true } });
     assert.deepEqual([v1.caminhao.pedidos.length, v1.s10.pedidos.length, v1.ignorados.length], [0, 1, 1]);
     // sem ignorados: idêntico a não passar nada
     assert.deepEqual(JSON.stringify(R.planejar(todos, clientes, DIA, { marcacao: true, padroes, regras, ignorados: {} }).s10.paradas.map((s) => s.chave)),

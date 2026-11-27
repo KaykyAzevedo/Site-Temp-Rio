@@ -57,6 +57,11 @@
             confirmRem: '',    // caminho aguardando confirmacao inline de remocao (admin)
             removendo: {},     // { [caminho]: true }
             lotes: {},         // { [dia]: { ocupado, msg, erro, caminhosPendentes: [], arquivosFalhos: [] } }
+            veic: {},          // 068V: { [cd_pedido]: { veiculo_efetivo, sem_veiculo } } (rota_068_veiculo_historico_ler)
+            veicBusy: {},      // { [cd]: true } salvando
+            veicMes: '',
+            veicErro: false,
+            veicMsg: {},       // { [cd]: { ok, texto } }
             uploadDia: ''      // dia escolhido no card superior "Enviar canhotos por dia"
         };
     }
@@ -258,6 +263,98 @@
         });
     }
 
+    // 068V: veículo efetivo de cada pedido do mês (lotes de 300). Falha = cartões sem seletor (não derruba o histórico).
+    var VEIC_ROTULO = { caminhao: 'CEASA (caminhão)', s10: 'S10' };
+    var MOTIVOS_VEIC = {
+        motivo_invalido: 'Informe um motivo de 1 a 200 caracteres.',
+        veiculo_invalido: 'Veículo inválido ou inativo.',
+        pedido_nao_encontrado: 'Pedido não encontrado.',
+        parametro_invalido: 'Parâmetro inválido.'
+    };
+    var MSG_VEIC = 'Não foi possível ler os veículos; tente atualizar.';
+    var TIMEOUT_VEIC_MS = 20000;
+    // Leitura atômica: erro/timeout de qualquer lote rejeita (nada é aplicado pela chamadora).
+    function lerVeiculosHistorico(sb, cds) {
+        var lotes = [];
+        for (var i = 0; i < cds.length; i += 300) lotes.push(cds.slice(i, i + 300));
+        function um(lote) {
+            return new Promise(function (resolve, reject) {
+                var t = setTimeout(function () { reject(new Error('timeout')); }, TIMEOUT_VEIC_MS);
+                Promise.resolve().then(function () { return sb.rpc('rota_068_veiculo_historico_ler', { p_cds: lote }); }).then(function (r) {
+                    clearTimeout(t);
+                    if (!r || r.error || !Array.isArray(r.data)) reject((r && r.error) || new Error('resposta inválida'));
+                    else resolve(r.data);
+                }, function (e) { clearTimeout(t); reject(e); });
+            });
+        }
+        return lotes.reduce(function (cadeia, lote) {
+            return cadeia.then(function (acc) {
+                return um(lote).then(function (linhas) {
+                    linhas.forEach(function (x) { if (x && x.cd_pedido != null) acc[String(x.cd_pedido)] = x; });
+                    return acc;
+                });
+            });
+        }, Promise.resolve({}));
+    }
+    function trocarVeiculoHistorico(sb, cd, veiculo, motivo) {
+        return Promise.resolve(sb.rpc('rota_068_veiculo_historico', { p_cd: Number(cd), p_veiculo: veiculo, p_motivo: motivo })).then(function (r) {
+            if (!r || r.error) throw (r && r.error) || new Error('Falha ao trocar o veículo.');
+            var d = r.data || {};
+            if (d.status && d.status !== 'ok') { var e = new Error(MOTIVOS_VEIC[d.status] || String(d.status)); e.code = String(d.status); throw e; }
+            return d;
+        });
+    }
+    function salvarVeiculo(cd, veiculo, motivo) {
+        if (!st.sb || !st.podeMarcar || st.veicBusy[cd]) return Promise.resolve();
+        var s = st, seq = s.seq, req = s.reqMes;
+        motivo = String(motivo || '').trim();
+        if (!veiculo) { s.veicMsg[cd] = { ok: false, texto: 'Escolha o veículo.' }; redesenhar(); return Promise.resolve(); }
+        if (!motivo || motivo.length > 200) { s.veicMsg[cd] = { ok: false, texto: 'Informe um motivo de 1 a 200 caracteres.' }; redesenhar(); return Promise.resolve(); }
+        s.veicBusy[cd] = true; s.veicMsg[cd] = null; redesenhar();
+        return trocarVeiculoHistorico(s.sb, cd, veiculo, motivo).then(function (d) {
+            if (!valida(s, seq) || s.reqMes !== req) return;
+            delete s.veicBusy[cd];
+            var novo = d.veiculo_para || veiculo;
+            s.veic[String(cd)] = { cd_pedido: cd, veiculo_id: novo, veiculo_efetivo: novo, sem_veiculo: false };
+            s.veicMsg[cd] = { ok: true, texto: d.alterado === false ? 'Já estava neste veículo.' : 'Veículo atualizado.' };
+            // Semana/rotas em cache ficam velhas: invalida (relê ao abrir) e avisa a Semana para reler veículos/entregas.
+            s.semanaLinhas = null; s.semanaErro = '';
+            if (s.semanaAberta) carregarRotasSemana();
+            if (d.alterado !== false && typeof raiz.dispatchEvent === 'function' && typeof raiz.CustomEvent === 'function') {
+                raiz.dispatchEvent(new raiz.CustomEvent('temprio-veiculo068h', { detail: { cd_pedido: Number(cd), veiculo: novo } }));
+            }
+            redesenhar();
+        }, function (err) {
+            if (!valida(s, seq) || s.reqMes !== req) return;
+            delete s.veicBusy[cd];
+            var c = String((err && err.code) || '');
+            s.veicMsg[cd] = { ok: false, texto: c === '42501' ? 'Sem permissão para trocar o veículo.' : codigoAusente(err) ? 'Troca de veículo (068V) ainda não está instalada neste banco.' : (MOTIVOS_VEIC[c] || String((err && err.message) || 'Não foi possível trocar o veículo.')) };
+            redesenhar();
+        });
+    }
+    function htmlVeiculoHistorico(p) {
+        var cd = String(p.cd_pedido), v = st.veic[cd];
+        if (!v) return '';
+        var efet = v.veiculo_efetivo || v.veiculo_id || '';
+        var selo = v.sem_veiculo || !efet
+            ? '<span class="rota-selo rota-selo-sem-veiculo" title="Nenhum veículo definido para este pedido"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>Sem veículo</span>'
+            : '<span class="rota-selo"><i class="fa-solid fa-truck" aria-hidden="true"></i>' + esc(VEIC_ROTULO[efet] || efet) + '</span>';
+        var msg = st.veicMsg[cd];
+        var msgH = msg ? '<p class="text-xs ' + (msg.ok ? '' : 'adm-entrega-erro') + '" role="' + (msg.ok ? 'status' : 'alert') + '"' + (msg.ok ? ' style="color:var(--adm-tinta-2)"' : '') + '>' + esc(msg.texto) + '</p>' : '';
+        if (!st.podeMarcar) return '<div class="adm-hist068-veic">' + selo + '</div>';
+        var busy = !!st.veicBusy[cd];
+        return '<div class="adm-hist068-veic">' + selo +
+            '<form class="adm-hist068-veic-form" data-h068-veic="' + esc(cd) + '">' +
+                '<label class="sr-only" for="h068-v-' + esc(cd) + '">Veículo do pedido #' + esc(cd) + '</label>' +
+                '<select id="h068-v-' + esc(cd) + '" name="veiculo" class="adm-input"' + (busy ? ' disabled' : '') + '>' +
+                    '<option value="">Trocar veículo…</option>' +
+                    '<option value="caminhao"' + (efet === 'caminhao' ? ' disabled' : '') + '>Caminhão (CEASA)</option>' +
+                    '<option value="s10"' + (efet === 's10' ? ' disabled' : '') + '>S10</option></select>' +
+                '<input name="motivo" class="adm-input" maxlength="200" placeholder="Motivo (obrigatório)" aria-label="Motivo da troca do pedido #' + esc(cd) + '"' + (busy ? ' disabled' : '') + '>' +
+                '<button type="submit" class="adm-botao-fantasma"' + (busy ? ' disabled' : '') + '>' + (busy ? 'Salvando…' : 'Salvar') + '</button>' +
+            '</form>' + msgH + '</div>';
+    }
+
     function lerRotasSemana(sb) {
         if (!sb) return Promise.reject(new Error('Sessão indisponível.'));
         return Promise.resolve(sb.rpc('rota_068_rotas_semana')).then(function (r) {
@@ -339,6 +436,8 @@
             if (!valida(s, seq) || s.reqMes !== req) return;
             s.linhas = rs[0];
             s.podeMarcar = rs[1];
+            if (s.veicMes !== mes) { s.veic = {}; s.veicMes = mes; }   // mesmo mês: mantém os anteriores se a releitura falhar
+            s.veicBusy = {}; s.veicMsg = {}; s.veicErro = false;
             s.carregado = true;
             s.carregando = false;
             s.erro = '';
@@ -347,6 +446,14 @@
                 s.diaFiltro = '';
             }
             redesenhar();
+            var cds = s.linhas.map(function (x) { return x.cd_pedido; }).filter(function (c) { return c != null; });
+            if (cds.length) lerVeiculosHistorico(s.sb, cds).then(function (mapa) {
+                if (!valida(s, seq) || s.reqMes !== req) return;
+                s.veic = mapa; s.veicErro = false; redesenhar();
+            }, function () {
+                if (!valida(s, seq) || s.reqMes !== req) return;
+                s.veicErro = true; redesenhar();   // não esconde em silêncio: aviso + mantém dados anteriores
+            });
         }, function (err) {
             if (!valida(s, seq) || s.reqMes !== req) return;
             s.carregando = false;
@@ -807,6 +914,7 @@
                                 (p.data_entrega ? ' · Entregue em ' + esc(dataBr(p.data_entrega)) : '') + '</p>' +
                             (p.obs ? '<p class="text-xs mt-1" style="color:var(--adm-tinta-2)">' + esc(p.obs) + '</p>' : '') +
                             (p.por_nome || p.em ? '<p class="text-xs" style="color:var(--adm-tinta-3)">' + esc([p.por_nome, horaSP(p.em)].filter(Boolean).join(' · ')) + '</p>' : '') +
+                            htmlVeiculoHistorico(p) +
                         '</article>';
                     }).join('') + '</div>'
                     : '<p class="text-xs mb-2" style="color:var(--adm-tinta-3)">Dia com canhotos em lote (sem pedidos listados).</p>';
@@ -832,6 +940,7 @@
                     '<i class="fa-solid fa-rotate mr-1" aria-hidden="true"></i>Atualizar' +
                 '</button>' +
             '</div>' +
+            (st.veicErro && st.carregado ? '<div class="adm-card p-3 mb-3" role="alert"><p class="adm-entrega-erro">' + esc(MSG_VEIC) + '</p><button type="button" class="adm-botao-fantasma mt-2" data-h068-tentar="1">Atualizar</button></div>' : '') +
             htmlRotasSemana() +
             htmlCardEnvioDia(hoje) +
             '<div class="adm-card p-4 mb-5 adm-hist068-filtros">' +
@@ -942,6 +1051,12 @@
         });
 
         alvo.addEventListener('submit', function (ev) {
+            var fv = ev.target && ev.target.closest ? ev.target.closest('[data-h068-veic]') : null;
+            if (fv && alvo.contains(fv)) {
+                ev.preventDefault();
+                salvarVeiculo(fv.getAttribute('data-h068-veic'), fv.elements.veiculo.value, fv.elements.motivo.value);
+                return;
+            }
             var form = ev.target && ev.target.closest ? ev.target.closest('[data-h068-lote], [data-h068-lote-topo]') : null;
             if (!form || !alvo.contains(form)) return;
             ev.preventDefault();

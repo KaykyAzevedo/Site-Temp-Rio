@@ -1096,3 +1096,6 @@
         transition: none !important;
     }
 }
+
+.rq-grupo-sem-veiculo { list-style: none; display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.6rem; padding: 0.4rem 0.2rem 0.1rem; }
+.rq-grupo-sem-veiculo-dica { font-size: 0.72rem; color: var(--adm-tinta-2); }

@@ -11,18 +11,18 @@ const frota=[
 function dados(){
  const pedidos=[1,2,3].map(n=>({cd_pedido:n,documento:String(12000000000000+n),etapa:n===3?'separando':'conferido',dt_pedido:'2026-11-23T09:00:00-03:00',caixas_24:2,caixas_48:0,caixas_outras:0}));
  const clientes={};pedidos.forEach((p,n)=>{clientes[p.documento]={nome:'Cliente '+p.cd_pedido,pos:[R.ROTA.ORIGEM[0]+.01*(n+1),R.ROTA.ORIGEM[1]+.01],bairro:'B',cidade:'Rio'};});
- const opts={agora:'2026-11-23T07:59:00-03:00',marcacao:true,veiculos:frota,padroes:{},porPedido:{1:'s10',2:'strada'},cfg:{hora_saida:'08:00',feriados_sem_saida:true},regras:{},ignorados:{}};
+ const opts={agora:'2026-11-23T07:59:00-03:00',marcacao:true,veiculos:frota,padroes:{},porPedido:{1:'s10',2:'strada',3:'s10'},cfg:{hora_saida:'08:00',feriados_sem_saida:true},regras:{},ignorados:{}};
  return {pedidos,clientes,opts};
 }
 function fechada(d){d.opts.fechada={data:DIA,revisao:4,itens:[{cd_pedido:1,documento:d.pedidos[0].documento,veiculo_id:'s10',ordem:1,origem:'previsao'},{cd_pedido:2,documento:d.pedidos[1].documento,veiculo_id:'strada',ordem:9,origem:'previsao'}]};return d;}
 function plano(d,dia=DIA){return R.planejar(d.pedidos,d.clientes,dia,d.opts);}
-test('separando aberto entra sem marcacao na S10 mesmo acima da capacidade; outros continuam falta marcar',()=>{
- const d=dados();const pl=plano(d);assert.equal(R.ROTA.VEICULO_SEPARANDO,'s10');assert.ok(pl.entregues[3]);assert.equal(pl.veiculos.s10.pedidos.find(x=>x.p.cd_pedido===3).entrouAoSeparar,true);
+test('068V separando sem marcacao fica Sem veiculo, sem capacidade',()=>{
+ const d=dados();delete d.opts.porPedido[3];const pl=plano(d);assert.equal(R.ROTA.VEICULO_SEPARANDO,null);assert.ok(!pl.entregues[3]);assert.deepEqual(pl.semVeiculoPedidos,[{cd_pedido:3}]);assert.ok(pl.aguardando[0].semVeiculo);
  d.pedidos[2].etapa='aberto';assert.ok(!plano(d).entregues[3]);assert.ok(plano(d).aguardando.some(x=>x.p.cd_pedido===3));
 });
-test('separando prioridade pedido > padrao cliente > S10 fixa, sem regra CEASA automatica',()=>{
- const d=dados(),p=d.pedidos[2];d.clientes[p.documento].logradouro='CEASA';
- assert.ok(plano(d).veiculos.s10.pedidos.some(x=>x.p.cd_pedido===3));
+test('068V separando prioridade pedido > cliente > Sem veiculo; endereco nao atribui',()=>{
+ const d=dados(),p=d.pedidos[2];delete d.opts.porPedido[3];d.clientes[p.documento].logradouro='CEASA';
+ assert.ok(!plano(d).entregues[3]);assert.equal(plano(d).semVeiculo,1);
  d.opts.padroes[p.documento]='caminhao';assert.ok(plano(d).veiculos.caminhao.pedidos.some(x=>x.p.cd_pedido===3));
  d.opts.porPedido[3]='strada';assert.ok(plano(d).veiculos.strada.pedidos.some(x=>x.p.cd_pedido===3));
 });

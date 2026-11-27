@@ -76,7 +76,7 @@ function cenario() {
 
 test('coleta sem a 044 (tabelas ausentes): d sem v2 e mensagem igual à do modo automático', async () => {
     const { c, tabelas } = cenario();
-    delete tabelas.rota_pedido_veiculo; delete tabelas.rota_cliente_regras;
+    tabelas.rota_cliente_veiculo = tabelas.solidcon_pedidos_erp.map(p=>({documento:p.documento,veiculo:'s10'}));delete tabelas.rota_pedido_veiculo; delete tabelas.rota_cliente_regras;
     const d = await W.coletarRota(sbFalso(tabelas, c));
     assert.equal(d.v2, undefined);
     const m = W.montarRota(d, 's10', AGORA, {});

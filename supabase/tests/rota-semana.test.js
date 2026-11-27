@@ -225,7 +225,7 @@ test('semana: base — só pendentes, sem ignorados (045); CEASA à parte (CD); 
     assert.equal(m[saiu.cd_pedido], undefined);
     assert.deepEqual(r.cdPedidos.map((x) => x.p.cd_pedido), [pb.cd_pedido]);
     assert.ok(r.cd && r.cd.cd && r.cd.total.clientes === 1);
-    assert.deepEqual(r.faltaMarcar.map((x) => [x.p.cd_pedido, x.sugestao.veiculo]), [[pn.cd_pedido, 's10']]);
+    assert.deepEqual(r.faltaMarcar.map((x) => [x.p.cd_pedido, x.sugestao.veiculo]), [[pn.cd_pedido, null]]);
     assert.ok(r.dias.every((d) => d.volume <= R.ROTA.CAPACIDADE_S10));
     assert.equal(r.resumo.pedidos, 19);
 });

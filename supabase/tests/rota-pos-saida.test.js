@@ -15,7 +15,7 @@ test('1537: foto de 24 nao antecipa faturado a noite; painel e resumo usam saida
 });
 test('inclusao automatica depois da saida adia para proxima rota; manual salvo permanece',()=>{
  const pedido={...p,etapa:'separando'},clientes={[p.documento]:{nome:'Teste',pos:null}},dia='2026-11-24';
- const opts={cfg,marcacao:true,fechada:{data:dia,estado:'fechada',itens:[]}};
+ const opts={cfg,marcacao:true,porPedido:{1537:'s10'},fechada:{data:dia,estado:'fechada',itens:[]}};
  for(const [hora,n] of [['07:59:00',1],['08:00:00',1],['08:01:00',0],['10:30:00',0]]){
   const o={...opts,agora:`${dia}T${hora}-03:00`};
   assert.equal(R.propostaSeparando([pedido],clientes,dia,o).adicoes.length,n,hora);
@@ -30,8 +30,8 @@ test('inclusao automatica depois da saida adia para proxima rota; manual salvo p
 test('adiado nao perde veiculo quando ERP avanca durante a noite; marcacao e045 prevalecem',()=>{
  const x={...p,dt_sep_inicio:'2026-11-24T10:30:00-03:00'},cs={[p.documento]:{nome:'Teste'}},o={cfg,marcacao:true};
  const plano=extra=>R.planejar([x],cs,'2026-11-25',{...o,...extra});
- assert.ok(plano().entregues[1537]);assert.equal(plano().s10.pedidos[0].marcacao,'separando');
- assert.equal(R.propostaSeparando([x],cs,'2026-11-25',{...o,agora:'2026-11-25T07:59-03:00',fechada:{data:'2026-11-25',itens:[]}}).adicoes.length,1,'foto fechada cedo tambem admite adiado antes da saida');
+ assert.ok(!plano().entregues[1537]);assert.equal(plano().semVeiculo,1);
+ assert.equal(R.propostaSeparando([x],cs,'2026-11-25',{...o,agora:'2026-11-25T07:59-03:00',fechada:{data:'2026-11-25',itens:[]}}).adicoes.length,0,'adiado semveiculo nao entra por horario');
  assert.equal(plano({porPedido:{1537:'caminhao'}}).caminhao.pedidos[0].veiculo,'caminhao');
  assert.ok(!plano({ignorados:{1537:true}}).entregues[1537]);
  assert.equal(R.planejar([{...x,dt_sep_inicio:'2026-11-24T07:59:00-03:00'}],cs,'2026-11-25',o).aguardando.length,1);

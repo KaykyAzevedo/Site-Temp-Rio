@@ -140,7 +140,7 @@ test('planejarSemana por veículo: Strada só com os pedidos dela, seg..sex, sem
     // plano salvo para OUTRO veículo não vale; para este vale
     const cd = c.pedidos[0].cd_pedido;
     let s = R.planejarSemana(c.pedidos, c.clientes, SEMANA, { padroes: c.padroes, veiculos: LINHAS(), plano: { [cd]: { dia: '2026-12-04', veiculo_id: 'strada' } } });
-    assert.notEqual(s.dias.find((d) => d.pedidos.some((x) => x.p.cd_pedido === cd)).pedidos.find((x) => x.p.cd_pedido === cd).origemDia, 'salvo');
+    assert.ok(s.outros.some(x=>x.p.cd_pedido===cd && x.veiculo==='strada'),'plano explicitamente salvo e preservado sem reatribuir S10');
     s = R.planejarSemana(c.pedidos, c.clientes, SEMANA, { padroes: c.padroes, veiculos: LINHAS(), plano: { [cd]: { dia: '2026-12-04', veiculo_id: 's10' } } });
     assert.equal(s.dias.find((d) => d.dia === '2026-12-04').pedidos.find((x) => x.p.cd_pedido === cd).origemDia, 'salvo');
     for (const v of ['caminhao', 'fusca']) {

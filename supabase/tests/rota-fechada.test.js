@@ -91,6 +91,7 @@ test('Trazer para hoje: entra no veículo escolhido; SÓ esse veículo é reorde
     const doc = '12000000000077';
     d.clientes[doc] = { nome: 'Cliente de amanhã', bairro: 'Bairro 2', cidade: 'Petrópolis', pos: [R.ROTA.ORIGEM[0] + 0.03, R.ROTA.ORIGEM[1] + 0.01] };
     d.pedidos.push({ cd_pedido: 7777, dt_pedido: '2026-11-23T07:00:00-03:00', etapa: 'aberto', cliente_tipo: 'cnpj', documento: doc, caixas_24: 1, caixas_48: 0, caixas_outras: 0 });
+    d.porPedido[7777]='strada'; // 068V escolha explicita no cenario de reordenacao
     // fora da foto: vai para amanhã
     assert.equal(plan(d, HOJE, f).fica.find((x) => x.p.cd_pedido === 7777).motivoFica, 'rota_fechada');
     // RPC adicionar: item novo na Strada (ordem null) -> a Strada inteira recalcula

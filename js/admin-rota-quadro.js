@@ -319,7 +319,7 @@
             if (norm.modoVeiculo === 'cd_ceasa') {
                 norm.ordem = null;
             } else {
-                var k = norm.veiculo || 's10';
+                var k = norm.veiculo || '';
                 contOrdem[k] = (contOrdem[k] || 0) + 1;
                 norm.ordem = contOrdem[k];
             }
@@ -459,7 +459,8 @@
         // Para cada cartão na bandeja, calcula dia_sugerido + veiculo_sugerido + motivo + texto
         bandeja.forEach(function (c) {
             if (!c || !c.cd_pedido || c.bloqueado) return;
-            var vid = c.veiculo && frotaPorId[c.veiculo] ? c.veiculo : 's10';
+            if (!c.veiculo || c.faltaMarcar) return; // 068V: sem veículo não recebe sugestão
+            var vid = frotaPorId[c.veiculo] ? c.veiculo : 's10';
             var vObj = frotaPorId[vid] || frotaLista[0];
             if (!vObj) return;
             var candidatos = diasEditaveis.filter(function (col) {
@@ -744,7 +745,8 @@
         st.dias.forEach(function (col) {
             var porVeic = Object.create(null);
             (col.cartoesVisiveis || []).forEach(function (c) {
-                var vid = c.veiculo || 's10';
+                if (!c.veiculo) return; // 068V: sem veículo não entra em linha/capacidade
+                var vid = c.veiculo;
                 if (!porVeic[vid]) porVeic[vid] = [];
                 porVeic[vid].push(c);
             });
@@ -968,7 +970,8 @@
             var ordPorVeic = Object.create(null);
             (col.cartoes || []).forEach(function (c) {
                 if (!c || !c.cd_pedido || c.entregue===true || vistos[c.cd_pedido]) return;
-                var vid = c.veiculo || (st.veiculoAtual !== 'todos' ? st.veiculoAtual : 's10');
+                var vid = c.veiculo || (st.veiculoAtual !== 'todos' ? st.veiculoAtual : '');
+                if (!vid) return; // 068V: nunca grava pedido sem veículo (sem S10 implícito)
                 var v = st.veiculosPorId[vid];
                 if (!diaAceitaSalvar(col, v, st)) return;
                 vistos[c.cd_pedido] = true;
@@ -1147,7 +1150,8 @@
             if (!diaAlvoObj || !diaAlvoObj.editavel) {
                 return { ok: false, motivo: 'Este dia não aceita programação (passado, hoje ou sem saída).', estado: st };
             }
-            var veicId = String((acao && acao.veiculo) || cartao.veiculo || (st.veiculoAtual !== 'todos' ? st.veiculoAtual : 's10'));
+            var veicId = String((acao && acao.veiculo) || cartao.veiculo || (st.veiculoAtual !== 'todos' ? st.veiculoAtual : ''));
+            if (!veicId) return { ok: false, motivo: 'Escolha o veículo do pedido antes de programar.', estado: st };
             var veicObj = st.veiculosPorId[veicId];
             if (!veicObj || !veiculoSaiNoDia(veicObj, paraDia, diaAlvoObj.feriado, diaAlvoObj.semSaidaVeiculos)) {
                 return { ok: false, motivo: 'O veículo ' + (veicObj ? veicObj.nome : veicId) + ' não sai neste dia.', estado: st };
@@ -1379,6 +1383,9 @@
 
     function htmlMenuProgramar(c, st, totalDiaVeic) {
         if (!st.podeEditar || st.salvando || c.bloqueado) return '';
+        if ((!c.veiculo || c.faltaMarcar) && st.veiculoAtual === 'todos') {
+            return '<div class="rq-cartao-acoes no-print"><span class="rq-menu-sub">Escolha o veículo para programar</span></div>';
+        }
         var rotuloBtn = c.dia ? 'Mover / tirar…' : 'Programar para…';
         var opcoesDias = st.dias.map(function (col) {
             var veicId = c.veiculo || (st.veiculoAtual !== 'todos' ? st.veiculoAtual : 's10');
@@ -1445,6 +1452,7 @@
         if (c.semGeo) {
             selosExtra.push('<span class="rota-selo rq-selo-sem-geo" data-rq-sem-geo="' + esc(c.cd_pedido) + '" title="Pedido sem coordenadas cadastradas — fora da linha do mapa"><i class="fa-solid fa-location-pin-lock" aria-hidden="true"></i>Sem localização</span>');
         }
+        if (!c.veiculo || c.faltaMarcar) selosExtra.unshift('<span class="rota-selo rota-selo-sem-veiculo" data-rq-sem-veiculo="' + esc(c.cd_pedido) + '" title="Nenhum veículo definido: escolha o veículo"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>Sem veículo</span>');
         if (c.prioridade) selosExtra.push('<span class="rota-selo rota-selo-pri"><i class="fa-solid fa-bolt" aria-hidden="true"></i>Prioridade</span>');
         if (c.janela) selosExtra.push('<span class="rota-selo"><i class="fa-regular fa-clock" aria-hidden="true"></i>' + esc(c.janela) + '</span>');
         if (c.diaFechado) selosExtra.push('<span class="rota-selo rota-selo-fechado"><i class="fa-solid fa-calendar-xmark" aria-hidden="true"></i>Não recebe neste dia</span>');
@@ -1508,6 +1516,19 @@
                 htmlMenuProgramar(c, st, contVeicDia) +
             '</div>' +
             '</li>';
+    }
+
+    // 068V: em dia passado/hoje, pedidos sem veículo ficam num grupo próprio (cabeçalho + cartões), depois dos que têm veículo.
+    function htmlCartoesColuna(col, st, contPorVeic) {
+        var passado = !!st.hoje && col.dia <= st.hoje;
+        var sem = passado ? col.cartoesVisiveis.filter(function (c) { return !c.veiculo || c.faltaMarcar; }) : [];
+        var com = sem.length ? col.cartoesVisiveis.filter(function (c) { return c.veiculo && !c.faltaMarcar; }) : col.cartoesVisiveis;
+        var htmlCom = com.map(function (c) { return htmlCartao(c, st, contPorVeic[c.veiculo]); }).join('');
+        if (!sem.length) return htmlCom;
+        return htmlCom + '<li class="rq-grupo-sem-veiculo" data-rq-grupo-sem-veiculo="' + esc(col.dia) + '" role="presentation">' +
+            '<span class="rota-selo rota-selo-sem-veiculo"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>Sem veículo (' + NUM.format(sem.length) + ')</span>' +
+            '<span class="rq-grupo-sem-veiculo-dica">Defina o veículo em <strong>Histórico</strong>, no cartão do pedido.</span></li>' +
+            sem.map(function (c) { return htmlCartao(c, st, contPorVeic[c.veiculo]); }).join('');
     }
 
     function htmlColunaDia(col, st) {
@@ -1607,7 +1628,7 @@
             '<div class="rq-dia-corpo">' +
                 (col.cartoesVisiveis.length
                     ? '<ol class="rq-pilha' + (expandida ? ' is-expandida' : '') + '" data-rq-pilha="' + esc(col.dia) + '">' +
-                      col.cartoesVisiveis.map(function (c) { return htmlCartao(c, st, contPorVeic[c.veiculo]); }).join('') +
+                      htmlCartoesColuna(col, st, contPorVeic) +
                       '</ol>'
                     : '<div class="rq-dia-vazio"><i class="fa-regular fa-calendar" aria-hidden="true"></i>' +
                       '<span>' + (col.editavel ? 'Arraste cartões para cá ou use "Programar para…"' : (col.leituraMotivo === 'sem_saida' ? 'Veículo não sai neste dia' : 'Sem entregas programadas')) + '</span></div>') +

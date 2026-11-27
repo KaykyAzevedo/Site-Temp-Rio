@@ -866,15 +866,16 @@
                 return (multi ? b.nome + ': ' : '') + trajeto(b, max);
             }).join(' | ');
         var pr = [];
+        if(pl.semVeiculoPedidos && pl.semVeiculoPedidos.length)pr.push(plural(pl.semVeiculoPedidos.length,'pedido sem veiculo','pedidos sem veiculo'));
         if (prio) pr.push(plural(prio, 'cliente com prioridade alta', 'clientes com prioridade alta'));
         if (janela) pr.push(janela + ' com horário fixo');
         if (atrasos) pr.push(plural(atrasos, 'entrega pode chegar fora do horário', 'entregas podem chegar fora do horário'));
         var estoura = pl.fica.filter(function (x) { return x.estoura; }).length;
-        if (estoura) pr.push(plural(estoura, 'pedido que fica passa do prazo', 'pedidos que ficam passam do prazo'));
+        if (estoura) pr.push(plural(estoura, 'pedido que fica passa da meta de entrega', 'pedidos que ficam passam da meta de entrega'));
         partes.push(parte('rota_sugerida', opts.template, [data, total, linhas[0], linhas[1], linhas[2], ordem, pr.join(' · ') || 'nenhuma',
             linkPainel(opts.painelUrl, ABA_ROTAS) || 'abra o painel']));
         return { texto: textoDe(partes), partes: partes,
-                 resumo: { entregas: entregas.length, pedidos: pedidosN, partesParadas: grupos.length, omitidas: omitidas, aguardando: pl.aguardando.length, fica: pl.fica.length } };
+                 resumo: { entregas: entregas.length, pedidos: pedidosN, partesParadas: grupos.length, omitidas: omitidas, aguardando: pl.aguardando.length, fica: pl.fica.length, semVeiculo:(pl.semVeiculoPedidos || []).length } };
     }
 
     // ===================== 050: fechamento AUTOMÁTICO da rota do dia =====================

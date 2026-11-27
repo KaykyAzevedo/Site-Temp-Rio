@@ -9,7 +9,7 @@ function app(hora='2026-11-23T10:59:00Z'){
  const q=window.__sep,s=q.st;s.ativo=true;s.seq=1;s.papel='admin';s.v2=true;s.podeMarcar=true;s.fx050=true;s.fxRev=1;s.cfg=R.cfgDe({hora_saida:'08:00',feriados_sem_saida:true});
  s.frota047=true;s.frotaLinhas=[{id:'s10',nome:'S10',ativo:true,modo:'porta',dias_sem_saida:[0,6],capacidade_volume:null}];
  s.pedidos=[{cd_pedido:1,documento:'12000000000001',etapa:'conferido',dt_pedido:'2026-11-23T06:00:00-03:00',caixas_24:1},{cd_pedido:3,documento:'12000000000003',etapa:'separando',dt_pedido:'2026-11-23T06:00:00-03:00',caixas_24:1}];
- s.clientes={};s.porPedido={1:'s10'};s.fxFoto={data:'2026-11-23',estado:'fechada',revisao:1,itens:[{cd_pedido:1,veiculo_id:'s10',ordem:1,origem:'previsao'}]};
+ s.clientes={};s.porPedido={1:'s10',3:'s10'};s.fxFoto={data:'2026-11-23',estado:'fechada',revisao:1,itens:[{cd_pedido:1,veiculo_id:'s10',ordem:1,origem:'previsao'}]};
  return q;
 }
 function response(q){return {data:{incluidos:1,foto:{linha:{data:'2026-11-23',estado:'fechada',revisao:2},itens:q.st.fxFoto.itens.concat([{cd_pedido:3,veiculo_id:'s10',ordem:2,origem:'separando'}])}}};}
