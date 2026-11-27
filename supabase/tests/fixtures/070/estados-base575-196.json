@@ -1,0 +1,1378 @@
+{
+  "foto_sha256": "c8c88e541a472370f857def508fb317274fa0574d1851c773708f098d2ebe58f",
+  "capturado_em_sp": "2026-11-26T18:12:51.634445",
+  "estados": [
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1365,
+      "reprogramado": false,
+      "data_recebimento": "2026-10-27"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1366,
+      "reprogramado": false,
+      "data_recebimento": "2026-10-27"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1367,
+      "reprogramado": false,
+      "data_recebimento": "2026-10-27"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1368,
+      "reprogramado": false,
+      "data_recebimento": "2026-10-27"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1369,
+      "reprogramado": false,
+      "data_recebimento": "2026-10-27"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1370,
+      "reprogramado": false,
+      "data_recebimento": "2026-10-27"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1371,
+      "reprogramado": false,
+      "data_recebimento": "2026-10-27"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1372,
+      "reprogramado": false,
+      "data_recebimento": "2026-10-28"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1373,
+      "reprogramado": false,
+      "data_recebimento": "2026-10-27"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1374,
+      "reprogramado": false,
+      "data_recebimento": "2026-10-30"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1376,
+      "reprogramado": false,
+      "data_recebimento": "2026-10-28"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1377,
+      "reprogramado": false,
+      "data_recebimento": "2026-10-28"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1378,
+      "reprogramado": false,
+      "data_recebimento": "2026-10-29"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1379,
+      "reprogramado": false,
+      "data_recebimento": "2026-10-28"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1380,
+      "reprogramado": false,
+      "data_recebimento": "2026-10-28"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1381,
+      "reprogramado": false,
+      "data_recebimento": "2026-10-29"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1382,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1383,
+      "reprogramado": false,
+      "data_recebimento": "2026-10-29"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1384,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1385,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1386,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1387,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1388,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1389,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1390,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1391,
+      "reprogramado": false,
+      "data_recebimento": "2026-10-30"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1392,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1393,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1394,
+      "reprogramado": false,
+      "data_recebimento": "2026-10-30"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1395,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1396,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1397,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1398,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1399,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1400,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1401,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1402,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1403,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1404,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1405,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1406,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1407,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1408,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1409,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1410,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1411,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1412,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-03"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1413,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-04"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1414,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-06"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1415,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-04"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1416,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-04"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1417,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-04"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1418,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-04"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1419,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-04"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1420,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-05"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1421,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-05"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1422,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-05"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1423,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-05"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1424,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-05"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1426,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-23"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1427,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-06"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1428,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-10"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1429,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-12"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1430,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-13"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1431,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-09"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1432,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-10"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1433,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-05"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1434,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-10"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1435,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-06"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1436,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-12"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1437,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-12"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1438,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-11"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1439,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-13"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1440,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-10"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1441,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-10"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1442,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-12"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1443,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-12"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1444,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-11"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1445,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-16"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1446,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-11"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1448,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-11"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1449,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-10"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1450,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-11"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1451,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-11"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1452,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-11"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1453,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-13"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1454,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-12"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1455,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-12"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1456,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-11"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1457,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-11"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1458,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-11"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1459,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-12"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1460,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-12"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1461,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-13"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1462,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-16"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1463,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-13"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1464,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-11"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1465,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-13"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1466,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-12"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1467,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-13"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1468,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-12"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1469,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-16"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1470,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-16"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1471,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-16"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1472,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-13"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1473,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-13"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1474,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-12"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1475,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-25"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1476,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-13"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1477,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-13"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1478,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-23"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1479,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-16"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1480,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-16"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1481,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-16"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1482,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-16"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1484,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-23"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1485,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-18"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1486,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-18"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1487,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-18"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1488,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-18"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1489,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-18"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1490,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-17"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1491,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-13"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1492,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-16"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1493,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-18"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1494,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-17"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1495,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-17"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1496,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-17"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1497,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-17"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1498,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-23"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1499,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-18"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1500,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-18"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1501,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-18"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1502,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-18"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1503,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-18"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1504,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-23"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1505,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-19"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1506,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-19"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1507,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-18"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1508,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-23"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1509,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-23"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1512,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-23"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1513,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-23"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1514,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-23"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1515,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-23"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1516,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-23"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1517,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-23"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1518,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-18"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1519,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-18"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1520,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-18"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1521,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-18"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1522,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-18"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1523,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-18"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1524,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-23"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1525,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-23"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1526,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-23"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1527,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-23"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1528,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-23"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1529,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-25"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1530,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-25"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1531,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-24"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1532,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-25"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1533,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-25"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1534,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-25"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1535,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-24"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1536,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-24"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1537,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-24"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1538,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-25"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1539,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-24"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1540,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-24"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1541,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-24"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1542,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-25"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1543,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-24"
+    },
+    {
+      "entregue": true,
+      "pendente": false,
+      "cd_pedido": 1544,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-24"
+    },
+    {
+      "entregue": false,
+      "pendente": true,
+      "cd_pedido": 1545,
+      "reprogramado": false,
+      "data_recebimento": null
+    },
+    {
+      "entregue": false,
+      "pendente": true,
+      "cd_pedido": 1546,
+      "reprogramado": false,
+      "data_recebimento": null
+    },
+    {
+      "entregue": false,
+      "pendente": true,
+      "cd_pedido": 1547,
+      "reprogramado": false,
+      "data_recebimento": null
+    },
+    {
+      "entregue": false,
+      "pendente": false,
+      "cd_pedido": 1548,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-26"
+    },
+    {
+      "entregue": false,
+      "pendente": false,
+      "cd_pedido": 1549,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-26"
+    },
+    {
+      "entregue": false,
+      "pendente": false,
+      "cd_pedido": 1550,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-26"
+    },
+    {
+      "entregue": false,
+      "pendente": true,
+      "cd_pedido": 1551,
+      "reprogramado": false,
+      "data_recebimento": null
+    },
+    {
+      "entregue": false,
+      "pendente": true,
+      "cd_pedido": 1552,
+      "reprogramado": false,
+      "data_recebimento": null
+    },
+    {
+      "entregue": false,
+      "pendente": true,
+      "cd_pedido": 1553,
+      "reprogramado": false,
+      "data_recebimento": null
+    },
+    {
+      "entregue": false,
+      "pendente": true,
+      "cd_pedido": 1554,
+      "reprogramado": false,
+      "data_recebimento": null
+    },
+    {
+      "entregue": false,
+      "pendente": true,
+      "cd_pedido": 1555,
+      "reprogramado": false,
+      "data_recebimento": null
+    },
+    {
+      "entregue": false,
+      "pendente": true,
+      "cd_pedido": 1556,
+      "reprogramado": false,
+      "data_recebimento": null
+    },
+    {
+      "entregue": false,
+      "pendente": false,
+      "cd_pedido": 1557,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-26"
+    },
+    {
+      "entregue": false,
+      "pendente": false,
+      "cd_pedido": 1558,
+      "reprogramado": false,
+      "data_recebimento": "2026-11-26"
+    },
+    {
+      "entregue": false,
+      "pendente": true,
+      "cd_pedido": 1559,
+      "reprogramado": false,
+      "data_recebimento": null
+    },
+    {
+      "entregue": false,
+      "pendente": true,
+      "cd_pedido": 1560,
+      "reprogramado": false,
+      "data_recebimento": null
+    },
+    {
+      "entregue": false,
+      "pendente": true,
+      "cd_pedido": 1561,
+      "reprogramado": false,
+      "data_recebimento": null
+    },
+    {
+      "entregue": false,
+      "pendente": true,
+      "cd_pedido": 1562,
+      "reprogramado": false,
+      "data_recebimento": null
+    },
+    {
+      "entregue": false,
+      "pendente": true,
+      "cd_pedido": 1563,
+      "reprogramado": false,
+      "data_recebimento": null
+    },
+    {
+      "entregue": false,
+      "pendente": true,
+      "cd_pedido": 1564,
+      "reprogramado": false,
+      "data_recebimento": null
+    },
+    {
+      "entregue": false,
+      "pendente": true,
+      "cd_pedido": 1566,
+      "reprogramado": false,
+      "data_recebimento": null
+    },
+    {
+      "entregue": false,
+      "pendente": true,
+      "cd_pedido": 1567,
+      "reprogramado": false,
+      "data_recebimento": null
+    }
+  ]
+}

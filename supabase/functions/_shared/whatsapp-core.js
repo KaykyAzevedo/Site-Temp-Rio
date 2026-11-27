@@ -204,7 +204,12 @@
                 d.fechada = fx ? fx.foto : null;
                 d.fechadaLinha = fx ? fx.linha : null;
                 d.fechadaRev = fx ? fx.rev : null;
-                return d;
+                if (!d.ativa070) return d;
+                return Promise.all([core.coletarEstados070(sb,d.pedidos),sb.rpc('rota_070_definitiva_ler',{p_dia:hoje})]).then(function (r) {
+                    if (r[1].error) throw erroDe(r[1]);
+                    if (!r[1].data || r[1].data.status !== 'ok' || !r[1].data.reservas_070) throw new Error('Reserva070 indisponivel');
+                    d.pedidos_estado=r[0];d.reservas_070=r[1].data.reservas_070;return d;
+                });
             });
         });
     }
@@ -255,6 +260,7 @@
                 var d = { pedidos: pedidos, clientes: cli, cfg: core.cfgDe(cfgLinha || core.CFG_PADRAO), excecoes: excecoes, coletado: sy ? sy.coletado_em : null,
                           ignorados: ignorados, veiculos: rs[7], canhotos: rs[8], saidas: leituras[0], confirmacoes: leituras[2].porPedido };   // null = sem a 047 (padrões)
                 if (v2) { d.v2 = true; d.porPedido = porPedido; d.regras = regras; }
+                d.ativa070=!!(cfgLinha && cfgLinha.previsao_definitiva_070);
                 return d;
             });
         });
@@ -501,7 +507,7 @@
         return core.planejar(d.pedidos, d.clientes, hoje, opcoesRota(d));
     }
     function opcoesRota(d) {
-        return { cfg: d.cfg, excecoes: d.excecoes, marcacao: !!d.v2, padroes: d.excecoes, porPedido: d.porPedido || {},
+        return { modo_planejamento:d.ativa070?'definitiva':'previsao',pedidos_estado:d.pedidos_estado,reservas_070:d.reservas_070,cfg: d.cfg, excecoes: d.excecoes, marcacao: !!d.v2, padroes: d.excecoes, porPedido: d.porPedido || {},
                  regras: d.regras || {}, ignorados: d.ignorados || {}, veiculos: d.veiculos, fechada: d.fechada || null, canhotos: d.canhotos || {}, saidas: d.saidas || {}, confirmacoes: d.confirmacoes || {},
                  projetarSeparando: false };   // fechada: mensagem usa somente inclusao confirmada pela054
     }

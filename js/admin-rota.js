@@ -61,6 +61,7 @@
     var DIAS_CURTOS = [[1, 'Seg'], [2, 'Ter'], [3, 'Qua'], [4, 'Qui'], [5, 'Sex'], [6, 'Sáb'], [0, 'Dom']];
     var DIAS_ROTULO = { 0: 'dom', 1: 'seg', 2: 'ter', 3: 'qua', 4: 'qui', 5: 'sex', 6: 'sáb' };
     var st = { carregado: false, carregando: false, erro: null, pedidos: [], clientes: {}, coletado: null, temCaixas: false,
+               modo070:'previsao', reservas070:{}, definitiva070:{}, erro070:null, req070:{}, rasc070:{},
                vista: 'semana', diaDetalhe: null, mapa: null, ro: null, sb: null, papel: null, alvo: null, seq: 0, ativo: false,
                // 040: configuração (linha de rota_config ou null), padrões/exceções por cliente
                cfgLinha: null, cfg: cfgDe(CFG_PADRAO), cfgAusente: false, cfgErro: null, excecoes: {},
@@ -137,12 +138,28 @@
             setTimeout(function () { if (!st.carregado && !st.carregando) desenhar(); }, 0);
         }
     }
+    function lerReservas070(sb,ini) {
+        if(!raiz.TempRioPrevisao)return Promise.resolve(null);
+        var dias=[hojeSP(),somaDias(hojeSP(),1)];for(var i=0;i<6;i++)dias.push(somaDias(ini,i));
+        return Promise.all(Array.from(new Set(dias)).map(function(d){return raiz.TempRioPrevisao.lerDefinitiva(sb,d);})).then(function(rs){return rs;});
+    }
+    function aplicarReservas070(rs) {
+        if(!rs)return;
+        rs.forEach(function(r){
+            st.definitiva070[r.dia]=r;delete st.reservas070[r.dia];Object.assign(st.reservas070,r.reservas_070);
+            if(r.foto&&r.foto.estado==='fechada')st.fxDias[r.dia]=r.foto;else delete st.fxDias[r.dia];
+            if(r.dia===hojeSP()){
+                var linha=r.foto?Object.assign({},st.fxLinha||{},r.foto):null;
+                lerFechada({data:{linha:linha,itens:r.foto&&r.foto.itens||[]}});
+            }
+        });st.erro070=null;
+    }
     function carregar(tentativaSeparando) {
         tentativaSeparando = typeof tentativaSeparando === 'number' ? tentativaSeparando : 0;
         if (!st.sb || st.carregando || !st.ativo) return;
         // UI1: com gravação pendente, a leitura poderia trazer o estado de ANTES dela. Espera terminar (aposMutacao).
         if (pendentes()) { st.recargaPendente = true; return; }
-        var seq = ++st.seq, sb = st.sb, mut0 = st.mut;
+        var seq = ++st.seq, sb = st.sb, mut0 = st.mut, diaLeitura070=hojeSP();
         st.calendarioH={};
         st.carregando = true; st.erro = null; desenhar();
         Promise.all([
@@ -201,7 +218,7 @@
             }).catch(function (e) { return { error: e }; });
             return Promise.all([Promise.all(blocos.map(function (b) {
                 return sb.from('solidcon_clientes').select('documento,nome,logradouro,numero,complemento,bairro,cidade,estado,telefone,celular').in('documento', b);
-            })), posicoes, core.coletarSaidas(sb, pedidos), core.coletarConfirmacoes(sb, pedidos), lerSem065, lerSug066]).then(function (cp) {
+            })), posicoes, core.coletarSaidas(sb, pedidos), core.coletarConfirmacoes(sb, pedidos), lerSem065, lerSug066,lerReservas070(sb,semIni0)]).then(function (cp) {
                 if (seq !== st.seq) return;
                 // UI1: alguma gravação terminou (ou começou) durante esta leitura: o retrato pode ser anterior a ela.
                 // Descarta e lê de novo (ou espera a gravação pendente terminar).
@@ -210,6 +227,7 @@
                     if (pendentes()) { st.recargaPendente = true; st.carregado = false; return; }
                     carregar(); return;
                 }
+                if(raiz.TempRioPrevisao&&diaLeitura070!==hojeSP()){st.estadosH=null;st.estadosDia=null;st.carregado=false;st.carregando=false;if(tentativaSeparando<2){carregar(tentativaSeparando+1);return;}throw Error('O dia mudou durante a leitura070. Atualize.');}
                 var cs = cp[0], rp = cp[1];
                 var cli = {};
                 cs.forEach(function (r) { if (!r.error) (r.data || []).forEach(function (c) { cli[c.documento] = { nome: c.nome, logradouro: c.logradouro, numero: c.numero,
@@ -232,7 +250,7 @@
                 lerFrota(rs[10], rs[11], rs[12]);   // antes da marcação: só vale veículo que existe na frota
                 lerConfig(rs[3], rs[4], rs[5], rs[6], rs[7], rs[8], rs[9]);
                 lerFechada(rs[13]);
-                aplicarLeituraSemana065(semIni0, cp[4]);
+                aplicarLeituraSemana065(semIni0, cp[4]);aplicarReservas070(cp[6]);
                 aplicarLeituraSugestoes066(semIni0, cp[5]);
                 st.progresso = {};   // { veiculo: nº de paradas feitas hoje } (051); erro/ausente = sem contador
                 if (rs[14] && !rs[14].error) (rs[14].data || []).forEach(function (x) { st.progresso[x.veiculo_id] = (st.progresso[x.veiculo_id] || 0) + 1; });
@@ -244,7 +262,7 @@
             });
         }).catch(function (e) {
             if (seq !== st.seq) return;
-            if (String(e && e.code) === '40001' && tentativaSeparando < 2) {
+            if ((String(e && e.code) === '40001' || raiz.TempRioPrevisao&&diaLeitura070!==hojeSP()) && tentativaSeparando < 2) {
                 st.carregando = false; carregar(tentativaSeparando + 1); return;
             }
             st.carregando = false; st.carregado = false; st.erro = String((e && e.message) || e); desenhar();
@@ -255,7 +273,7 @@
     // So depois de confirmar a foto o painel libera PDF/envio. Leitor sem permissao aguarda o tique do servidor.
     function sincronizarSeparando(sb) {
         var seq0 = st.seq;
-        if (!st.v2 || !st.fx050 || st.fxErro || !st.fxFoto || !st.podeMarcar) return Promise.resolve();
+        if (raiz.TempRioPrevisao || !st.v2 || !st.fx050 || st.fxErro || !st.fxFoto || !st.podeMarcar) return Promise.resolve();
         var dia = hojeSP(), prop = core.propostaSeparando(st.pedidos, st.clientes, dia, optsPlano());
         if (!prop.adicoes.length) return Promise.resolve();
         return sb.rpc('rota_054_incluir', { p_data: dia, p_revisao: st.fxRev || 0, p_ordem: prop.ordem }).then(function (r) {
@@ -539,6 +557,7 @@
     function contextoEntrega() { return Object.assign({}, optsPlano(), { sb: st.sb, papel: st.papel, podeMarcar: st.podeMarcar, instalada: st.entrega063, sessao: st.seq }); }
     function entregaRecebido(p) { return raiz.TempRioEntregaAdmin ? raiz.TempRioEntregaAdmin.html(p, contextoEntrega()) : ''; }
     if (typeof raiz.addEventListener === 'function') {
+        raiz.addEventListener('temprio-saida070',function(){if(st.sb){st.mut++;st.reservas070={};st.definitiva070={};if(st.ativo)recarregarTudo();else st.carregado=false;}});
         raiz.addEventListener('temprio-entrega063', function () {
             if (!st.sb) return;st.mut++;st.carregado = false;if (st.ativo) recarregarTudo();
         });
@@ -657,11 +676,11 @@
         if (!pl.fechada) {
             var reab = st.fxLinha && st.fxLinha.estado === 'reaberta'
                 ? ' Reaberta' + (st.fxLinha.reaberta_nome ? ' por ' + esc(st.fxLinha.reaberta_nome) : '') + (st.fxLinha.reaberta_em ? ' às ' + esc(horaCurta(st.fxLinha.reaberta_em)) : '') + ': não fecha sozinha; feche pelo botão.'
-                : ' Fecha sozinha às <strong>' + esc(txtHoraSaida()) + '</strong> (hora de saída) com a previsão daquele momento.';
+                : ' Fecha sozinha às <strong>' + esc(txtHoraSaida()) + '</strong> (hora de saída) com os pedidos prontos ou reservados para o dia.';
             return '<section class="adm-card p-4 mb-5 rota-banner rota-fx" aria-labelledby="rota-fx-tit"><div class="rota-cab rota-cab-compacto">' +
                 '<p class="rota-tit" id="rota-fx-tit"><span class="rota-selo rota-selo-espera"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>Previsão (não fechada)</span></p>' +
-                (podeAjustarFx() ? '<button type="button" class="adm-botao" id="rota-fx-fechar"' + busy + '><i class="fa-solid fa-lock" aria-hidden="true"></i> Fechar rota do dia</button>' : '') + '</div>' +
-                '<p class="rota-sub">A rota ainda não foi fechada: muda conforme entram pedidos.' + reab + ' Depois de fechada, pedido novo vai para o próximo dia com saída; em separação entra hoje automaticamente.</p>' + msg + '</section>';
+                (podeAjustarFx() ? '<button type="button" class="adm-botao" id="rota-fx-fechar"' + busy + '><i class="fa-solid fa-lock" aria-hidden="true"></i> Fechar rota definitiva do dia</button>' : '') + '</div>' +
+                '<p class="rota-sub">A rota ainda não foi fechada: muda conforme entram pedidos.' + reab + ' O fechamento considera somente pedidos prontos ou reservados para este dia.</p>' + msg + '</section>';
         }
         var f = pl.fechada, quando = horaCurta(f.fechadaEm);
         var selo = f.automatico ? 'Fechada automaticamente' + (quando ? ' às ' + quando : '') : 'Fechada' + (quando ? ' às ' + quando : '') + (f.nome ? ' por ' + f.nome : '');
@@ -675,7 +694,7 @@
         }
         return '<section class="adm-card p-4 mb-5 rota-banner rota-fx" aria-labelledby="rota-fx-tit"><div class="rota-cab rota-cab-compacto">' +
             '<p class="rota-tit" id="rota-fx-tit"><span class="rota-selo rota-selo-plano"><i class="fa-solid fa-lock" aria-hidden="true"></i>' + esc(selo) + '</span>' + esc(alt) + '</p>' + reabrir + '</div>' +
-            '<p class="rota-sub">Pedidos em separação entram hoje automaticamente, salvo exclusão manual ou dia sem saída. Os demais novos vão para o próximo dia (ou use “Trazer para hoje”).</p>' + ajuda + msg + '</section>';
+            '<p class="rota-sub">A foto fechada preserva o conjunto da rota. Só pedidos prontos ou reservados aptos podem ser acrescentados; outros continuam na previsão.</p>' + ajuda + msg + '</section>';
     }
     // ---- ações (RPCs da 050). Depois de qualquer uma: relê tudo (a foto do banco é a verdade). ----
     function fxErroMsg(e) {
@@ -698,9 +717,10 @@
     }
     function fecharRotaDia() {
         if (!podeAjustarFx() || st.fxSalvando) return;
-        var itens = core.itensDaRota(planos().hoje);
+        var planoFechar=raiz.TempRioPrevisao ? planejar(st.pedidos,st.clientes,hojeSP(),Object.assign({},optsPlano(),{modo_planejamento:'definitiva'})) : planos().hoje;
+        var itens = core.itensDaRota(planoFechar);
         fxExecutar(st.sb.rpc('rota_050_fechar', { p_itens: itens }),
-            'Rota de hoje fechada (' + NUM.format(itens.length) + (itens.length === 1 ? ' pedido' : ' pedidos') + '). Novos pedidos vão para o próximo dia, exceto os que entrarem em separação.');
+            'Rota de hoje fechada (' + NUM.format(itens.length) + (itens.length === 1 ? ' pedido' : ' pedidos') + '). A foto permanece como referência da rota definitiva.');
     }
     // Ordem nova SÓ do veículo afetado: a foto com o ajuste e a ordem desse veículo apagada -> o rota-core recalcula (2-opt)
     // só ele. Pedido da foto desse veículo que não está no plano (saiu do ERP, "Tirar da rota") vai para o fim.
@@ -733,8 +753,14 @@
         fxExecutar(st.sb.rpc('rota_050_ajustar', { p_acao: 'remover', p_cds: alvo, p_veiculo: veic, p_ordem: ordem }),
             'Removido de hoje' + (veics.length > 1 ? ' (em ' + veics.map(rotuloMarca).join(' e ') + ')' : '') + ': volta no próximo dia com saída. A ordem ' + (veics.length > 1 ? 'desses veículos' : 'da ' + rotuloMarca(veics[0])) + ' foi recalculada.');
     }
+    function aptoFechamento070(cd,dia){
+        if(!raiz.TempRioPrevisao)return true;
+        var e=estadoPedidoH(cd),r=st.reservas070[dia];
+        return !!e && (!e.data_saida_marcada || e.data_saida_marcada<=dia) && (e.pronto_despacho || !!r && (r.itens||[]).some(function(i){return Number(i.cd_pedido)===Number(cd)&&i.ativo&&i.pronto_ao_reservar===true;}));
+    }
     function trazerHoje(cds, veic) {
         if (!podeAjustarFx() || st.fxSalvando || !st.fxFoto || !veic) return;
+        if(cds.some(function(cd){return !aptoFechamento070(cd,hojeSP());})){st.msgFx='Somente pedidos prontos ou reservados para hoje podem entrar na rota definitiva.';desenhar();return;}
         // pedido que já estava na foto como "removido de hoje" volta (a linha é reativada pela RPC)
         var itens = st.fxFoto.itens.filter(function (it) { return cds.indexOf(Number(it.cd_pedido)) < 0; }).map(function (it) {
             return it.veiculo_id === veic && !it.removido_em ? Object.assign({}, it, { ordem: null }) : it;
@@ -794,7 +820,7 @@
                     (podeAjustarFx() ? '<td data-rotulo="Trazer para hoje"><div class="rota-marc-linha"><label class="sr-only" for="' + idSel + '">Veículo para ' + esc(nome) + '</label>' +
                         '<select class="adm-input rota-sel" id="' + idSel + '">' + saem.map(function (id) { return '<option value="' + esc(id) + '"' + (id === padrao ? ' selected' : '') + '>' + esc(rotuloMarca(id)) + '</option>'; }).join('') + '</select>' +
                         '<button type="button" class="adm-botao-fantasma no-print" data-rota-trazer="' + esc(cdsDe(g.xs).join(',')) + '" data-rota-trazer-sel="' + idSel + '"' +
-                        ' aria-label="' + esc('Trazer para hoje ' + nome) + '"' + (st.fxSalvando || !saem.length ? ' disabled' : '') + '><i class="fa-solid fa-calendar-plus" aria-hidden="true"></i> Trazer para hoje</button></div></td>' : '') + '</tr>';
+                        ' aria-label="' + esc('Trazer para hoje ' + nome) + '"' + (st.fxSalvando || !saem.length || g.xs.some(function(x){return !aptoFechamento070(x.p.cd_pedido,hojeSP());}) ? ' disabled' : '') + '><i class="fa-solid fa-calendar-plus" aria-hidden="true"></i> Trazer para hoje</button></div></td>' : '') + '</tr>';
             }).join('') + '</tbody></table></div>'
             : '<p class="adm-vazio-linha"><span class="adm-vazio-titulo">Nenhum pedido em aberto indo para outro dia.</span></p>';
         return '<section class="adm-card p-4 mb-5 rota-cartao" aria-labelledby="rota-outros-tit"><div class="rota-cab rota-cab-compacto"><p class="rota-tit" id="rota-outros-tit">' +
@@ -1600,7 +1626,7 @@
         if (typeof sugestoesJuntar !== 'function') return { todas: [], ativas: [], dispensadas: 0, porDia: {} };
         var sj = sugestoesJuntar(st.pedidos, st.clientes, rotas, {
             cfg: st.cfg,
-            pedidos_estado: estadosPedidosAtuais(),
+            modo_planejamento: st.modo070, reservas_070: st.reservas070, pedidos_estado: estadosPedidosAtuais(),
             veiculos: linhasFrota(),
             padroes: st.excecoes,
             porPedido: st.v2 ? st.porPedido : {},
@@ -2524,7 +2550,7 @@
         var ini = segundaDe(semIni || semanaAlvo());
         if (!r) return;
         if (r.error) {
-            if (rpcAusente(r.error)) { st.sem065 = false; return; }
+            if (rpcAusente(r.error) && !raiz.TempRioPrevisao) { st.sem065 = false; return; }
             st.sem065 = true;
             st.msgSemana = 'Não foi possível ler a programação da semana: ' + String(r.error.message || r.error);
             st.semMsgErro = true;
@@ -2566,6 +2592,7 @@
         var mapaValido = estados && typeof estados === 'object' && !Array.isArray(estados) &&
             Object.keys(estados).every(function(cd){return valido(estados[cd]);}) &&
             (st.pedidos || []).every(function(p){return !p || p.cd_pedido == null || valido(estados[p.cd_pedido]);});
+        if(raiz.TempRioPrevisao){try{estados=raiz.TempRioPrevisao.validarEstados(estados,(st.pedidos || []).map(function(p){return p.cd_pedido;}));}catch(e){mapaValido=false;}}
         st.sem065Dados[iniLido].pedidos_estado = mapaValido ? estados : null;
         st.estadosH = mapaValido ? estados : null;
         st.estadosDia = mapaValido && d.hoje ? String(d.hoje).slice(0,10) : null;
@@ -2681,9 +2708,10 @@
         catch (e) { pSem = Promise.resolve({ error: e }); }
         try { pSug = Promise.resolve(sb0.rpc('rota_066_sugestoes', { p_semana: ini })).catch(function (e) { return { error: e }; }); }
         catch (e) { pSug = Promise.resolve({ error: e }); }
-        return Promise.all([pSem, pSug]).then(function (rs) {
+        return Promise.all([pSem, pSug,lerReservas070(sb0,ini)]).then(function (rs) {
             if (st.sb !== sb0 || st.sessao !== sessao0 || st.seqSug066 !== seqSug0 || !st.ativo) return;
-            aplicarLeituraSemana065(ini, rs[0]);
+            if(raiz.TempRioPrevisao&&typeof diaLeitura070!=='undefined'&&diaLeitura070!==hojeSP()){recarregarTudo();return;}
+            aplicarLeituraSemana065(ini, rs[0]);aplicarReservas070(rs[2]);
             aplicarLeituraSugestoes066(ini, rs[1]);
             desenhar();
         });
@@ -2891,7 +2919,7 @@
             desenhar();
             return Promise.resolve();
         }
-        var sb0 = st.sb, seq0 = st.seq, sessao0 = st.sessao, seqSug0 = ++st.seqSug066;
+        var sb0 = st.sb, seq0 = st.seq, sessao0 = st.sessao, seqSug0 = ++st.seqSug066,diaLeitura070=hojeSP();
         desenhar();
         var pSem = Promise.resolve().then(function () {
             return sb0.rpc('rota_065_ler_semana', { p_inicio: ini });
@@ -2899,12 +2927,13 @@
         var pSug = Promise.resolve().then(function () {
             return sb0.rpc('rota_066_sugestoes', { p_semana: ini });
         }).catch(function (e) { return { error: e }; });
-        return Promise.all([pSem, pSug]).then(function (rs) {
+        return Promise.all([pSem, pSug,lerReservas070(sb0,ini)]).then(function (rs) {
             if (!sb0 || st.sb !== sb0 || st.seq !== seq0 || st.sessao !== sessao0 || !st.ativo) return;
-            aplicarLeituraSemana065(ini, rs[0]);
+            if(raiz.TempRioPrevisao&&typeof diaLeitura070!=='undefined'&&diaLeitura070!==hojeSP()){recarregarTudo();return;}
+            aplicarLeituraSemana065(ini, rs[0]);aplicarReservas070(rs[2]);
             if (st.seqSug066 === seqSug0) aplicarLeituraSugestoes066(ini, rs[1]);
             desenhar();
-        });
+        }).catch(function(e){if(st.sb!==sb0||st.sessao!==sessao0||!st.ativo)return;st.erro070=e.message;desenhar();});
     }
     // UI065-R2: pedido cuja primeira saída fechada ativa (rota_059_saidas / st.diasSaida ou foto fechada de hoje)
     // é <= hoje já saiu em rota fechada; não entra na bandeja, em sugestões nem em programação futura (dia > hoje).
@@ -2922,6 +2951,35 @@
         }
         return null;
     }
+    function htmlDefinitiva070(semIni) {
+        if(!raiz.TempRioPrevisao || st.modo070!=='definitiva')return '';
+        var dia=somaDias(hojeSP(),1),ini=segundaDe(dia),r=st.definitiva070[dia];
+        if(semIni!==ini)return '<section class="adm-card p-4 mb-4"><p class="rota-sub">Confirme a rota de amanhã na semana de '+esc(dataBr(ini))+'.</p><button type="button" class="adm-botao-fantasma" id="rota-070-voltar">Ir para a rota de amanhã</button></section>';
+        if(!r)return '<p role="alert">Reserva de amanhã indisponível. Atualize a semana.</p>';
+        var foto=r.foto&&r.foto.estado==='fechada',contagem=0,erro='',diferenca=false,confirmados=0,itensSelecao=[];
+        try{itensSelecao=raiz.TempRioPrevisao.itensDefinitiva(montarDadosQuadro065(ini),dia,estadosPedidosAtuais(),st.reservas070);contagem=itensSelecao.length;}catch(e){erro=e.message;}
+        if(r.cabecalho&&r.cabecalho.origem==='manual'&&!foto&&!erro){var reservados=(st.reservas070[dia]&&st.reservas070[dia].itens||[]).filter(function(i){return i.ativo&&i.pronto_ao_reservar===true;});confirmados=reservados.length;function assinatura(lista){var grupos={},partes=[];lista.forEach(function(i,n){(grupos[i.veiculo_id]||(grupos[i.veiculo_id]=[])).push({item:i,indice:n});});Object.keys(grupos).forEach(function(v){grupos[v].sort(function(a,b){return (a.item.ordem==null?Infinity:a.item.ordem)-(b.item.ordem==null?Infinity:b.item.ordem)||a.indice-b.indice;}).forEach(function(x,n){partes.push(Number(x.item.cd_pedido)+'@'+v+'@'+n);});});return partes.sort().join('|');}diferenca=assinatura(reservados)!==assinatura(itensSelecao);}
+        return '<section class="adm-card p-4 mb-4" aria-label="Confirmar rota de amanhã"><div class="rota-cab rota-cab-compacto"><strong>Rota de amanhã · '+esc(nomeDia(dia))+' '+esc(dataBr(dia))+'</strong>'+((st.papel==='admin'||st.podeMarcar)&&!foto?'<button type="button" class="adm-botao" id="rota-070-confirmar"'+(st.semSalvando||erro?' disabled':'')+'>'+(st.semSalvando?'Confirmando…':'Confirmar rota de amanhã ('+contagem+')')+'</button>':'')+'</div><p class="rota-sub">'+(foto?'Rota já fechada.':r.cabecalho?'Reserva '+(r.cabecalho.origem==='manual'?'confirmada':'automática')+' · versão '+esc(r.cabecalho.versao)+'.':'Sem confirmação, entram automaticamente os pedidos prontos aptos para amanhã.')+'</p>'+(diferenca?'<p class="rota-sub mt-2" role="status" data-rota-070-pendente>Há alterações de composição ou ordem ainda não confirmadas. A reserva atual tem '+confirmados+(confirmados===1?' pedido':' pedidos')+'; a seleção abaixo tem '+contagem+'. Confirme novamente para atualizar a rota definitiva.</p>':'')+(erro?'<p role="alert">'+esc(erro)+'</p>':'')+'</section>';
+    }
+    function confirmarDefinitiva070() {
+        if(!raiz.TempRioPrevisao||st.modo070!=='definitiva'||!podeSalvarSemana()||pendentes())return Promise.resolve();
+        var dia=somaDias(hojeSP(),1),ini=segundaDe(dia),r=st.definitiva070[dia],itens;
+        if(!r||r.foto&&r.foto.estado==='fechada')return Promise.resolve();
+        try{itens=raiz.TempRioPrevisao.itensDefinitiva(montarDadosQuadro065(ini),dia,estadosPedidosAtuais(),st.reservas070);}catch(e){st.msgSemana=e.message;st.semMsgErro=true;desenhar();return Promise.resolve();}
+        var versao=r.cabecalho?r.cabecalho.versao:0,chave=dia+':'+versao+':'+JSON.stringify(itens),sb0=st.sb,sessao0=st.sessao;
+        try{if(!st.req070[chave])st.req070[chave]=raiz.TempRioMovimento.uuid();}catch(e){st.msgSemana=e.message;st.semMsgErro=true;desenhar();return Promise.resolve();}
+        st.semSalvando=true;st.msgSemana='';desenhar();
+        return raiz.TempRioPrevisao.salvarDefinitiva(sb0,dia,itens,versao,st.req070[chave]).then(function(){
+            if(st.sb!==sb0||st.sessao!==sessao0||!st.ativo)return;st.semSalvando=false;delete st.req070[chave];delete st.semQuadroRasc[ini];aposMutacao();return carregarSemana065(ini,true);
+        },function(e){if(st.sb!==sb0||st.sessao!==sessao0||!st.ativo)return;st.semSalvando=false;st.msgSemana='Não foi possível confirmar: '+e.message;st.semMsgErro=true;desenhar();});
+    }
+    function trocarModo070(modo) {
+        if(!raiz.TempRioPrevisao || pendentes() || ['previsao','definitiva'].indexOf(modo)<0 || modo===st.modo070)return;
+        st.rasc070[st.modo070]=st.semQuadroRasc;st.modo070=modo;st.semQuadroRasc=st.rasc070[modo] || {};
+        st.msgSemana='';st.semMsgErro=false;desenhar();
+        var b=st.alvo&&st.alvo.querySelector('[data-rota-modo="'+modo+'"]');if(b)b.focus();
+    }
+    function pronto070(cd) { var e=estadoPedidoH(cd);return !!e && e.pronto_despacho===true; }
     function montarDadosQuadro065(semIni) {
         var ini = segundaDe(semIni || semanaAlvo());
         var d065 = st.sem065Dados[ini] || null;
@@ -2936,6 +2994,7 @@
         if (st.fx050 && st.fxFoto && st.fxFoto.data && fechadosLista.indexOf(st.fxFoto.data) < 0) {
             fechadosLista.push(st.fxFoto.data);
         }
+        if(raiz.TempRioPrevisao)Object.keys(st.definitiva070).forEach(function(d){var f=st.definitiva070[d].foto;if(f&&f.estado==='fechada'&&fechadosLista.indexOf(d)<0)fechadosLista.push(d);});
         var fechadosSet = Object.create(null);
         fechadosLista.forEach(function (d) { fechadosSet[String(d).slice(0, 10)] = true; });
         var semSaidaPorDia = Object.create(null);
@@ -2954,7 +3013,7 @@
             var estadoH = estadoPedidoH(p.cd_pedido);
             if (estadoH ? estadoH.entregue : !core.pendenteEntrega(p, st.canhotos, hoje, cfgFrota, opts)) return;
             origensMoviveisPorCd[p.cd_pedido] = p;
-            if (estadoH ? estadoH.pendente : !diaSaidaFechadaAteHoje(p.cd_pedido, hoje)) {
+            if ((estadoH ? estadoH.pendente : !diaSaidaFechadaAteHoje(p.cd_pedido, hoje)) && (st.modo070!=='definitiva' || pronto070(p.cd_pedido))) {
                 elegiveisFuturoPorCd[p.cd_pedido] = p;
             }
         });
@@ -2974,7 +3033,7 @@
             var diasRasc = rasc.dias.map(function (col) {
                 var ehLeituraPassado = col.dia <= hoje || !!fechadosSet[col.dia];
                 return Object.assign({}, col, {
-                    cartoes: (col.cartoes || []).filter(function (c) {
+                    cartoes: projecaoPersistida070(col.dia) || (col.cartoes || []).filter(function (c) {
                         if (!c) return false;
                         return ehLeituraPassado ? !!origensMoviveisPorCd[c.cd_pedido] : !!elegiveisFuturoPorCd[c.cd_pedido];
                     }).map(function(c){var e=estadoPedidoH(c.cd_pedido);return Object.assign({},c,{entregue:e && e.entregue,pendente:e && e.pendente,bloqueado:pedidoSomenteLeituraSaida(c.cd_pedido)});})
@@ -3062,6 +3121,7 @@
                 : null;
             return Object.assign({
                 cd_pedido: Number(p.cd_pedido),
+                pronto_despacho: pronto070(p.cd_pedido),
                 entregue: estadoPedidoH(p.cd_pedido) && estadoPedidoH(p.cd_pedido).entregue,
                 pendente: estadoPedidoH(p.cd_pedido) && estadoPedidoH(p.cd_pedido).pendente,
                 veiculoSomenteLeitura: pedidoSomenteLeituraSaida(p.cd_pedido),
@@ -3085,6 +3145,20 @@
             }, extra || {});
         }
 
+        function fotosDaSemana070(){
+            var f={};if(st.fx050&&st.fxFoto&&st.fxFoto.data)f[st.fxFoto.data]=st.fxFoto;
+            if(raiz.TempRioPrevisao)Object.keys(st.definitiva070).forEach(function(d){var foto=st.definitiva070[d].foto;if(foto&&foto.estado==='fechada')f[d]=foto;});return f;
+        }
+        function projecaoPersistida070(dia){
+            var foto=fotosDaSemana070()[dia],reserva=st.modo070==='definitiva'&&st.reservas070[dia];
+            if(!foto&&!reserva)return null;
+            var itens=foto?foto.itens:reserva.itens;
+            return (itens||[]).filter(function(it){var e=estadoPedidoH(it.cd_pedido);return foto?!it.removido_em&&!(e&&e.reprogramado===true)&&(!!raiz.TempRioPrevisao||!!origensMoviveisPorCd[it.cd_pedido]):it.ativo&&it.pronto_ao_reservar===true;}).map(function(it){
+                var p=(st.pedidos||[]).filter(function(x){return Number(x.cd_pedido)===Number(it.cd_pedido);})[0]||{cd_pedido:it.cd_pedido,cliente_nome:it.cliente_nome,dt_pedido:null};
+                return fazerCartao(p,it.veiculo_id,{dia:dia,ordem:it.ordem,origemDia:foto?'salvo':'reserva',bloqueado:pedidoSomenteLeituraSaida(it.cd_pedido)});
+            });
+        }
+
         var usados = Object.create(null);
         var bandejaArr = [];
         // UI065-R2: todo pedido já saído em rota fechada <= hoje entra em usados para nunca ir à bandeja nem a dias futuros (> hoje).
@@ -3094,27 +3168,8 @@
             }
         });
 
-        if (st.fx050 && st.fxFoto && st.fxFoto.data && Array.isArray(st.fxFoto.itens)) {
-            var dataFx = String(st.fxFoto.data).slice(0, 10);
-            st.fxFoto.itens.slice().sort(function (a, b) {
-                return (a.ordem || 999999) - (b.ordem || 999999) || Number(a.cd_pedido) - Number(b.cd_pedido);
-            }).forEach(function (fxIt) {
-                if (!fxIt || fxIt.cd_pedido == null || fxIt.removido_em) return;
-                var cdFx = Number(fxIt.cd_pedido);
-                // UIH-R2: a foto é prova histórica; uma tentativa ativa usa a colocação atual do plano/bandeja.
-                var estadoFx = estadoPedidoH(cdFx);
-                if (estadoFx && estadoFx.reprogramado === true) return;
-                usados[cdFx] = true;
-                if (diasMapa[dataFx] && origensMoviveisPorCd[cdFx]) {
-                    diasMapa[dataFx].cartoes.push(fazerCartao(origensMoviveisPorCd[cdFx], fxIt.veiculo_id || 's10', {
-                        dia: dataFx,
-                        ordem: fxIt.ordem != null ? Number(fxIt.ordem) : null,
-                        origemDia: 'salvo',
-                        bloqueado: pedidoSomenteLeituraSaida(cdFx)
-                    }));
-                }
-            });
-        }
+        Object.keys(fotosDaSemana070()).forEach(function(dia){(projecaoPersistida070(dia)||[]).forEach(function(c){usados[c.cd_pedido]=true;});});
+        diasArr.forEach(function(col){var proj=projecaoPersistida070(col.dia);if(proj){col.cartoes=proj;proj.forEach(function(c){usados[c.cd_pedido]=true;});}});
 
         itensSalvos.slice().sort(function (a, b) {
             var da = String(a.dia || ''), db = String(b.dia || '');
@@ -3169,7 +3224,7 @@
                 }));
                 var semSug = planejarSemana(st.pedidos, st.clientes, ini, {
                     cfg: cfgSug,
-                    pedidos_estado: estadosPedidosAtuais(),
+                    modo_planejamento: st.modo070, reservas_070: st.reservas070, pedidos_estado: estadosPedidosAtuais(),
                     padroes: st.excecoes,
                     porPedido: st.porPedido,
                     regras: st.regras,
@@ -3357,6 +3412,7 @@
         var ini = payload.inicio;
         var versaoBase = Number(payload.versao_base) || 0;
         var itensEnviar = limpar ? [] : (payload.itens || []);
+        if(raiz.TempRioPrevisao && st.modo070==='definitiva'){var salvo070=st.sem065Dados[ini] || {};itensEnviar=raiz.TempRioPrevisao.mesclarItensOcultos(itensEnviar,salvo070.itens,estadosPedidosAtuais(),hojeSP(),salvo070.fechados);}
         st.semSalvando = true;
         st.seqSug066++;
         st.msgSemana = '';
@@ -3370,7 +3426,7 @@
             p_veiculo: null
         }).then(function (r) {
             if (st.sb !== sb0 || st.sessao !== sessao0 || !st.ativo) return;
-            if (r && r.error && rpcAusente(r.error)) {
+            if (r && r.error && rpcAusente(r.error) && !raiz.TempRioPrevisao) {
                 st.sem065 = false;
                 return salvarSemanaFallback047(payload, limpar, sb0, sessao0);
             }
@@ -3437,6 +3493,7 @@
                     : 'Plano da semana salvo (' + NUM.format(nAtivos) + (nAtivos === 1 ? ' pedido programado).' : ' pedidos programados).');
             }
             aposMutacao();
+            if(raiz.TempRioPrevisao&&!st.semMsgErro){if(typeof raiz.dispatchEvent==='function'&&typeof CustomEvent==='function')raiz.dispatchEvent(new CustomEvent('temprio-movimento068'));return carregarSemana065(ini,true);}
             desenhar();
         }, function (e) {
             if (st.sb !== sb0 || st.sessao !== sessao0 || !st.ativo) return;
@@ -4159,7 +4216,7 @@
     }
 
     function optsPlano() {
-        return { pedidos_estado: estadosPedidosAtuais(), cfg: st.cfg, excecoes: st.excecoes, marcacao: st.v2, padroes: st.excecoes, porPedido: st.porPedido, regras: st.regras,
+        return { modo_planejamento: st.modo070, reservas_070: st.reservas070, pedidos_estado: estadosPedidosAtuais(), cfg: st.cfg, excecoes: st.excecoes, marcacao: st.v2, padroes: st.excecoes, porPedido: st.porPedido, regras: st.regras,
                  ignorados: st.v2 && st.ign045 ? st.ignorados : {}, plano: st.v2 ? planoEfetivo() : {}, veiculos: linhasFrota(),
                  fechada: st.v2 && st.fx050 && !st.fxErro ? st.fxFoto : null,
                  projetarSeparando: false, saidas: st.diasSaida, canhotos: st.canhotos, confirmacoes: st.confirmacoes, hoje: hojeSP(), agora: new Date().toISOString() };   // fechada: só mostra inclusao já confirmada pela054
@@ -4268,6 +4325,10 @@
             alvo.querySelector('#rota-tentar').addEventListener('click', function () { st.carregado = false; carregar(); });
             return;
         }
+        if(raiz.TempRioPrevisao && (!estadosPedidosAtuais() || st.erro070)){
+            alvo.innerHTML=cab+'</div><div class="adm-card p-4" role="alert">Estado de despacho ou reserva indisponível. '+esc(st.erro070 || st.msgSemana || 'Atualize para continuar.')+' <button type="button" class="adm-botao-fantasma" id="rota-tentar">Atualizar</button></div>';
+            alvo.querySelector('#rota-tentar').addEventListener('click',recarregarTudo);return;
+        }
         var pl = planos();
         var semDias = 'sem saída nos próximos ' + NUM.format(ROTA.BUSCA_SAIDA_DIAS) + ' dias';
         if (pl.hoje.semSaida && !pl.proxima) {   // nenhum dia com saída no limite: nada a planejar (configuração de feriados)
@@ -4292,7 +4353,7 @@
         var semIni = semanaAlvo();
         var temQuadro065 = !!obterQuadroMod();
         var sem = st.v2 && st.vista === 'semana'
-            ? planejarSemana(st.pedidos, st.clientes, semIni, { pedidos_estado: estadosPedidosAtuais(), cfg: st.cfg, padroes: st.excecoes, porPedido: st.porPedido, regras: st.regras,
+            ? planejarSemana(st.pedidos, st.clientes, semIni, { modo_planejamento: st.modo070, reservas_070: st.reservas070, pedidos_estado: estadosPedidosAtuais(), cfg: st.cfg, padroes: st.excecoes, porPedido: st.porPedido, regras: st.regras,
                 ignorados: st.ign045 ? st.ignorados : {}, plano: planoSemanaObj(semIni), veiculos: linhasFrota(), veiculo: semVeiculoAtual(), saidas: st.diasSaida, canhotos: st.canhotos, confirmacoes: st.confirmacoes, hoje: hojeSP() })
             : null;
         var motivoSem = pl.hoje.feriado ? 'feriado' : 'domingo';
@@ -4342,18 +4403,21 @@
             ? calcularJuntar(atual, st.vista === 'proxima' && !pl.hoje.semSaida ? pl.hoje.entregues : {})
             : null;
         var corpo = st.vista === 'semana' && sem
-            ? '<p class="rota-imp-dia">Plano da semana · ' + esc(temQuadro065 ? 'Frota' : (sem.nomeVeiculo || 'S10')) + ' · ' + esc(dataBr(semIni)) + ' a ' + esc(dataBr(somaDias(semIni, 5))) + '</p>' +
+            ? htmlDefinitiva070(semIni) + '<p class="rota-imp-dia">Plano da semana · ' + esc(temQuadro065 ? 'Frota' : (sem.nomeVeiculo || 'S10')) + ' · ' + esc(dataBr(semIni)) + ' a ' + esc(dataBr(somaDias(semIni, 5))) + '</p>' +
               (avisos.length ? '<div class="adm-card p-4 mb-5 rota-banner" role="status">' + avisos.map(function (a) { return '<p><i class="fa-solid fa-circle-info" aria-hidden="true"></i> ' + esc(a) + '</p>'; }).join('') + '</div>' : '') +
               (temQuadro065 ? '<div id="rota-semana-quadro" class="mb-4"></div>' + htmlSugestoesJuntar(calcularJuntar(sem)) : htmlSemana(sem))
             : '<p class="rota-imp-dia">Rota de ' + esc(nomeDia(atual.dia)) + ', ' + esc(dataBr(atual.dia)) + '</p>' +
               (avisos.length ? '<div class="adm-card p-4 mb-5 rota-banner" role="status">' + avisos.map(function (a) { return '<p><i class="fa-solid fa-circle-info" aria-hidden="true"></i> ' + esc(a) + '</p>'; }).join('') + '</div>' : '') +
               htmlFechamento(atual) + nota + htmlAguardando(atual) + htmlSugestoesJuntar(jnDia) +
               htmlGradeVeiculos(atual) + htmlOutrosDias(atual);
-        alvo.innerHTML = cab + seletor + bannerDesat + corpo +
+        alvo.innerHTML = cab + seletor + (raiz.TempRioPrevisao ? raiz.TempRioPrevisao.htmlModos(st.modo070,{desabilitado:pendentes()}) : '') + bannerDesat + corpo +
             htmlForaDaRota(atual) + htmlConfigResumo(atual) +
             (podeConfigurar() ? htmlDialogo() : '') + htmlDialogoFrota() +
             (st.v2 && podeEditar() ? htmlDialogoEscopo() + htmlDialogoRegra() : '') + (podeTirar() ? htmlDialogoTirar() : '');
         if (st.vista === 'semana' && temQuadro065) montarQuadroSemanaNoAlvo(alvo, semIni);
+        var confirmar070=alvo.querySelector('#rota-070-confirmar');if(confirmar070)confirmar070.addEventListener('click',confirmarDefinitiva070);
+        var voltar070=alvo.querySelector('#rota-070-voltar');if(voltar070)voltar070.addEventListener('click',function(){carregarSemana065(segundaDe(somaDias(hojeSP(),1)),true);});
+        if(raiz.TempRioPrevisao)raiz.TempRioPrevisao.ligarModos(alvo,function(){return {desabilitado:pendentes()};},trocarModo070);
         ligarEventos(alvo, atual, sem);
     }
     // Uma coluna com os veículos porta a porta (e o "fica") e outra com os do CEASA; cada veículo ativo um cartão.
@@ -4678,6 +4742,7 @@
             st.fx050 = false; st.fxLinha = null; st.fxFoto = null; st.fxDias = {}; st.fxDiasErro = {}; st.fxErro = null; st.fxSalvando = false; st.msgFx = ''; st.fxConfirmaReabrir = false; st.fxRender = false; st.focoFx = null; st.fxRev = 0;
             st.progresso = {};
             st.vista = 'semana'; st.diaDetalhe = null;
+            st.modo070='previsao';st.reservas070={};st.definitiva070={};st.erro070=null;st.req070={};st.rasc070={};
             st.estadosH=null;st.estadosDia=null;st.movimentoReq={};st.calendarioH={};
             st.sem065 = false; st.sem065Dados = {}; st.semQuadroRasc = {}; st.semFiltroVeic = 'todos'; st.semVersaoConflito = false;
             st.semMsgErro = false; st.semPilhasExp = {}; st.semBuscaBandeja = ''; st.semFiltroBandeja = 'todos'; st.semMapaAberto = true;

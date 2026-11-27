@@ -257,6 +257,7 @@
     function etapaEntrega(p, ctx) {
         ctx = ctx || {};
         if (!p) return 'aberto';
+        if (ctx.pedidos_estado && ctx.pedidos_estado[p.cd_pedido] && typeof ctx.pedidos_estado[p.cd_pedido].pronto_despacho === 'boolean') { var e070 = estado070(p, ctx); return e070.entregue || !e070.pendente ? 'recebido' : e070.pronto_despacho ? 'pronto_despacho' : p.etapa; }
         if (recebidoEntrega(p, ctx.canhotos, ctx.cfg, ctx.confirmacoes)) return 'recebido';
         if (!etapaEnviada(p)) return p.etapa;
         var em = saidaEntrega(p, ctx), agora = ctx.agora == null ? Date.now() : new Date(ctx.agora).getTime();
@@ -303,6 +304,57 @@
         var em = saidaEntrega(p, Object.assign({}, ctx, { cfg: cfg }));
         return etapaEnviada(p) && !recebidoEntrega(p, canhotos, cfg, ctx && ctx.confirmacoes) && !!em &&
             Date.parse(hoje + 'T12:00:00Z') - Date.parse(diaSP(em) + 'T12:00:00Z') > ROTA.ENVIADO_MAX_DIAS * 864e5;
+    }
+    // 070: servidor e coluna Pronto usam o MESMO estado. Foto persistida supera filtros vivos.
+    function estado070(p, opts) {
+        var e = p && opts && opts.pedidos_estado && opts.pedidos_estado[p.cd_pedido];
+        if (!e || typeof e.entregue !== 'boolean' || typeof e.pendente !== 'boolean' || typeof e.pronto_despacho !== 'boolean' || (e.entregue && e.pendente) || (e.pronto_despacho && (!e.pendente || e.entregue))) throw new Error('Estado canonico070 indisponivel ou invalido');
+        return e;
+    }
+    function reserva070(p, dia, opts) {
+        var r = opts && opts.reservas_070 && opts.reservas_070[dia];
+        return r && Array.isArray(r.itens) ? r.itens.find(function (i) { return i.cd_pedido === p.cd_pedido && i.ativo === true && i.pronto_ao_reservar === true; }) || null : null;
+    }
+    function elegivel070(p, dia, opts) {
+        var modo = opts.modo_planejamento || 'previsao';
+        if (modo !== 'previsao' && modo !== 'definitiva') throw new Error('Modo de planejamento070 invalido');
+        if (modo === 'previsao') return pendenteEntrega(p, opts.canhotos, opts.hoje || dia, opts.cfg, opts);
+        var e = estado070(p, opts), r = reserva070(p, dia, opts), h = opts.reservas_070 && opts.reservas_070[dia];
+        if (e.entregue || (e.data_saida_marcada && e.data_saida_marcada > dia)) return false;
+        if (r) return true;
+        return e.pronto_despacho && !(h && h.origem === 'manual');
+    }
+    function opcoes070(opts) {
+        opts = opts || {};
+        if (opts.modo_planejamento && ['previsao','definitiva'].indexOf(opts.modo_planejamento) < 0) throw new Error('Modo de planejamento070 invalido');
+        var plano = Object.assign({}, opts.plano || {}), porPedido = Object.assign({}, opts.porPedido || {});
+        Object.keys(opts.pedidos_estado || {}).forEach(function (cd) {
+            var e = opts.pedidos_estado[cd];
+            if (e && e.data_saida_marcada && !plano[cd]) plano[cd] = e.data_saida_marcada;
+        });
+        Object.keys(opts.reservas_070 || {}).forEach(function (dia) {
+            (opts.reservas_070[dia].itens || []).forEach(function (i) {
+                if (i.ativo === true && i.pronto_ao_reservar === true) {
+                    if (!plano[i.cd_pedido]) plano[i.cd_pedido] = { dia: dia, veiculo_id: i.veiculo_id };
+                    if (!porPedido[i.cd_pedido]) porPedido[i.cd_pedido] = i.veiculo_id;
+                }
+            });
+        });
+        return Object.assign({}, opts, { plano: plano, porPedido: porPedido });
+    }
+    function coletarEstados070(sb, pedidos) {
+        var ids = Array.from(new Set((pedidos || []).map(function (p) { return p.cd_pedido; }))), mapa = {}, corrente = Promise.resolve();
+        for (var i=0;i<ids.length;i+=200) (function (bloco) {
+            corrente = corrente.then(function () { return sb.rpc('rota_070_estados_pedidos', { p_cds: bloco }).then(function (r) {
+                if (r.error) throw new Error('Estado070: '+(r.error.message || r.error.code));
+                if (!Array.isArray(r.data) || r.data.length !== bloco.length) throw new Error('Estado070 incompleto');
+                r.data.forEach(function (e) {
+                    if (!e || bloco.indexOf(e.cd_pedido)<0 || mapa[e.cd_pedido]) throw new Error('Estado070 invalido');
+                    mapa[e.cd_pedido]=e;estado070({cd_pedido:e.cd_pedido},{pedidos_estado:mapa});
+                });
+            }); });
+        })(ids.slice(i,i+200));
+        return corrente.then(function () { return mapa; });
     }
     function pendenteEntrega(p, canhotos, hoje, cfg, ctx) {
         if (p && ctx && ctx.pedidos_estado) {
@@ -835,7 +887,7 @@
     //   Veículo que não sai hoje (dias_sem_saida/feriado): pedidos dele em fica, motivoFica 'sem_saida_s10' (S10) ou
     //   'sem_saida_veiculo' (outros), com a próxima saída DELE. Capacidade: a do veículo (S10 2700); null = sem limite.
     function planejar(pedidos, clientes, dia, opts) {
-        opts = opts || {};
+        opts = opcoes070(opts);
         var excluir = opts.excluir || {}, ignorados = opts.ignorados || {}, plano = opts.plano || {}, cfg = comFrota(opts.cfg, opts.veiculos), excecoes = opts.excecoes || {};
         var v2 = !!opts.marcacao, padroes = opts.padroes || excecoes, porPedido = opts.porPedido || {};
         var regras = regrasDe(opts.regras), tempo = tempoDe(cfg);
@@ -864,7 +916,8 @@
         res.semProxima = !proximaDe('s10');
         var cands = [];
         (pedidos || []).forEach(function (p) {
-            if (!pendenteEntrega(p, opts.canhotos, opts.hoje || dia, cfg, opts) || excluir[p.cd_pedido]) return;
+            var foto070 = fx && temProp(fx.porCd,p.cd_pedido) && (opts.modo_planejamento === 'definitiva' || (opts.pedidos_estado && opts.pedidos_estado[p.cd_pedido] && typeof opts.pedidos_estado[p.cd_pedido].pronto_despacho === 'boolean'));
+            if ((!foto070 && !elegivel070(p,dia,opts)) || excluir[p.cd_pedido]) return;
             var c = clienteDoPedido(p, clientes);
             var v = volumePedido(p), ve, x, prazo, vq;
             if (v2) {
@@ -887,7 +940,7 @@
                       veiculo: ve.veiculo, motivo: ve.motivo, detalhe: ve.detalhe, ceasa: ve.motivo === 'ceasa' ? ve.detalhe : null };
             }
             x.regra = p.documento ? regras[p.documento] || null : null;
-            x.separando = v2 && (p.etapa === 'separando' || sepAdiado);
+            x.separando = opts.modo_planejamento === 'definitiva' ? elegivel070(p,dia,opts) : v2 && (p.etapa === 'separando' || sepAdiado);
             var ig = ignorados[p.cd_pedido];
             if (ig) { x.ignorado = ig === true ? {} : ig; res.ignorados.push(x); return; }   // 045: fora da rota até reativar
             var pd = plano[p.cd_pedido];
@@ -1101,7 +1154,7 @@
     // opts.plano aceita { cd_pedido: 'YYYY-MM-DD' } ou { cd_pedido: { dia, veiculo_id } } (047): salvo para OUTRO
     // veículo não vale aqui. Veículo inexistente/inativo/do CEASA: res.veiculoInvalido = true e nada planejado.
     function planejarSemana(pedidos, clientes, semanaInicio, opts) {
-        opts = opts || {};
+        opts = opcoes070(opts);
         var cfg = comFrota(opts.cfg, opts.veiculos), padroes = opts.padroes || opts.excecoes || {}, porPedido = opts.porPedido || {};
         var regras = regrasDe(opts.regras), ignorados = opts.ignorados || {}, plano = opts.plano || {}, excluir = opts.excluir || {};
         var vid = opts.veiculo || 's10', vei = veiculoDaFrota(vid, cfg), valido = !!(vei && vei.ativo && vei.modo === 'porta');
@@ -1122,7 +1175,7 @@
         var dd = dias.map(function (d) { return { dia: d, nome: nomeDia(d), lista: [], usado: 0, regiao: null, centro: null }; });
         var s10 = [];
         (pedidos || []).forEach(function (p) {
-            if (!pendenteEntrega(p, opts.canhotos, opts.hoje || semanaInicio, cfg, opts) || excluir[p.cd_pedido] || ignorados[p.cd_pedido]) return;
+            if (!(opts.modo_planejamento === 'definitiva' ? dias.some(function (d) { return elegivel070(p,d,opts); }) : pendenteEntrega(p, opts.canhotos, opts.hoje || semanaInicio, cfg, opts)) || excluir[p.cd_pedido] || ignorados[p.cd_pedido]) return;
             var c = clienteDoPedido(p, clientes), m = marcacaoDe(p, padroes, porPedido);
             var x = { p: p, c: c, prazo: prazoDe(p.dt_pedido, cfg, m ? m.veiculo : null), v: volumePedido(p), veiculo: m ? m.veiculo : null, marcacao: m ? m.origem : null,
                       regra: p.documento ? regras[p.documento] || null : null, dia: null, origemDia: null, diaSugerido: null, estoura: false, diaFechado: false, regiao: null, ang: null };
@@ -1325,7 +1378,7 @@
     // Ordem da lista: dia da rota (mais cedo), menor desvio (bairro por último), prazo, chave. descartados conta
     // clientes (não pedidos), exceto ceasa e veiculo_inativo, que contam pedidos.
     function sugestoesJuntar(pedidos, clientes, rotas, opts) {
-        opts = opts || {};
+        opts = opcoes070(opts);
         var cfg = comFrota(opts.cfg, opts.veiculos), padroes = opts.padroes || opts.excecoes || {}, porPedido = opts.porPedido || {};
         var regras = regrasDe(opts.regras), ignorados = opts.ignorados || {}, excluir = opts.excluir || {};
         var hoje = opts.hoje || diaSP(new Date()), limite = opts.desvioMaxKm != null ? Number(opts.desvioMaxKm) : ROTA.JUNTAR_DESVIO_KM;
@@ -1370,7 +1423,7 @@
         // ---- candidatos por cliente (e veículo marcado) ----
         var unid = Object.create(null), lista = [];
         (pedidos || []).forEach(function (p) {
-            if (!pendenteEntrega(p, opts.canhotos, hoje, cfg, opts) || excluir[p.cd_pedido] || ignorados[p.cd_pedido] || naRota[p.cd_pedido]) return;
+            if (!(opts.modo_planejamento === 'definitiva' ? rs.some(function (r) { return elegivel070(p,r.dia,opts); }) : pendenteEntrega(p, opts.canhotos, hoje, cfg, opts)) || excluir[p.cd_pedido] || ignorados[p.cd_pedido] || naRota[p.cd_pedido]) return;
             var c = clienteDoPedido(p, clientes), m = marcacaoDe(p, padroes, porPedido), precisaMarcar = false, alvo = null;
             if (m) {
                 var vm = veiculoDaFrota(m.veiculo, cfg);
@@ -1510,7 +1563,7 @@
         veiculoDe: veiculoDe,
         montarParadas: montarParadas,
         clienteDoPedido: clienteDoPedido, enderecoDoCliente: enderecoDoCliente,
-        planejar: planejar, fechadaDe: fechadaDe, itensDaRota: itensDaRota, sequenciaDe: sequenciaDe, propostaSeparando: propostaSeparando,
+        coletarEstados070: coletarEstados070, elegivel070: elegivel070, planejar: planejar, fechadaDe: fechadaDe, itensDaRota: itensDaRota, sequenciaDe: sequenciaDe, propostaSeparando: propostaSeparando,
         linksGoogleMaps: linksGoogleMaps,
         // 044
         minutosDe: minutosDe,
