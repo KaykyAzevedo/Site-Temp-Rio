@@ -46,11 +46,11 @@
     var CORES_DIA_FALLBACK = ['#3b82f6', '#3b82f6', '#10b981', '#a855f7', '#f59e0b', '#ec4899', '#ea580c'];
 
     var SIT_META = {
-        vencido:  { rotulo: 'Vencido',        classe: 'rota-sit-vencido', icone: 'fa-triangle-exclamation' },
-        hoje:     { rotulo: 'Vence hoje',     classe: 'rota-sit-hoje',    icone: 'fa-hourglass-end' },
-        amanha:   { rotulo: 'Vence amanhã',   classe: 'rota-sit-amanha',  icone: 'fa-hourglass-half' },
-        ok:       { rotulo: 'No prazo',       classe: 'rota-sit-ok',      icone: 'fa-check' },
-        sem_data: { rotulo: 'Sem prazo',      classe: 'rota-sit-amanha',  icone: 'fa-question' }
+        vencido:  { rotulo: 'Meta passada',   classe: 'rota-sit-vencido', icone: 'fa-triangle-exclamation' },
+        hoje:     { rotulo: 'Meta hoje',      classe: 'rota-sit-hoje',    icone: 'fa-hourglass-end' },
+        amanha:   { rotulo: 'Meta amanhã',    classe: 'rota-sit-amanha',  icone: 'fa-hourglass-half' },
+        ok:       { rotulo: 'Na meta',        classe: 'rota-sit-ok',      icone: 'fa-check' },
+        sem_data: { rotulo: 'Sem meta',       classe: 'rota-sit-amanha',  icone: 'fa-question' }
     };
     var MOTIVO_BANDEJA = {
         capacidade:     { rotulo: 'Excede capacidade', classe: 'rota-selo',          icone: 'fa-box' },
@@ -523,10 +523,10 @@
             if (!melhorDia) return;
             var wPrazo = prazo ? DIAS_MIN[diaSemana(prazo)] : null;
             var wSug = DIAS_MIN[diaSemana(melhorDia.dia)];
-            var txtPrazo = !prazo ? 'Sem prazo' : (prazo < hoje ? 'Vencido (' + dataBr(prazo) + ')' : (prazo === hoje ? 'Vence hoje' : 'Vence ' + wPrazo));
+            var txtPrazo = !prazo ? 'Sem meta' : (prazo < hoje ? 'Meta passada (' + dataBr(prazo) + ')' : (prazo === hoje ? 'Meta hoje' : 'Meta ' + wPrazo));
             var detalheMot = ancoraRegiao
                 ? 'mesma região de ' + ancoraRegiao.cliente
-                : (vencidoOuHoje ? '1ª saída útil' : 'última saída útil no prazo');
+                : (vencidoOuHoje ? '1ª saída útil' : 'última saída útil na meta');
             var texto = txtPrazo + ' — sugerido ' + wSug + ' (' + detalheMot + ')';
 
             pedidosSug.push({
@@ -1274,13 +1274,13 @@
 
     function htmlSeloPrazo(c, curto) {
         if (c.dia && c.atrasoDias > 0) {
-            var rotAtr = 'Atrasa ' + NUM.format(c.atrasoDias) + (c.atrasoDias === 1 ? ' dia' : ' dias');
-            var txtFullAtr = rotAtr + (c.prazo ? ' · prazo ' + dataBr(c.prazo) : '');
+            var rotAtr = 'Passa ' + NUM.format(c.atrasoDias) + (c.atrasoDias === 1 ? ' dia' : ' dias') + ' da meta';
+            var txtFullAtr = rotAtr + (c.prazo ? ' · meta ' + dataBr(c.prazo) : '');
             return '<span class="rota-sit rota-sit-vencido rq-selo-atraso" data-rq-selo-atraso="' + esc(c.atrasoDias) + '" title="' + esc(txtFullAtr) + '" aria-label="' + esc(txtFullAtr) + '"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>' + esc(curto ? rotAtr : txtFullAtr) + '</span>';
         }
         if (c.estoura && c.dia) {
-            var txtFullEst = 'Passa do prazo' + (c.prazo ? ' · ' + dataBr(c.prazo) : '');
-            var txtCurtoEst = c.prazo ? dataBr(c.prazo) : 'Venc.';
+            var txtFullEst = 'Passa da meta' + (c.prazo ? ' · ' + dataBr(c.prazo) : '');
+            var txtCurtoEst = c.prazo ? dataBr(c.prazo) : 'Passa';
             return '<span class="rota-sit rota-sit-vencido" title="' + esc(txtFullEst) + '" aria-label="' + esc(txtFullEst) + '"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>' + esc(curto ? txtCurtoEst : txtFullEst) + '</span>';
         }
         var m = SIT_META[c.situacao] || SIT_META.ok;
@@ -1532,9 +1532,9 @@
             alertas.push('<span class="rota-sit rota-sit-vencido" data-rq-alerta-cap="' + esc(col.dia) + '"><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>Acima da capacidade (+' + NUM.format(acima) + ' cx24)</span>');
         }
         if (col.atrasados > 0) {
-            alertas.push('<span class="rota-sit rota-sit-vencido rq-dia-selo-atraso" data-rq-alerta-atraso="' + esc(col.dia) + '" data-rq-contador-atraso="' + esc(col.atrasados) + '"><i class="fa-solid fa-clock" aria-hidden="true"></i>' + NUM.format(col.atrasados) + (col.atrasados === 1 ? ' após o prazo' : ' após o prazo') + '</span>');
+            alertas.push('<span class="rota-sit rota-sit-vencido rq-dia-selo-atraso" data-rq-alerta-atraso="' + esc(col.dia) + '" data-rq-contador-atraso="' + esc(col.atrasados) + '"><i class="fa-solid fa-clock" aria-hidden="true"></i>' + NUM.format(col.atrasados) + ' depois da meta</span>');
         } else if (col.estouram) {
-            alertas.push('<span class="rota-sit rota-sit-vencido"><i class="fa-solid fa-clock" aria-hidden="true"></i>' + NUM.format(col.estouram) + (col.estouram === 1 ? ' vencido/estoura' : ' vencidos/estouram') + '</span>');
+            alertas.push('<span class="rota-sit rota-sit-vencido"><i class="fa-solid fa-clock" aria-hidden="true"></i>' + NUM.format(col.estouram) + (col.estouram === 1 ? ' passa da meta' : ' passam da meta') + '</span>');
         }
         if (col.fechados) {
             alertas.push('<span class="rota-selo rota-selo-fechado"><i class="fa-solid fa-calendar-xmark" aria-hidden="true"></i>' + NUM.format(col.fechados) + ' fechado(s)</span>');
@@ -1744,7 +1744,7 @@
                 '<div class="rq-bandeja-controles no-print">' +
                     '<div class="flex flex-wrap gap-1" role="group" aria-label="Filtrar bandeja">' +
                         '<button type="button" class="adm-chip' + (st.filtroBandeja === 'todos' ? ' is-ativo' : '') + '" data-rq-filtro="todos" aria-pressed="' + (st.filtroBandeja === 'todos') + '">Todos (' + NUM.format(st.bandejaVisivel.length) + ')</button>' +
-                        '<button type="button" class="adm-chip' + (st.filtroBandeja === 'vencidos' ? ' is-ativo' : '') + '" data-rq-filtro="vencidos" aria-pressed="' + (st.filtroBandeja === 'vencidos') + '">Vencidos / hoje (' + NUM.format(nVenc) + ')</button>' +
+                        '<button type="button" class="adm-chip' + (st.filtroBandeja === 'vencidos' ? ' is-ativo' : '') + '" data-rq-filtro="vencidos" aria-pressed="' + (st.filtroBandeja === 'vencidos') + '">Meta passada / hoje (' + NUM.format(nVenc) + ')</button>' +
                         (nRem ? '<button type="button" class="adm-chip' + (st.filtroBandeja === 'removidos' ? ' is-ativo' : '') + '" data-rq-filtro="removidos" aria-pressed="' + (st.filtroBandeja === 'removidos') + '">Tirados do dia (' + NUM.format(nRem) + ')</button>' : '') +
                     '</div>' +
                     '<label class="sr-only" for="rq-busca-bandeja">Buscar pedido na bandeja</label>' +
@@ -1785,7 +1785,7 @@
         }
 
         var nAtrEdit = st.resumo.atrasadosEditaveis || 0;
-        var txtConfirmaAtr = NUM.format(nAtrEdit) + (nAtrEdit === 1 ? ' pedido programado depois do prazo' : ' pedidos programados depois do prazo');
+        var txtConfirmaAtr = NUM.format(nAtrEdit) + (nAtrEdit === 1 ? ' pedido programado depois da meta' : ' pedidos programados depois da meta');
         var confirmaAtrasoHtml = st.confirmaSalvarAtraso && nAtrEdit > 0
             ? '<div class="rq-msg-barra is-atraso-confirma no-print" data-rq-confirma-atraso="' + esc(nAtrEdit) + '" role="alert">' +
               '<span><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> <strong>' + esc(txtConfirmaAtr) + '.</strong> Isso não bloqueia o salvamento — confirme se deseja gravar assim mesmo.</span>' +
@@ -1826,7 +1826,7 @@
                     '<div class="rq-status-acoes no-print">' +
                         seloEstado +
                         (st.resumo.atrasados > 0
-                            ? '<span class="rota-sit rota-sit-vencido" data-rq-resumo-atraso="' + esc(st.resumo.atrasados) + '"><i class="fa-solid fa-clock" aria-hidden="true"></i>' + NUM.format(st.resumo.atrasados) + (st.resumo.atrasados === 1 ? ' após o prazo' : ' após o prazo') + '</span>'
+                            ? '<span class="rota-sit rota-sit-vencido" data-rq-resumo-atraso="' + esc(st.resumo.atrasados) + '"><i class="fa-solid fa-clock" aria-hidden="true"></i>' + NUM.format(st.resumo.atrasados) + ' depois da meta</span>'
                             : '') +
                         (st.podeEditar
                             ? '<button type="button" class="adm-botao-fantasma" data-rq-acao="sugerir-semana"' + (st.salvando ? ' disabled' : '') + ' title="Pré-preenche o rascunho com as sugestões da semana (não salva sozinho)"><i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i> Sugerir semana</button>'

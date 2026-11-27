@@ -17,13 +17,13 @@
         { v: 6, curto: 'Sáb', nome: 'Sábado' }
     ];
     var MOTIVOS_ERRO = {
-        parametro_invalido: 'Confira os dados informados para o prazo.',
+        parametro_invalido: 'Confira os dados informados para a meta de entrega.',
         motivo_invalido: 'Informe um motivo de 1 a 200 caracteres, sem < > nem caracteres de controle.',
         pedido_nao_encontrado: 'Pedido não encontrado. Atualize a tela.',
-        pedido_historico: 'Pedido já está no Histórico e não pode ter o prazo alterado.',
+        pedido_historico: 'Pedido já está no Histórico e não pode ter a meta alterada.',
         cliente_sem_documento: 'Este pedido não tem cliente identificado para salvar regra permanente.',
         dia_sem_saida: 'A data escolhida não é dia útil configurado ou é feriado.',
-        prazo_indisponivel: 'Não foi possível calcular um prazo válido com essas regras.',
+        prazo_indisponivel: 'Não foi possível calcular uma meta de entrega válida com essas regras.',
         veiculo_invalido: 'Veículo inválido para consultar o calendário.'
     };
     var MOTIVOS_CAL = {
@@ -219,7 +219,7 @@
                 prazos: {},
                 regras: {},
                 padrao: null,
-                erro: String((err && err.message) || err || 'Não foi possível ler os prazos.')
+                erro: String((err && err.message) || err || 'Não foi possível ler as metas de entrega.')
             };
         });
     }
@@ -280,7 +280,7 @@
         var veic = String(veiculo || 's10');
         return chamarRpc(sb, 'rota_068_calendario_veiculo', { p_veiculo: veic, p_de: de, p_ate: ate }).then(function (d) {
             checarStatusOk(d);
-            if (!Array.isArray(d.dias_prazo)) throw new Error('Calendário de prazo incompleto.');
+            if (!Array.isArray(d.dias_prazo)) throw new Error('Calendário de meta de entrega incompleto.');
             return d;
         });
     }
@@ -304,7 +304,7 @@
         opts = opts || {};
         if (!parteBAtiva() || !pedido) return '';
         if (opts.erro) {
-            return '<p class="adm-prazo068-linha adm-entrega-erro" role="alert">Prazo indisponível: ' + esc(opts.erro) + '</p>';
+            return '<p class="adm-prazo068-linha adm-entrega-erro" role="alert">Meta de entrega indisponível: ' + esc(opts.erro) + '</p>';
         }
         if (!opts.instalada) return '';
         var row = opts.prazos && opts.prazos[pedido.cd_pedido];
@@ -315,8 +315,8 @@
         var seloAtraso = atraso > 0 ? ' <span class="adm-prazo068-atraso">+' + atraso + 'd</span>' : '';
         var pode = podeEditar(opts) && row.travado !== true;
         return '<div class="adm-prazo068-linha" data-prazo068-box="' + esc(pedido.cd_pedido) + '">' +
-            '<span>Prazo · <strong>' + esc(texto) + '</strong> <small class="adm-prazo068-orig">(' + esc(orig) + ')</small>' + seloAtraso + '</span>' +
-            (pode ? ' <button type="button" class="adm-botao-fantasma no-print" data-prazo068-cd="' + esc(pedido.cd_pedido) + '" aria-label="Alterar prazo do pedido #' + esc(pedido.cd_pedido) + '">Alterar prazo</button>' : '') +
+            '<span>Meta · <strong>' + esc(texto) + '</strong> <small class="adm-prazo068-orig">(' + esc(orig) + ')</small>' + seloAtraso + '</span>' +
+            (pode ? ' <button type="button" class="adm-botao-fantasma no-print" data-prazo068-cd="' + esc(pedido.cd_pedido) + '" aria-label="Alterar meta de entrega do pedido #' + esc(pedido.cd_pedido) + '">Alterar meta</button>' : '') +
         '</div>';
     }
 
@@ -356,15 +356,16 @@
         var auditoria = row.em ? 'Última alteração: ' + esc(row.por || 'equipe') + ' · ' + esc(horaSP(row.em)) + (row.motivo ? ' · ' + esc(row.motivo) : '') : '';
 
         dlg.innerHTML = '<form class="adm-prazo068-form" novalidate>' +
-            '<h2 id="prazo068-tit" class="text-lg font-bold">Prazo ideal do pedido #' + esc(pedido.cd_pedido) + '</h2>' +
-            (row.prazo_ideal ? '<p class="text-sm my-2">Prazo atual: <strong>' + esc(dataBr(row.prazo_ideal)) + '</strong> (' + esc(origemRotulo(row.origem)) + ')</p>' : '') +
+            '<h2 id="prazo068-tit" class="text-lg font-bold">Meta de entrega do pedido #' + esc(pedido.cd_pedido) + '</h2>' +
+            '<p class="text-xs my-1" style="color:var(--adm-tinta-2)">É uma meta, não bloqueia: o pedido pode sair depois.</p>' +
+            (row.prazo_ideal ? '<p class="text-sm my-2">Meta atual: <strong>' + esc(dataBr(row.prazo_ideal)) + '</strong> (' + esc(origemRotulo(row.origem)) + ')</p>' : '') +
             (auditoria ? '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">' + auditoria + '</p>' : '') +
             '<fieldset class="adm-prazo068-fs"><legend>Aplicar em</legend>' +
                 '<label class="adm-prazo068-opt"><input type="radio" name="escopo" value="pedido" checked> Só este pedido (exceção)</label>' +
                 '<label class="adm-prazo068-opt"><input type="radio" name="escopo" value="cliente"' + (!doc ? ' disabled' : '') + '> Regra deste cliente (limpa exceção deste pedido)</label>' +
                 (!doc ? '<p class="text-xs" style="color:var(--adm-tinta-3)">Pedido sem documento: disponível apenas como exceção por pedido.</p>' : '') +
             '</fieldset>' +
-            '<fieldset class="adm-prazo068-fs"><legend>Tipo de prazo</legend>' +
+            '<fieldset class="adm-prazo068-fs"><legend>Tipo de meta</legend>' +
                 '<label class="adm-prazo068-opt"><input type="radio" name="tipo" value="dias_uteis" checked> +N dias úteis</label>' +
                 '<label class="adm-prazo068-opt" data-prazo068-opt-data><input type="radio" name="tipo" value="data"> Data agendada</label>' +
                 '<label class="adm-prazo068-opt" data-prazo068-opt-semana hidden><input type="radio" name="tipo" value="semana"> Dias fixos da semana</label>' +
@@ -380,13 +381,13 @@
                     var chk = semanaIni.indexOf(d.v) >= 0 && !dis;
                     return '<label><input type="checkbox" name="semana" value="' + d.v + '"' + (chk ? ' checked' : '') + (dis ? ' disabled' : '') + '> ' + esc(d.curto) + '</label>';
                 }).join('') + '</div>' +
-                (!permiteDom ? '<p class="text-xs mt-1" style="color:var(--adm-tinta-3)">Domingo só fica disponível se habilitado em Prazo padrão.</p>' : '') +
+                (!permiteDom ? '<p class="text-xs mt-1" style="color:var(--adm-tinta-3)">Domingo só fica disponível se habilitado em Meta padrão.</p>' : '') +
             '</fieldset>' +
             '<label class="block my-3">Motivo (obrigatório, 1 a 200 caracteres)<textarea name="motivo" class="adm-input block w-full" maxlength="200" rows="2" required></textarea></label>' +
             '<p class="text-xs" style="color:var(--adm-tinta-3)"><span data-prazo068-cont>0</span>/200</p>' +
             '<p role="alert" class="adm-entrega-erro" data-prazo068-erro></p>' +
             '<div class="adm-prazo068-acoes">' +
-                '<button type="submit" class="adm-botao">Salvar prazo</button>' +
+                '<button type="submit" class="adm-botao">Salvar meta</button>' +
                 (row.excecao ? '<button type="button" class="adm-botao-fantasma" data-prazo068-rem-exc="1">Remover exceção</button>' : '') +
                 (regra && doc ? '<button type="button" class="adm-botao-fantasma" data-prazo068-rem-reg="1">Remover regra do cliente</button>' : '') +
                 '<button type="button" class="adm-botao-fantasma" data-prazo068-cancelar="1">Cancelar</button>' +
@@ -580,16 +581,16 @@
         dlg.setAttribute('aria-labelledby', 'prazo068-pad-tit');
         var aud = pad.atualizado_em ? 'Atualizado por ' + esc(pad.atualizado_por || 'equipe') + ' · ' + esc(horaSP(pad.atualizado_em)) : '';
         dlg.innerHTML = '<form class="adm-prazo068-form" novalidate>' +
-            '<h2 id="prazo068-pad-tit" class="text-lg font-bold">Prazo ideal padrão</h2>' +
-            '<p class="text-xs my-2" style="color:var(--adm-tinta-2)">Vale para todos os pedidos sem regra de cliente nem exceção. Independente dos dias de saída dos veículos.</p>' +
+            '<h2 id="prazo068-pad-tit" class="text-lg font-bold">Meta de entrega padrão</h2>' +
+            '<p class="text-xs my-2" style="color:var(--adm-tinta-2)">Vale como meta de entrega para todos os pedidos sem regra de cliente nem exceção. É uma meta, não bloqueia: o pedido pode sair depois. Independente dos dias de saída dos veículos.</p>' +
             (aud ? '<p class="text-xs mb-3" style="color:var(--adm-tinta-3)">' + aud + '</p>' : '') +
-            '<label class="block my-3">Prazo padrão (dias úteis, 0 a 365)<input type="number" name="dias" class="adm-input" min="0" max="365" step="1" value="' + esc(pad.prazo_ideal_dias) + '" required></label>' +
-            '<fieldset class="adm-prazo068-fs"><legend>Dias úteis que contam para o prazo</legend>' +
+            '<label class="block my-3">Meta padrão (dias úteis, 0 a 365)<input type="number" name="dias" class="adm-input" min="0" max="365" step="1" value="' + esc(pad.prazo_ideal_dias) + '" required></label>' +
+            '<fieldset class="adm-prazo068-fs"><legend>Dias úteis que contam para a meta</legend>' +
                 '<div class="adm-prazo068-sem">' + DIAS_SEMANA.map(function (d) {
                     return '<label><input type="checkbox" name="uteis" value="' + d.v + '"' + (diasSemana.indexOf(d.v) >= 0 ? ' checked' : '') + '> ' + esc(d.curto) + '</label>';
                 }).join('') + '</div></fieldset>' +
             '<p role="alert" class="adm-entrega-erro" data-prazo068-erro></p>' +
-            '<div class="adm-prazo068-acoes"><button type="submit" class="adm-botao">Salvar prazo padrão</button>' +
+            '<div class="adm-prazo068-acoes"><button type="submit" class="adm-botao">Salvar meta padrão</button>' +
                 '<button type="button" class="adm-botao-fantasma" data-prazo068-cancelar="1">Cancelar</button></div>' +
         '</form>';
 

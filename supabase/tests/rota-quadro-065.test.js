@@ -505,7 +505,7 @@ test('066 assistente e mapa: linha deposito->paradas->deposito por dia/veiculo, 
     assert.ok(linhaQuiApos.semGeoCds.includes(1545), 'registrado em semGeoCds do dia/veiculo');
     assert.ok(Q.html(rSemGeo.estado).includes('data-rq-sem-geo="1545"'), 'icone/selo Sem localizacao renderizado');
 
-    // 2. Aviso de atraso: cartao programado em dia DEPOIS do prazo ganha "Atrasa X dia(s)" e contador no topo da coluna
+    // 2. Aviso de atraso: cartao programado em dia DEPOIS da meta ganha "Passa X dia(s) da meta" e contador no topo da coluna
     // #1534 tem prazo 2026-11-24; programado em 2026-11-27 -> atrasa 3 dias
     const rAtr = Q.aplicarAcao(st, { tipo: 'programar', cd_pedido: 1534, dia: '2026-11-27', veiculo: 's10' });
     assert.equal(rAtr.ok, true);
@@ -515,9 +515,10 @@ test('066 assistente e mapa: linha deposito->paradas->deposito por dia/veiculo, 
     assert.equal(card1534.atrasoDias, 3);
     assert.equal(colSex.atrasados, 2, 'contador no topo da coluna soma #1546 (1 dia) + #1534 (3 dias)');
     const htmlAtr = Q.html(rAtr.estado);
-    assert.ok(htmlAtr.includes('Atrasa 3 dias'), 'selo vermelho Atrasa 3 dias no cartao');
-    assert.ok(htmlAtr.includes('Atrasa 1 dia'), 'selo vermelho Atrasa 1 dia em #1536/#1546');
+    assert.ok(htmlAtr.includes('Passa 3 dias da meta'), 'selo vermelho Passa 3 dias da meta no cartao');
+    assert.ok(htmlAtr.includes('Passa 1 dia da meta'), 'selo vermelho Passa 1 dia da meta em #1536/#1546');
     assert.ok(htmlAtr.includes('data-rq-contador-atraso="2"'), 'contador de atrasos no topo da coluna');
+    assert.ok(htmlAtr.includes('depois da meta'), 'aviso depois da meta no topo da coluna');
 
     // 3. Sugestoes (stub do contrato 066): chips com Aceitar/Ignorar e botao "Sugerir semana" (pre-preenche rascunho sem salvar)
     const stub066 = Q.gerarStubSugestoes066(st);

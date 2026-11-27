@@ -68,10 +68,12 @@ test('068B htmlCard respeita row.travado (Historico), permissao e atraso', () =>
   const ped = { cd_pedido: 1530, documento: '11222333000181' };
   const rowEdit = { cd_pedido: 1530, prazo_ideal: '2026-12-02', origem: 'excecao_pedido', atraso_dias: 2, travado: false };
   const hEdit = P.htmlCard(ped, { instalada: true, podeMarcar: true, prazos: { 1530: rowEdit } });
+  assert.match(hEdit, /Meta ·/);
   assert.match(hEdit, /02\/12\/2026/);
   assert.match(hEdit, /\(exceção\)/);
   assert.match(hEdit, /\+2d/);
   assert.match(hEdit, /data-prazo068-cd="1530"/);
+  assert.match(hEdit, />Alterar meta</);
 
   // Pedido no Historico (travado:true): sem botao de edicao
   const hTrav = P.htmlCard(ped, { instalada: true, podeMarcar: true, prazos: { 1530: { ...rowEdit, travado: true } } });
@@ -188,7 +190,8 @@ test('068B Rotas propaga opts.prazos + opts.regrasPrazo aos 3 planejadores e exi
     assert.equal(c.opts.regrasPrazo, regrasMock);
   }
   assert.ok(calls.some((x) => x.n === 'planejar' && x.opts.modo_planejamento === 'definitiva' && x.opts.prazos === prazosMock));
-  // Botao Prazo padrao aparece para pode_marcar_rota mesmo sem papel admin; Configurar continua so admin
-  assert.match(alvo.html, /id="rota-prazo-padrao"/);
+  // Botao Meta padrao aparece para pode_marcar_rota mesmo sem papel admin; Configurar continua so admin
+  assert.match(alvo.html, /id="rota-prazo-padrao"[^>]*>.*Meta padrão/);
+  assert.match(alvo.html, /meta de 2 dias úteis/);
   assert.doesNotMatch(alvo.html, /id="rota-configurar"/);
 });
