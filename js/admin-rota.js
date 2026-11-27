@@ -3055,10 +3055,20 @@
         if (!ov) return;
         var removidos = Object.create(null);
         ((d065 && d065.itens) || []).forEach(function (it) { if (it && it.removido) removidos[Number(it.cd_pedido) + '|' + String(it.dia).slice(0, 10)] = true; });
+        var entregaAnterior = Object.create(null);   // cd -> 1ª data de entrega real (recebidos 068V)
+        (ov.recebidos || []).forEach(function (r) {
+            if (!r || r.cd_pedido == null || !r.dia || r.status === 'problema') return;
+            var cdR = Number(r.cd_pedido), dR = String(r.dia).slice(0, 10);
+            if (!entregaAnterior[cdR] || dR < entregaAnterior[cdR]) entregaAnterior[cdR] = dR;
+        });
         cols.forEach(function (col) {
             if (col.dia > hoje) return;
             var vistos = Object.create(null);
-            col.cartoes = (col.cartoes || []).map(function (c) {
+            // Foto legada: em dia PASSADO, item cujo pedido já foi entregue em dia ANTERIOR à coluna só aparece no dia da entrega (hoje/futuro inalterados).
+            col.cartoes = (col.cartoes || []).filter(function (c) {
+                var ent = entregaAnterior[Number(c.cd_pedido)];
+                return !(ent && ent < col.dia && col.dia < hoje);
+            }).map(function (c) {
                 vistos[Number(c.cd_pedido)] = true;
                 var e = ov.veic[Number(c.cd_pedido)];
                 if (!e) return c;

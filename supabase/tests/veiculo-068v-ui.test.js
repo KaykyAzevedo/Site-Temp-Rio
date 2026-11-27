@@ -128,3 +128,25 @@ for (const falha of ['erro', 'timeout']) {
     assert.equal(s.veicErro, false); assert.ok(!/Não foi possível ler os veículos/.test(q.renderHtml()));
   });
 }
+
+// ---- dup: foto 050 legada repete em Qua pedidos ja entregues em Ter ----
+test('068V dup: dia passado nao repete pedido entregue em dia anterior; hoje/futuro inalterados', () => {
+  const window = { TempRioRotaCore: R };
+  const src = fs.readFileSync(path.join(__dirname, '../../js/admin-rota.js'), 'utf8').replace('raiz.TempRioRota = {', 'raiz.__o={st,overlay068v};raiz.TempRioRota = {');
+  vm.runInNewContext(src, { window, Intl, Date, setTimeout, clearTimeout, console });
+  const { st, overlay068v } = window.__o, ini = '2026-11-23', hoje = '2026-11-27';
+  const ids = [1531, 1535, 1539, 1541, 1543, 1544, 1536, 1537, 1540];
+  const cart = (cds) => cds.map(cd => ({ cd_pedido: cd, veiculo: 's10' }));
+  st.v068v[ini] = { veic: {}, recebidos: ids.map(cd => ({ cd_pedido: cd, dia: '2026-11-24', status: 'entregue', veiculo_id: 's10', sem_veiculo: false })).concat([{ cd_pedido: 1600, dia: '2026-11-25', status: 'problema' }]) };
+  const cols = [
+    { dia: '2026-11-24', cartoes: cart(ids) },
+    { dia: '2026-11-25', cartoes: cart(ids.concat([1600, 1999])) },
+    { dia: '2026-11-27', cartoes: cart([1531]) },
+    { dia: '2026-11-28', cartoes: cart([1531]) }
+  ];
+  overlay068v(ini, hoje, cols, () => { throw new Error('nao deve criar cartao novo'); }, { itens: [] });
+  assert.deepEqual(cols[0].cartoes.map(c => c.cd_pedido), ids);            // dia da entrega mantem todos
+  assert.deepEqual(cols[1].cartoes.map(c => c.cd_pedido), [1600, 1999]);   // Qua: sem os 9 de Ter; problema nao conta como entrega
+  assert.deepEqual(cols[2].cartoes.map(c => c.cd_pedido), [1531]);         // hoje inalterado
+  assert.deepEqual(cols[3].cartoes.map(c => c.cd_pedido), [1531]);         // futuro inalterado
+});
