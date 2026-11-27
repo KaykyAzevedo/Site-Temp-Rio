@@ -785,8 +785,9 @@
         if (window.TempRioWhats) window.TempRioWhats.sair(); // WhatsApp: esquece telefones/textos da conta
         if (window.TempRioUsuarios) window.TempRioUsuarios.sair(); // Usuários: esquece a lista (e qualquer senha na tela)
         pe.seq++; pe.carregado = false; pe.carregando = false;
-        pe.itens = []; pe.estadosH=null;pe.estadosDia=null;pe.cal070={};pe.salvando070={};pe.erros070={};pe.req070={};pe.recarga070=false; pe.canhotos = {}; pe.confirmacoes = {}; pe.problemas = null; pe.entrega063 = false; pe.saidas = {}; pe.cfg = null;
+        pe.itens = []; pe.estadosH=null;pe.estadosDia=null;pe.cal070={};pe.salvando070={};pe.erros070={};pe.req070={};pe.recarga070=false; pe.canhotos = {}; pe.confirmacoes = {}; pe.problemas = null; pe.prazos068 = {}; pe.regrasPrazo068 = {}; pe.padraoPrazo068 = null; pe.prazo068Instalada = false; pe.erroPrazo068 = ''; pe.entrega063 = false; pe.saidas = {}; pe.cfg = null;
         if (window.TempRioEntregaAdmin) window.TempRioEntregaAdmin.fechar();
+        if (window.TempRioPrazo068B) window.TempRioPrazo068B.fechar();
         pe.historico = { aberto: false, busca: '', pagina: 0 };
         cmp.seq++; cmp.carregado = false; cmp.carregando = false; cmp.por = null; cmp.brutas = null;
         cmp.nfNotas = []; cmp.nfInstalada = false; cmp.nfSemPdv = 0; cmp.nfPendentes = 0; cmp.nfVista = {}; cmp.clientesPedidos = {};
@@ -6966,7 +6967,7 @@
     var PE_MODO_CHAVE = 'adm.peModo';
     var pe = { carregado: false, carregando: false, erro: null, ausente: false, itens: [], coletado: null, seq: 0,
                // 052 (opcional): canhotos ativos { cd_pedido: [{caminho, enviado_em, origem}] }, tabela lida?, pode anexar?
-               confirmacoes: {}, problemas: null, entrega063: false, canhotos: {}, can052: false, podeMarcar: false, cfg: null, saidas: {},
+               confirmacoes: {}, problemas: null, prazos068: {}, regrasPrazo068: {}, padraoPrazo068: null, prazo068Instalada: false, erroPrazo068: '', entrega063: false, canhotos: {}, can052: false, podeMarcar: false, cfg: null, saidas: {},
                // 068-A: marcação de veículo por cliente/pedido visível e editável em Pedidos para admin / pode_marcar_rota
                veiculos: [], padroes: {}, porPedido: {}, gravandoVeic: {}, msgVeic: '',
                estadosH: null, estadosDia: null, cal070:{}, salvando070:{}, erros070:{}, req070:{},recarga070:false,
@@ -7007,9 +7008,12 @@
     function peRecebidoRecente(x) { var e=peEstado070(x); return window.TempRioPrevisao ? !!e && e.estado_070==='recebido' : window.TempRioRotaCore.recebidoRecente(x, peContexto()); }
     function peAssinaturaEntrega() { return pe.itens.map(function (x) { return peIndice(x) + ':' + (peRecebidoRecente(x) ? 1 : 0); }).join(','); }
     function peContextoEntrega() { return Object.assign({}, peContexto(), { sb: sb, papel: typeof papel !== 'undefined' ? papel : null, podeMarcar: pe.podeMarcar, instalada: pe.entrega063, sessao: pe.seq }); }
+    function peContextoPrazo068() { return { sb: sb, papel: typeof papel !== 'undefined' ? papel : null, podeMarcar: pe.podeMarcar, instalada: pe.prazo068Instalada, prazos: pe.prazos068, regras: pe.regrasPrazo068, padrao: pe.padraoPrazo068, erro: pe.erroPrazo068, sessao: pe.seq }; }
+    function pePrazoHtml068(x) { return window.TempRioPrazo068B ? window.TempRioPrazo068B.htmlCard(x, peContextoPrazo068()) : ''; }
     function peRecebidoHtml(x) { var e=peEstado070(x); if(window.TempRioPrevisao) { var prob=window.TempRioEntregaAdmin && window.TempRioEntregaAdmin.problemaHtml ? window.TempRioEntregaAdmin.problemaHtml(x, peContextoEntrega()) : ''; var selo=!(peProblema(x) && prob) && e && /^(recebido|historico)$/.test(e.estado_070) ? '<span class="rota-selo">'+(e.estado_070==='historico'?'Entregue':'Recebido')+'</span>' : ''; return selo + prob; } return window.TempRioEntregaAdmin ? window.TempRioEntregaAdmin.html(x, peContextoEntrega()) : esc(window.TempRioRotaCore.recebidoRotulo(x, peContexto())); }
     if (typeof window.addEventListener === 'function') {
         window.addEventListener('temprio-entrega063', function () { if (sb && typeof papel !== 'undefined' && papel) carregarPedidosErp(); });
+        window.addEventListener('temprio-prazo068', function () { if (sb && typeof papel !== 'undefined' && papel) carregarPedidosErp(); });
         window.addEventListener('temprio-movimento068', function () { if (sb && typeof papel !== 'undefined' && papel) carregarPedidosErp(); });
         window.addEventListener('temprio-veiculo068', function (ev) {
             var det = ev && ev.detail;
@@ -7142,6 +7146,7 @@
                     cardModal.outerHTML = peCartaoDetalhado(item, true);
                     peLigarVeiculos(modalCorpo);
                     if (window.TempRioEntregaAdmin) window.TempRioEntregaAdmin.ligar(modalCorpo, peContextoEntrega);
+                    if (window.TempRioPrazo068B) window.TempRioPrazo068B.ligar(modalCorpo, peContextoPrazo068, pe.itens);
                 }
             }
         }, function () {
@@ -7219,8 +7224,9 @@
             if (seq !== pe.seq) return null;
             if (rs[0].error) return rs;
             return Promise.all([window.TempRioRotaCore.coletarSaidas(sb, rs[0].data || []), window.TempRioRotaCore.coletarConfirmacoes(sb, rs[0].data || []), peLerProblemas(rs[0].data || []),
-                (window.TempRioPrevisao || window.TempRioMovimento) ? (window.TempRioPrevisao || window.TempRioMovimento).lerEstados(sb,(rs[0].data || []).map(function(x){return x.cd_pedido;})).then(function(m){return {mapa:m};},function(e){return {erro:e.message};}) : Promise.resolve({erro:'Estado dos pedidos indisponível.'})
-            ]).then(function (r) { rs.saidas = r[0]; rs.confirmacoes = r[1]; rs.problemas = r[2]; rs.estadosH=r[3]; return rs; });
+                (window.TempRioPrevisao || window.TempRioMovimento) ? (window.TempRioPrevisao || window.TempRioMovimento).lerEstados(sb,(rs[0].data || []).map(function(x){return x.cd_pedido;})).then(function(m){return {mapa:m};},function(e){return {erro:e.message};}) : Promise.resolve({erro:'Estado dos pedidos indisponível.'}),
+                window.TempRioPrazo068B ? window.TempRioPrazo068B.lerTudo(sb, (rs[0].data || []).map(function (x) { return x.cd_pedido; })) : Promise.resolve({ instalada: false, prazos: {}, regras: {}, padrao: null, erro: '' })
+            ]).then(function (r) { rs.saidas = r[0]; rs.confirmacoes = r[1]; rs.problemas = r[2]; rs.estadosH=r[3]; rs.prazo068 = r[4]; return rs; });
         }).then(function (rs) {
             if (!rs || seq !== pe.seq) return;
             // UIH-R1: todas as fontes/blocos pertencem ao dia de início, nunca ao dia da resposta.
@@ -7252,6 +7258,7 @@
                 pe.cfg = window.TempRioRotaCore.cfgDe(rs[4].data && rs[4].data[0]);
                 pe.saidas = rs.saidas || {}; pe.confirmacoes = rs.confirmacoes.porPedido; pe.entrega063 = rs.confirmacoes.instalada;
                 pe.problemas = rs.problemas && rs.problemas.instalada ? rs.problemas.porPedido : null; pe.erroProblemas = rs.problemas && rs.problemas.erro || '';
+                pe.prazo068Instalada = !!(rs.prazo068 && rs.prazo068.instalada); pe.prazos068 = rs.prazo068 && rs.prazo068.prazos || {}; pe.regrasPrazo068 = rs.prazo068 && rs.prazo068.regras || {}; pe.padraoPrazo068 = rs.prazo068 && rs.prazo068.padrao || null; pe.erroPrazo068 = rs.prazo068 && rs.prazo068.erro || '';
                 // 068 C: problema ativo nunca conta como entregue (mesmo caminho do reprogramado: sem canhoto/marcacao/legado).
                 Object.keys(pe.problemas || {}).forEach(function (cd) { pe.confirmacoes[cd] = { reprogramado: true, problema: true }; });
                 pe.estadosH=rs.estadosH && rs.estadosH.mapa || null;pe.estadosDia=diaLeitura;
@@ -7365,7 +7372,7 @@
             (window.TempRioRotaCore.etapaEnviada(x) && dEtapa ? '<p class="adm-pe-comp-bairro">faturado em ' + esc(peHora(dEtapa)) + '</p>' : '') +
             (peDataEntrega(x) ? '<p class="adm-pe-comp-bairro">' + esc(peDataEntrega(x)) + '</p>' : '') +
             (window.TempRioRotaCore.legadoRecebido(x, pe.cfg) ? '<p class="adm-pe-comp-bairro">Legado anterior ao controle de canhoto</p>' : '') +
-            peVeiculoHtml(x) + peSaidaHtml070(x) +
+            peVeiculoHtml(x) + pePrazoHtml068(x) + peSaidaHtml070(x) +
             peRecebidoHtml(x) +
         '</div>';
     }
@@ -7392,7 +7399,7 @@
             (peDataEntrega(x) ? linha('fa-truck-fast', esc(peDataEntrega(x))) : '') +
             (window.TempRioRotaCore.legadoRecebido(x, pe.cfg) ? linha('fa-clock-rotate-left', 'Legado anterior ao controle de canhoto') : '') +
             (col.id === 'recebido' ? '' : selosAtraso(seloAtraso(ref), '')) +
-            peVeiculoHtml(x) + peSaidaHtml070(x) +
+            peVeiculoHtml(x) + pePrazoHtml068(x) + peSaidaHtml070(x) +
             peRecebidoHtml(x) +
         '</div>';
     }
@@ -7563,6 +7570,7 @@
         peLigarCanhoto(x);
         peLigarVeiculos($('#modal-detalhe-corpo'));peLigarSaida070($('#modal-detalhe-corpo'));
         if (window.TempRioEntregaAdmin) window.TempRioEntregaAdmin.ligar($('#modal-detalhe-corpo'), peContextoEntrega);
+        if (window.TempRioPrazo068B) window.TempRioPrazo068B.ligar($('#modal-detalhe-corpo'), peContextoPrazo068, pe.itens);
         if (painel) {
             painel.classList.add('adm-modal-compacto');
             painel.setAttribute('role', 'dialog');
@@ -7736,6 +7744,7 @@
     function ligarOrigemPedidos(raiz) {
         peLigarVeiculos(raiz);peLigarSaida070(raiz);
         if (window.TempRioEntregaAdmin) window.TempRioEntregaAdmin.ligar(raiz, peContextoEntrega);
+        if (window.TempRioPrazo068B) window.TempRioPrazo068B.ligar(raiz, peContextoPrazo068, pe.itens);
         raiz.querySelectorAll('[data-origem-pedidos]').forEach(function (b) {
             b.addEventListener('click', function () { peOrigem = b.getAttribute('data-origem-pedidos'); desenharPedidos(); });
         });

@@ -96,7 +96,9 @@
                estadosH: null, estadosDia: null, movimentoReq: {}, calendarioH: {}, movimentoErro: null, sem065: false, sem065Dados: {}, semQuadroRasc: {}, semFiltroVeic: 'todos', semVersaoConflito: false,
                semMsgErro: false, semPilhasExp: {}, semBuscaBandeja: '', semFiltroBandeja: 'todos', semMapaAberto: true,
                // 066 (assistente da semana): rota_066_sugestoes / rota_066_registrar (stub local até RPC existir)
-               sug066: false, sug066Dados: {}, sug066Ignoradas: {}, seqSug066: 0, relendoSug066: {}, sessao: 0 };
+               sug066: false, sug066Dados: {}, sug066Ignoradas: {}, seqSug066: 0, relendoSug066: {}, sessao: 0,
+               // 068B (prazo ideal flexível): leitura via TempRioPrazo068B; nunca grava via upsert 040
+               prazo068Instalada: false, prazos068: {}, regrasPrazo068: {}, padraoPrazo068: null, prazo068Erro: '' };
     var NUM = new Intl.NumberFormat('pt-BR'), NUM1 = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 1 });
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
     function brl(c) { return c == null ? '—' : (Number(c) / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }); }
@@ -216,9 +218,12 @@
             var lerSug066 = Promise.resolve().then(function () {
                 return sb.rpc('rota_066_sugestoes', { p_semana: semIni0 });
             }).catch(function (e) { return { error: e }; });
+            var lerPrazo068 = raiz.TempRioPrazo068B
+                ? raiz.TempRioPrazo068B.lerTudo(sb, pedidos.map(function (p) { return p.cd_pedido; }))
+                : Promise.resolve({ instalada: false, prazos: {}, regras: {}, padrao: null, erro: '' });
             return Promise.all([Promise.all(blocos.map(function (b) {
                 return sb.from('solidcon_clientes').select('documento,nome,logradouro,numero,complemento,bairro,cidade,estado,telefone,celular').in('documento', b);
-            })), posicoes, core.coletarSaidas(sb, pedidos), core.coletarConfirmacoes(sb, pedidos), lerSem065, lerSug066,lerReservas070(sb,semIni0)]).then(function (cp) {
+            })), posicoes, core.coletarSaidas(sb, pedidos), core.coletarConfirmacoes(sb, pedidos), lerSem065, lerSug066,lerReservas070(sb,semIni0), lerPrazo068]).then(function (cp) {
                 if (seq !== st.seq) return;
                 // UI1: alguma gravação terminou (ou começou) durante esta leitura: o retrato pode ser anterior a ela.
                 // Descarta e lê de novo (ou espera a gravação pendente terminar).
@@ -249,6 +254,15 @@
                 st.posErro = rp && rp.erro ? rp.erro : (!rp && rs[2] && rs[2].error ? String(rs[2].error.message || rs[2].error) : null);
                 lerFrota(rs[10], rs[11], rs[12]);   // antes da marcação: só vale veículo que existe na frota
                 lerConfig(rs[3], rs[4], rs[5], rs[6], rs[7], rs[8], rs[9]);
+                var p068 = cp[7] || { instalada: false, prazos: {}, regras: {}, padrao: null, erro: '' };
+                st.prazo068Instalada = !!p068.instalada; st.prazos068 = p068.prazos || {}; st.regrasPrazo068 = p068.regras || {}; st.padraoPrazo068 = p068.padrao || null; st.prazo068Erro = p068.erro || '';
+                if (st.padraoPrazo068) {
+                    var cfgBase068 = Object.assign({}, st.cfgLinha || CFG_PADRAO, {
+                        prazo_ideal_dias: st.padraoPrazo068.prazo_ideal_dias,
+                        prazo_dias_uteis_semana: st.padraoPrazo068.prazo_dias_uteis_semana
+                    });
+                    st.cfgLinha = cfgBase068; st.cfg = cfgDe(cfgBase068);
+                }
                 lerFechada(rs[13]);
                 aplicarLeituraSemana065(semIni0, cp[4]);aplicarReservas070(cp[6]);
                 aplicarLeituraSugestoes066(semIni0, cp[5]);
@@ -1633,6 +1647,7 @@
             regras: st.v2 ? st.regras : {},
             ignorados: st.v2 && st.ign045 ? st.ignorados : {},
             excluir: excluir || {},
+            prazos: st.prazos068, regrasPrazo: st.regrasPrazo068,
             hoje: hojeSP(), saidas: st.diasSaida, canhotos: st.canhotos, confirmacoes: st.confirmacoes
         });
         var todas = (sj && sj.sugestoes) || [];
@@ -3236,6 +3251,8 @@
                     saidas: st.diasSaida,
                     canhotos: st.canhotos,
                     confirmacoes: st.confirmacoes,
+                    prazos: st.prazos068,
+                    regrasPrazo: st.regrasPrazo068,
                     hoje: hoje
                 });
                 (semSug.dias || []).forEach(function (dSug) {
@@ -4217,6 +4234,7 @@
 
     function optsPlano() {
         return { modo_planejamento: st.modo070, reservas_070: st.reservas070, pedidos_estado: estadosPedidosAtuais(), cfg: st.cfg, excecoes: st.excecoes, marcacao: st.v2, padroes: st.excecoes, porPedido: st.porPedido, regras: st.regras,
+                 prazos: st.prazos068, regrasPrazo: st.regrasPrazo068,
                  ignorados: st.v2 && st.ign045 ? st.ignorados : {}, plano: st.v2 ? planoEfetivo() : {}, veiculos: linhasFrota(),
                  fechada: st.v2 && st.fx050 && !st.fxErro ? st.fxFoto : null,
                  projetarSeparando: false, saidas: st.diasSaida, canhotos: st.canhotos, confirmacoes: st.confirmacoes, hoje: hojeSP(), agora: new Date().toISOString() };   // fechada: só mostra inclusao já confirmada pela054
@@ -4354,6 +4372,7 @@
         var temQuadro065 = !!obterQuadroMod();
         var sem = st.v2 && st.vista === 'semana'
             ? planejarSemana(st.pedidos, st.clientes, semIni, { modo_planejamento: st.modo070, reservas_070: st.reservas070, pedidos_estado: estadosPedidosAtuais(), cfg: st.cfg, padroes: st.excecoes, porPedido: st.porPedido, regras: st.regras,
+                prazos: st.prazos068, regrasPrazo: st.regrasPrazo068,
                 ignorados: st.ign045 ? st.ignorados : {}, plano: planoSemanaObj(semIni), veiculos: linhasFrota(), veiculo: semVeiculoAtual(), saidas: st.diasSaida, canhotos: st.canhotos, confirmacoes: st.confirmacoes, hoje: hojeSP() })
             : null;
         var nFora = st.v2 && st.ign045 && atual.ignorados ? atual.ignorados.length : 0;
@@ -4373,6 +4392,7 @@
             btnVoltarSemana +
             (nFora ? '<button type="button" class="adm-botao-fantasma" id="rota-atalho-fora"><i class="fa-solid fa-ban" aria-hidden="true"></i> Fora da rota (' + NUM.format(nFora) + ')</button>' : '') +
             '<button type="button" class="adm-botao-fantasma" id="rota-frota"><i class="fa-solid fa-truck-fast" aria-hidden="true"></i> Frota</button>' +
+            (raiz.TempRioPrazo068B && st.prazo068Instalada && (st.podeMarcar || st.papel === 'admin') ? '<button type="button" class="adm-botao-fantasma" id="rota-prazo-padrao"><i class="fa-regular fa-calendar-check" aria-hidden="true"></i> Prazo padrão</button>' : '') +
             (st.papel === 'admin' ? '<button type="button" class="adm-botao-fantasma" id="rota-configurar"' + (st.cfgAusente ? ' disabled title="Falta aplicar a migração 040"' : '') + '><i class="fa-solid fa-sliders" aria-hidden="true"></i> Configurar</button>' : '') +
             '<button type="button" class="adm-botao-fantasma" id="rota-btn-ajuda" aria-expanded="' + (st.cfgAberto ? 'true' : 'false') + '" title="Regras da rota e como funciona" aria-label="Regras da rota e como funciona"><i class="fa-regular fa-circle-question" aria-hidden="true"></i></button>' +
             '<button type="button" class="adm-botao-fantasma" id="rota-atualizar"><i class="fa-solid fa-rotate" aria-hidden="true"></i> Atualizar</button>' +
@@ -4465,6 +4485,12 @@
         alvo.querySelector('#rota-imprimir').addEventListener('click', imprimir);
         var cfgBtn = alvo.querySelector('#rota-configurar');
         if (cfgBtn && podeConfigurar()) cfgBtn.addEventListener('click', abrirDialogo);
+        var prazoPadBtn = alvo.querySelector('#rota-prazo-padrao');
+        if (prazoPadBtn && raiz.TempRioPrazo068B) prazoPadBtn.addEventListener('click', function () {
+            raiz.TempRioPrazo068B.abrirConfigPadrao(function () {
+                return { sb: st.sb, papel: st.papel, podeMarcar: st.podeMarcar, padrao: st.padraoPrazo068, sessao: st.sessao };
+            }, prazoPadBtn);
+        });
         var resumo = alvo.querySelector('.rota-config-resumo');
         if (resumo) resumo.addEventListener('toggle', function () {
             st.cfgAberto = resumo.open;
@@ -4703,6 +4729,7 @@
             // 050 (RF-2): vigia da rota fechada (60 s e ao voltar para a aba do navegador)
             if (!st.fxTimer) st.fxTimer = setInterval(fxVigiar, 60000);
             if (!st.fxVis && typeof document !== 'undefined') { st.fxVis = true; document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') fxVigiar(); }); }
+            if (!st.prazo068Vis && typeof raiz.addEventListener === 'function') { st.prazo068Vis = true; raiz.addEventListener('temprio-prazo068', function () { if (st.alvo && st.ativo) recarregarTudo(); else st.carregado = false; }); }
             desenhar();
         },
         // ATUALIZAR do painel: relê tudo.
@@ -4740,6 +4767,8 @@
             st.sem065 = false; st.sem065Dados = {}; st.semQuadroRasc = {}; st.semFiltroVeic = 'todos'; st.semVersaoConflito = false;
             st.semMsgErro = false; st.semPilhasExp = {}; st.semBuscaBandeja = ''; st.semFiltroBandeja = 'todos'; st.semMapaAberto = true;
             st.sug066 = false; st.sug066Dados = {}; st.sug066Ignoradas = {}; st.seqSug066 = 0; st.relendoSug066 = {}; st.sessao++;
+            st.prazo068Instalada = false; st.prazos068 = {}; st.regrasPrazo068 = {}; st.padraoPrazo068 = null; st.prazo068Erro = '';
+            if (raiz.TempRioPrazo068B) raiz.TempRioPrazo068B.fechar();
         },
         planejador: Planejador
     };

@@ -1295,3 +1295,20 @@ body.admin {
     .adm-hist068-filtros > label { width: 100%; min-width: 0; }
     .adm-hist068-lote-form button { min-height: 44px; }
 }
+
+/* 068 B: Prazo ideal flexível */
+.adm-prazo068-linha { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.5rem; margin: 0.35rem 0; font-size: 0.78rem; color: var(--adm-tinta-2); }
+.adm-prazo068-orig { color: var(--adm-tinta-3); }
+.adm-prazo068-atraso { padding: 0.05rem 0.35rem; border-radius: 0.35rem; background: var(--adm-ruim-fundo); color: var(--adm-ruim); font-weight: 700; }
+.adm-prazo068-dlg { width: calc(100% - 2rem); max-width: 38rem; max-height: 90dvh; overflow: auto; border: 1px solid var(--adm-borda); border-radius: 1rem; padding: 1.25rem; background: var(--adm-superficie); color: var(--adm-tinta); }
+.adm-prazo068-dlg::backdrop { background: rgba(0, 0, 0, 0.52); }
+.adm-prazo068-fs { margin: 0.75rem 0; padding: 0.65rem 0.8rem; border: 1px solid var(--adm-borda); border-radius: 0.6rem; }
+.adm-prazo068-fs legend { font-size: 0.8rem; font-weight: 700; padding: 0 0.3rem; }
+.adm-prazo068-opt { display: flex; align-items: center; gap: 0.45rem; margin: 0.35rem 0; font-size: 0.86rem; cursor: pointer; }
+.adm-prazo068-sem { display: flex; flex-wrap: wrap; gap: 0.5rem 0.85rem; margin-top: 0.35rem; }
+.adm-prazo068-sem label { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.84rem; cursor: pointer; }
+.adm-prazo068-acoes { display: flex; flex-wrap: wrap; gap: 0.55rem; margin-top: 1rem; }
+@media (max-width: 640px) {
+    .adm-prazo068-dlg { padding: 1rem; max-height: 94dvh; }
+    .adm-prazo068-acoes button { flex: 1 1 auto; min-height: 44px; }
+}

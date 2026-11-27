@@ -225,7 +225,11 @@
             opcional('rota_pedido_ignorado', function () { return sb.from('rota_pedido_ignorado').select('cd_pedido').order('cd_pedido', { ascending: true }); }),
             // 047 (opcional): a frota. Ausente = os 3 padrões do rota-core; presente com erro de leitura = rejeita.
             opcional('rota_veiculos', function () { return sb.from('rota_veiculos').select('id,nome,modo,capacidade_volume,dias_sem_saida,volta_sede,cor,ordem,ativo').order('id', { ascending: true }); }),
-            coletarCanhotos(sb)
+            coletarCanhotos(sb),
+            // 068-B (opcional): exceções de prazo por pedido e regras de prazo por cliente. Ausente = só prazo padrão;
+            // presente com erro de leitura = rejeita (nunca envia rota ou fecha 08h ignorando prazos/regras).
+            opcional('rota_068_prazo_pedido', function () { return sb.from('rota_068_prazo_pedido').select('cd_pedido,tipo,dias,data_agendada').order('cd_pedido', { ascending: true }); }),
+            opcional('rota_068_prazo_cliente', function () { return sb.from('rota_068_prazo_cliente').select('documento,tipo,dias,dias_semana').order('documento', { ascending: true }); })
         ]).then(function (rs) {
             var pedidos = rs[0], docs = {};
             pedidos.forEach(function (p) { if (p.documento) docs[p.documento] = true; });
@@ -246,6 +250,24 @@
             }
             var ignorados = {};
             (rs[6] || []).forEach(function (x) { if (x && x.cd_pedido != null) ignorados[x.cd_pedido] = true; });
+            var prazos = {}, regrasPrazo = {};
+            (rs[9] || []).forEach(function (x) {
+                if (!x || x.cd_pedido == null) return;
+                if (x.tipo === 'data' && x.data_agendada) {
+                    var dt = String(x.data_agendada).slice(0, 10);
+                    if (/^\d{4}-\d{2}-\d{2}$/.test(dt)) prazos[x.cd_pedido] = { tipo: 'data', data: dt };
+                } else if (x.tipo === 'dias_uteis' && x.dias != null) {
+                    prazos[x.cd_pedido] = { tipo: 'dias_uteis', dias: Number(x.dias) };
+                }
+            });
+            (rs[10] || []).forEach(function (x) {
+                if (!x || !x.documento) return;
+                if (x.tipo === 'semana' && Array.isArray(x.dias_semana) && x.dias_semana.length) {
+                    regrasPrazo[x.documento] = { tipo: 'semana', dias_semana: x.dias_semana.map(Number) };
+                } else if (x.tipo === 'dias_uteis' && x.dias != null) {
+                    regrasPrazo[x.documento] = { tipo: 'dias_uteis', dias: Number(x.dias) };
+                }
+            });
             var sy = rs[1] && !rs[1].error && rs[1].data && rs[1].data[0];
             return Promise.all([core.coletarSaidas(sb, pedidos), emBlocos(Object.keys(docs), 500, function (b) {
                 return sb.rpc('solidcon_rota_posicoes', { p_documentos: b }).then(function (r) { if (r.error) throw erroDe(r); return r.data || []; });
@@ -258,7 +280,8 @@
                                          cidade: c.cidade, pos: tem ? [lat, lng] : null, precisao: tem ? c.precisao : null };
                 });
                 var d = { pedidos: pedidos, clientes: cli, cfg: core.cfgDe(cfgLinha || core.CFG_PADRAO), excecoes: excecoes, coletado: sy ? sy.coletado_em : null,
-                          ignorados: ignorados, veiculos: rs[7], canhotos: rs[8], saidas: leituras[0], confirmacoes: leituras[2].porPedido };   // null = sem a 047 (padrões)
+                          ignorados: ignorados, veiculos: rs[7], canhotos: rs[8], saidas: leituras[0], confirmacoes: leituras[2].porPedido,
+                          prazos: prazos, regrasPrazo: regrasPrazo };   // null em veiculos = sem a 047 (padrões)
                 if (v2) { d.v2 = true; d.porPedido = porPedido; d.regras = regras; }
                 d.ativa070=!!(cfgLinha && cfgLinha.previsao_definitiva_070);
                 return d;
@@ -509,6 +532,7 @@
     function opcoesRota(d) {
         return { modo_planejamento:d.ativa070?'definitiva':'previsao',pedidos_estado:d.pedidos_estado,reservas_070:d.reservas_070,cfg: d.cfg, excecoes: d.excecoes, marcacao: !!d.v2, padroes: d.excecoes, porPedido: d.porPedido || {},
                  regras: d.regras || {}, ignorados: d.ignorados || {}, veiculos: d.veiculos, fechada: d.fechada || null, canhotos: d.canhotos || {}, saidas: d.saidas || {}, confirmacoes: d.confirmacoes || {},
+                 prazos: d.prazos || {}, regrasPrazo: d.regrasPrazo || {},
                  projetarSeparando: false };   // fechada: mensagem usa somente inclusao confirmada pela054
     }
     function montarRota(d, veiculo, agora, opts) {

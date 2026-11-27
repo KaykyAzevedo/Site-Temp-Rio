@@ -134,6 +134,18 @@
         var desde = primeiro(l, 'canhotoDesde', 'canhoto_desde');
         // Sem a coluna056: nenhum legado presumido, conserva055.
         c.canhotoDesde = desde && isFinite(Date.parse(desde)) ? new Date(desde).toISOString() : null;
+        // 068-B: prazo ideal padrao (meta configuravel em rota_config; default 2 dias uteis) + dias uteis seg..dom.
+        var pd = primeiro(l, 'prazoIdealDias', 'prazo_ideal_dias');
+        c.prazoIdealDias = pd != null && pd !== '' && isFinite(Number(pd)) && Number(pd) === Math.floor(Number(pd)) && Number(pd) >= 0 && Number(pd) <= 365 ? Number(pd) : ROTA.PRAZO_DIAS_UTEIS;
+        var pdu = primeiro(l, 'prazoDiasUteisSemana', 'prazo_dias_uteis_semana');
+        if (Array.isArray(pdu) && pdu.length) {
+            var u = [];
+            pdu.forEach(function (x) { var n = Number(x); if (n >= 0 && n <= 6 && n === Math.floor(n) && u.indexOf(n) < 0) u.push(n); });
+            u.sort(function (a, b) { return a - b; });
+            c.prazoDiasUteisSemana = u.length ? u : null;
+        } else {
+            c.prazoDiasUteisSemana = null;
+        }
         c._pronta = true;
         return c;
     }
@@ -437,14 +449,63 @@
     // Prazo = dia do pedido + N dias úteis (dia com saída). Pedido feito a partir de corteHora (São Paulo) conta como
     // do dia seguinte. Pedido de sábado: segunda e terça. De domingo: idem. veiculo (opcional): dias úteis DELE (S10:
     // seg..sex, então pedido de sexta vence na terça; caminhão/sem veículo: seg..sáb).
-    function prazoDe(dtPedido, cfg, veiculo) {
+    // 068-B: 4º arg opcional regraPrazo: { prazo|prazo_ideal } | { tipo:'data', data } | { tipo:'dias_uteis', dias } |
+    // { tipo:'semana', dias_semana:[0..6] }. Sem regraPrazo: comportamento 100% idêntico ao padrão de 2 dias úteis.
+    function prazoDe(dtPedido, cfg, veiculo, regraPrazo) {
         cfg = cfgOk(cfg);
+        if (regraPrazo) {
+            if (regraPrazo.tipo === 'data' && regraPrazo.data && /^\d{4}-\d{2}-\d{2}$/.test(String(regraPrazo.data))) return String(regraPrazo.data);
+            if (!regraPrazo.tipo) {
+                if (regraPrazo.prazo && /^\d{4}-\d{2}-\d{2}$/.test(String(regraPrazo.prazo))) return String(regraPrazo.prazo);
+                if (regraPrazo.prazo_ideal && /^\d{4}-\d{2}-\d{2}$/.test(String(regraPrazo.prazo_ideal))) return String(regraPrazo.prazo_ideal);
+            }
+        }
         var d = diaSP(dtPedido);
         if (!d) return null;
         if (cfg.corteHora != null) { var h = horaSP(dtPedido); if (h != null && h >= cfg.corteHora) d = somaDias(d, 1); }
-        var n = 0;
-        for (var guarda = 0; n < ROTA.PRAZO_DIAS_UTEIS && guarda < ROTA.BUSCA_SAIDA_DIAS; guarda++) { d = somaDias(d, 1); if (temSaida(d, cfg, veiculo)) n++; }
-        return n < ROTA.PRAZO_DIAS_UTEIS ? null : d;   // não achou os dias úteis no limite: prazo indisponível (sem_data)
+        if (regraPrazo && regraPrazo.tipo === 'semana' && Array.isArray(regraPrazo.dias_semana) && regraPrazo.dias_semana.length) {
+            var ds = regraPrazo.dias_semana.map(Number).filter(function (x) { return x >= 0 && x <= 6 && x === Math.floor(x); });
+            if (!ds.length) return null;
+            for (var g = 0; g < ROTA.BUSCA_SAIDA_DIAS; g++) {
+                d = somaDias(d, 1);
+                if (ds.indexOf(diaSemana(d)) >= 0 && !ehFeriado(d, cfg)) return d;
+            }
+            return null;
+        }
+        var meta = cfg.prazoIdealDias != null ? cfg.prazoIdealDias : ROTA.PRAZO_DIAS_UTEIS;
+        var diasArg = regraPrazo && regraPrazo.tipo === 'dias_uteis' ? (regraPrazo.dias != null ? regraPrazo.dias : regraPrazo.dias_uteis) : null;
+        if (diasArg != null && Number.isInteger(Number(diasArg)) && Number(diasArg) >= 0 && Number(diasArg) <= 365) {
+            meta = Number(diasArg);
+        }
+        var uteisCfg = cfg.prazoDiasUteisSemana;
+        var ativosSem, diaUtilFn;
+        if (uteisCfg && uteisCfg.length) {
+            ativosSem = uteisCfg.length;
+            diaUtilFn = function (diaIso) { return uteisCfg.indexOf(diaSemana(diaIso)) >= 0 && !ehFeriado(diaIso, cfg); };
+        } else {
+            var offDias = diasSemSaida(veiculo, cfg);
+            ativosSem = [1, 2, 3, 4, 5, 6].filter(function (w) { return offDias.indexOf(w) < 0; }).length;
+            diaUtilFn = function (diaIso) { return temSaida(diaIso, cfg, veiculo); };
+        }
+        if (ativosSem === 0) return null;
+        var extrasN = Object.keys(cfg.feriadosExtras || {}).length;
+        if (meta === 0) {
+            var lim0 = Math.min(4000, ROTA.BUSCA_SAIDA_DIAS + extrasN * 7);
+            for (var g0 = 0; g0 < lim0; g0++) { if (diaUtilFn(d)) return d; d = somaDias(d, 1); }
+            return null;
+        }
+        var n = 0, limite = Math.min(4000, Math.max(ROTA.BUSCA_SAIDA_DIAS, Math.ceil((meta + extrasN + 20) * 7 / ativosSem) + 200));
+        for (var guarda = 0; n < meta && guarda < limite; guarda++) { d = somaDias(d, 1); if (diaUtilFn(d)) n++; }
+        return n < meta ? null : d;   // não achou os dias úteis no limite: prazo indisponível (sem_data)
+    }
+    // 068-B: resolve prazo ideal com precedência exceção do pedido > regra do cliente > padrão configurado.
+    function prazoPedido(pedido, cfg, veiculo, prazosPorPedido, regrasPorCliente) {
+        if (!pedido) return null;
+        var ex = prazosPorPedido && prazosPorPedido[pedido.cd_pedido];
+        if (ex) return prazoDe(pedido.dt_pedido, cfg, veiculo, ex);
+        var rg = pedido.documento && regrasPorCliente && regrasPorCliente[pedido.documento];
+        if (rg) return prazoDe(pedido.dt_pedido, cfg, veiculo, rg);
+        return prazoDe(pedido.dt_pedido, cfg, veiculo);
     }
     // Situação do prazo em relação ao dia da saída D.
     function situacaoPrazo(prazo, dia, cfg, veiculo) {
@@ -890,6 +951,7 @@
         opts = opcoes070(opts);
         var excluir = opts.excluir || {}, ignorados = opts.ignorados || {}, plano = opts.plano || {}, cfg = comFrota(opts.cfg, opts.veiculos), excecoes = opts.excecoes || {};
         var v2 = !!opts.marcacao, padroes = opts.padroes || excecoes, porPedido = opts.porPedido || {};
+        var prazosPed = opts.prazos || null, regrasPrazo = opts.regrasPrazo || null;
         var regras = regrasDe(opts.regras), tempo = tempoDe(cfg);
         // 050 (opcional): rota do dia FECHADA (foto). Só vale no modo v2 e para o próprio dia da foto.
         var fx = v2 && opts.fechada && opts.fechada.data === dia ? fechadaDe(opts.fechada) : null;
@@ -928,14 +990,14 @@
                 var sepDia = p.dt_sep_inicio && diaSP(p.dt_sep_inicio);
                 var sepAdiado = !!sepDia && sepDia < dia && Date.parse(p.dt_sep_inicio) > Date.parse(instanteSaida(sepDia, cfg));
                 if (!m && (p.etapa === 'separando' || sepAdiado)) m = { veiculo: ROTA.VEICULO_SEPARANDO, origem: 'separando' };
-                vq = m ? m.veiculo : null; prazo = prazoDe(p.dt_pedido, cfg, vq);
+                vq = m ? m.veiculo : null; prazo = prazoPedido(p, cfg, vq, prazosPed, regrasPrazo);
                 x = { p: p, c: c, prazo: prazo, situacao: situacaoPrazo(prazo, dia, cfg, vq), v: v, sugestao: sug, marcacao: m ? m.origem : null,
                       veiculo: m ? m.veiculo : null, motivo: m ? 'marcado' : null, detalhe: m ? m.origem : null, ceasa: motivoCeasa(c) };
                 var vm = m ? veiculoDaFrota(m.veiculo, cfg) : null;
                 if (vm && vm.modo === 'cd_ceasa') x.entrega = entregaCaminhao(c, cfg);
             } else {
                 ve = veiculoDe(p, c, cfg, excecoes);
-                vq = ve.veiculo; prazo = prazoDe(p.dt_pedido, cfg, vq);
+                vq = ve.veiculo; prazo = prazoPedido(p, cfg, vq, prazosPed, regrasPrazo);
                 x = { p: p, c: c, prazo: prazo, situacao: situacaoPrazo(prazo, dia, cfg, vq), v: v,
                       veiculo: ve.veiculo, motivo: ve.motivo, detalhe: ve.detalhe, ceasa: ve.motivo === 'ceasa' ? ve.detalhe : null };
             }
@@ -1156,6 +1218,7 @@
     function planejarSemana(pedidos, clientes, semanaInicio, opts) {
         opts = opcoes070(opts);
         var cfg = comFrota(opts.cfg, opts.veiculos), padroes = opts.padroes || opts.excecoes || {}, porPedido = opts.porPedido || {};
+        var prazosPed = opts.prazos || null, regrasPrazo = opts.regrasPrazo || null;
         var regras = regrasDe(opts.regras), ignorados = opts.ignorados || {}, plano = opts.plano || {}, excluir = opts.excluir || {};
         var vid = opts.veiculo || 's10', vei = veiculoDaFrota(vid, cfg), valido = !!(vei && vei.ativo && vei.modo === 'porta');
         var tempo = tempoDe(cfg), CAP = valido && vei.capacidade != null ? vei.capacidade : Infinity;
@@ -1177,7 +1240,7 @@
         (pedidos || []).forEach(function (p) {
             if (!(opts.modo_planejamento === 'definitiva' ? dias.some(function (d) { return elegivel070(p,d,opts); }) : pendenteEntrega(p, opts.canhotos, opts.hoje || semanaInicio, cfg, opts)) || excluir[p.cd_pedido] || ignorados[p.cd_pedido]) return;
             var c = clienteDoPedido(p, clientes), m = marcacaoDe(p, padroes, porPedido);
-            var x = { p: p, c: c, prazo: prazoDe(p.dt_pedido, cfg, m ? m.veiculo : null), v: volumePedido(p), veiculo: m ? m.veiculo : null, marcacao: m ? m.origem : null,
+            var x = { p: p, c: c, prazo: prazoPedido(p, cfg, m ? m.veiculo : null, prazosPed, regrasPrazo), v: volumePedido(p), veiculo: m ? m.veiculo : null, marcacao: m ? m.origem : null,
                       regra: p.documento ? regras[p.documento] || null : null, dia: null, origemDia: null, diaSugerido: null, estoura: false, diaFechado: false, regiao: null, ang: null };
             if (!m) { x.sugestao = sugestaoDe(p, c, cfg); res.faltaMarcar.push(x); return; }
             if (m.veiculo !== vid) { var om2 = veiculoDaFrota(m.veiculo, cfg); if (om2 && om2.ativo && om2.modo === 'cd_ceasa') res.cdPedidos.push(x); else res.outros.push(x); return; }
@@ -1380,6 +1443,7 @@
     function sugestoesJuntar(pedidos, clientes, rotas, opts) {
         opts = opcoes070(opts);
         var cfg = comFrota(opts.cfg, opts.veiculos), padroes = opts.padroes || opts.excecoes || {}, porPedido = opts.porPedido || {};
+        var prazosPed = opts.prazos || null, regrasPrazo = opts.regrasPrazo || null;
         var regras = regrasDe(opts.regras), ignorados = opts.ignorados || {}, excluir = opts.excluir || {};
         var hoje = opts.hoje || diaSP(new Date()), limite = opts.desvioMaxKm != null ? Number(opts.desvioMaxKm) : ROTA.JUNTAR_DESVIO_KM;
         var nAlt = opts.alternativas != null ? Number(opts.alternativas) : 2, tempo = tempoDe(cfg);
@@ -1439,14 +1503,14 @@
             if (!u) { u = unid[ch] = { chave: ch, documento: p.documento || null, c: c, alvo: alvo, xs: [], vol: 0, semVol: 0, dtMin: null, aberto: false, precisaMarcar: false,
                                        regra: p.documento ? regras[p.documento] || null : null, prazos: Object.create(null) }; lista.push(u); }
             var v = volumePedido(p);
-            u.xs.push({ p: p, c: c, v: v, prazo: prazoDe(p.dt_pedido, cfg, alvo || 's10'), veiculo: m ? m.veiculo : null, marcacao: m ? m.origem : null, precisaMarcar: precisaMarcar });
+            u.xs.push({ p: p, c: c, v: v, prazo: prazoPedido(p, cfg, alvo || 's10', prazosPed, regrasPrazo), veiculo: m ? m.veiculo : null, marcacao: m ? m.origem : null, precisaMarcar: precisaMarcar });
             if (v.vol == null) u.semVol++; else u.vol += v.vol;
             if (p.etapa === 'aberto') u.aberto = true;
             if (precisaMarcar) u.precisaMarcar = true;
         });
         // Prazo do cliente nos dias úteis de cada veículo (o mais cedo dos pedidos dele).
         function prazoU(u, vid) {
-            if (!temProp(u.prazos, vid)) u.prazos[vid] = u.xs.reduce(function (mn, x) { var pz = prazoDe(x.p.dt_pedido, cfg, vid); return pz && (!mn || pz < mn) ? pz : mn; }, null);
+            if (!temProp(u.prazos, vid)) u.prazos[vid] = u.xs.reduce(function (mn, x) { var pz = prazoPedido(x.p, cfg, vid, prazosPed, regrasPrazo); return pz && (!mn || pz < mn) ? pz : mn; }, null);
             return u.prazos[vid];
         }
         // ---- avaliar cada cliente em cada rota ----
@@ -1591,7 +1655,8 @@
         comFrota: comFrota,
         chaveBairro: chaveBairro,
         rotasDe: rotasDe,
-        insercaoMaisBarata: insercaoMaisBarata
+        insercaoMaisBarata: insercaoMaisBarata,
+        prazoPedido: prazoPedido
     };
     raiz.TempRioRotaCore = Core;
     if (typeof module !== 'undefined' && module.exports) module.exports = Core;
