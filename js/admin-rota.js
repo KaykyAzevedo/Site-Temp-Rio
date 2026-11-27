@@ -4356,26 +4356,19 @@
             ? planejarSemana(st.pedidos, st.clientes, semIni, { modo_planejamento: st.modo070, reservas_070: st.reservas070, pedidos_estado: estadosPedidosAtuais(), cfg: st.cfg, padroes: st.excecoes, porPedido: st.porPedido, regras: st.regras,
                 ignorados: st.ign045 ? st.ignorados : {}, plano: planoSemanaObj(semIni), veiculos: linhasFrota(), veiculo: semVeiculoAtual(), saidas: st.diasSaida, canhotos: st.canhotos, confirmacoes: st.confirmacoes, hoje: hojeSP() })
             : null;
-        var motivoSem = pl.hoje.feriado ? 'feriado' : 'domingo';
         var nFora = st.v2 && st.ign045 && atual.ignorados ? atual.ignorados.length : 0;
         var chipSemana = st.v2
             ? '<button type="button" class="adm-chip' + (st.vista === 'semana' ? ' is-ativo' : '') + '" data-rota-vista="semana" aria-pressed="' + (st.vista === 'semana') + '">Semana · seg ' +
                 esc(dataBr(semIni)) + ' a sáb ' + esc(dataBr(somaDias(semIni, 5))) + '</button>'
             : '';
-        var chipDiaExtra = st.vista === 'dia' && st.diaDetalhe && st.diaDetalhe !== pl.hoje.dia
-            ? '<button type="button" class="adm-chip is-ativo" data-rota-vista="dia" aria-pressed="true">Dia · ' + esc(nomeDia(atual.dia)) + ' ' + esc(dataBr(atual.dia)) + '</button>'
+        var chipDiaExtra = st.vista !== 'semana'
+            ? '<span class="adm-chip is-ativo" aria-current="page">Dia · ' + esc(nomeDia(atual.dia)) + ' ' + esc(dataBr(atual.dia)) + '</span>'
             : '';
         var btnVoltarSemana = st.v2 && st.vista !== 'semana'
             ? '<button type="button" class="adm-botao-fantasma" id="rota-voltar-semana" data-rota-voltar-semana="1"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i> Voltar para a semana</button>'
             : '';
         var seletor = '<div class="rota-acoes no-print"><div class="flex flex-wrap gap-1" role="group" aria-label="Visão da rota">' +
             chipSemana +
-            '<button type="button" class="adm-chip' + (st.vista === 'hoje' ? ' is-ativo' : '') + '" data-rota-vista="hoje" aria-pressed="' + (st.vista === 'hoje') + '"' + (pl.hoje.semSaida ? ' disabled title="Sem saída (' + motivoSem + ')"' : '') + '>Hoje · ' +
-                esc(nomeDia(pl.hoje.dia)) + ' ' + esc(dataBr(pl.hoje.dia)) + (pl.hoje.semSaida ? ' (sem saída: ' + motivoSem + ')' : '') + '</button>' +
-            (pl.proxima
-                ? '<button type="button" class="adm-chip' + (st.vista === 'proxima' ? ' is-ativo' : '') + '" data-rota-vista="proxima" aria-pressed="' + (st.vista === 'proxima') + '">Próxima · ' +
-                    esc(nomeDia(pl.proxima.dia)) + ' ' + esc(dataBr(pl.proxima.dia)) + '</button>'
-                : '<button type="button" class="adm-chip" disabled aria-disabled="true" title="' + esc(semDias) + '">Próxima · ' + esc(semDias) + '</button>') +
             chipDiaExtra + '</div>' +
             btnVoltarSemana +
             (nFora ? '<button type="button" class="adm-botao-fantasma" id="rota-atalho-fora"><i class="fa-solid fa-ban" aria-hidden="true"></i> Fora da rota (' + NUM.format(nFora) + ')</button>' : '') +
